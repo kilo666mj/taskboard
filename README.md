@@ -14,7 +14,7 @@ authorized agents, roles, and workspace boundaries.
 Taskboard is an upstream application, not state embedded in Switchboard:
 
 ```text
-agents -> Switchboard -> Taskboard MCP -> SQLite
+agents -> Switchboard -> Taskboard MCP -> SQLite or PostgreSQL
                                       -> REST/SSE/Web Push -> PWA
                                                            -> Tauri desktop
 ```
@@ -92,6 +92,13 @@ TASKBOARD_AUTH_TOKEN=replace-with-a-long-random-token
 TASKBOARD_ALLOWED_HOSTS=taskboard.example.com
 TASKBOARD_MCP_DEFAULT_TYPE=work
 ```
+
+SQLite remains the zero-configuration default. Set `TASKBOARD_DATABASE_URL` to
+use PostgreSQL for Kubernetes, EKS, or other deployments where application pods
+must not own durable state. PostgreSQL startup migrations are serialized so
+several starting processes cannot race schema creation. See the
+[deployment guide](docs/deployment.md) for managed-database guidance and the
+current single-replica live-event limitation.
 
 Agents send that token as a bearer credential to `/mcp`; it is never accepted
 as a human login credential. Browser users authenticate through an OIDC provider

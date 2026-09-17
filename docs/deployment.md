@@ -22,6 +22,43 @@ publishes only to host loopback; the reverse proxy is the public entry point.
 For reproducible production deployments, use a complete version tag such as
 `ghcr.io/kilo666mj/taskboard:1.0.0` instead of `latest`.
 
+For a local PostgreSQL evaluation, set a URL-safe `POSTGRES_PASSWORD` and apply
+the Compose override:
+
+```sh
+export POSTGRES_PASSWORD='replace-with-a-random-url-safe-value'
+docker compose -f compose.yaml -f compose.postgres.yaml up -d
+```
+
+The bundled PostgreSQL service is for evaluation. Use a managed database for
+production.
+
+## Kubernetes and EKS
+
+Use an external PostgreSQL service such as RDS or Aurora PostgreSQL. Taskboard
+pods do not need a persistent volume when `TASKBOARD_DATABASE_URL` is set.
+Store the complete connection URL in a Kubernetes Secret and expose it to the
+container with `secretKeyRef`:
+
+```yaml
+env:
+  - name: TASKBOARD_DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: taskboard-database
+        key: url
+```
+
+Use TLS verification in the connection URL, keep `/readyz` as the readiness
+probe, and use `/healthz` as the liveness probe. PostgreSQL makes task state,
+sessions, templates, subscriptions, and audit events independent of pod
+lifetime.
+
+The current live-event broadcaster is process-local. Run one Taskboard replica
+until cross-pod event fan-out is configured in a later release; multiple pods
+would share durable state correctly but an SSE client connected to one pod
+would not immediately receive a change handled by another pod.
+
 ## Release binary
 
 Each GitHub release contains Linux and macOS AMD64/ARM64 bundles with the server,

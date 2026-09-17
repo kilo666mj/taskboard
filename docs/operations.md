@@ -3,7 +3,7 @@
 ## Health and logs
 
 `GET /healthz` reports the process version. `GET /readyz` verifies that the
-SQLite store is available. The service emits structured JSON logs to standard
+configured SQLite or PostgreSQL store is available. The service emits structured JSON logs to standard
 output; collect them with the container runtime or system journal.
 
 Alert on repeated process restarts, readiness failures, authentication failures,
@@ -12,7 +12,12 @@ so treat the database, backups, and operator access as sensitive.
 
 ## Backups
 
-Back up the SQLite database before every upgrade and on a regular schedule. For
+For PostgreSQL deployments, use the managed service's automated backups and
+point-in-time recovery, and regularly produce a logically portable `pg_dump`.
+Test restoration into a separate database. Keep database credentials and backup
+access outside the Taskboard image and Kubernetes manifests.
+
+For SQLite deployments, back up the database before every upgrade and on a regular schedule. For
 a native deployment, SQLite's online backup command avoids copying a database
 and WAL at inconsistent points:
 

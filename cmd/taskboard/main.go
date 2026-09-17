@@ -26,7 +26,12 @@ func main() {
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	database, err := store.Open(ctx, cfg.DatabasePath)
+	var database *store.Store
+	if cfg.DatabaseURL != "" {
+		database, err = store.OpenURL(ctx, cfg.DatabaseURL)
+	} else {
+		database, err = store.Open(ctx, cfg.DatabasePath)
+	}
 	cancel()
 	if err != nil {
 		logger.Error("database startup failed", "error", err)

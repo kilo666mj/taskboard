@@ -9,34 +9,70 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kilo666mj/taskboard/internal/model"
 	_ "modernc.org/sqlite"
 )
 
 var ErrNotFound = errors.New("not found")
 
-type Store struct{ db *sql.DB }
+type Store struct{ db *DB }
 
 func Open(ctx context.Context, path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	return open(ctx, "sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", DialectSQLite)
+}
+
+func OpenURL(ctx context.Context, databaseURL string) (*Store, error) {
+	parsed, err := url.Parse(strings.TrimSpace(databaseURL))
+	if err != nil {
+		return nil, fmt.Errorf("parse database URL: %w", err)
+	}
+	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
+		return nil, fmt.Errorf("database URL scheme must be postgres or postgresql")
+	}
+	if parsed.Host == "" || parsed.Path == "" || parsed.Path == "/" {
+		return nil, fmt.Errorf("database URL must include a host and database name")
+	}
+	return open(ctx, "pgx", databaseURL, DialectPostgres)
+}
+
+func open(ctx context.Context, driver, dsn string, dialect Dialect) (*Store, error) {
+	raw, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	store := &Store{db: db}
+	if dialect == DialectSQLite {
+		raw.SetMaxOpenConns(1)
+	} else {
+		raw.SetMaxOpenConns(20)
+		raw.SetMaxIdleConns(5)
+		raw.SetConnMaxLifetime(30 * time.Minute)
+		raw.SetConnMaxIdleTime(5 * time.Minute)
+	}
+	store := &Store{db: &DB{raw: raw, dialect: dialect}}
 	if err := store.migrate(ctx); err != nil {
-		return nil, errors.Join(err, db.Close())
+		return nil, errors.Join(err, raw.Close())
 	}
 	return store, nil
 }
 
-func (s *Store) Close() error                   { return s.db.Close() }
-func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
-func (s *Store) DB() *sql.DB                    { return s.db }
+func (s *Store) Close() error                   { return s.db.raw.Close() }
+func (s *Store) Ping(ctx context.Context) error { return s.db.raw.PingContext(ctx) }
+func (s *Store) DB() *DB                        { return s.db }
+func (s *Store) Dialect() Dialect               { return s.db.dialect }
 
 func (s *Store) migrate(ctx context.Context) error {
+	if s.db.dialect == DialectPostgres {
+		return s.migratePostgres(ctx)
+	}
+	return s.migrateSQLite(ctx)
+}
+
+func (s *Store) migrateSQLite(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT 'personal',
@@ -137,13 +173,94 @@ func (s *Store) migrate(ctx context.Context) error {
 	for _, statement := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_tasks_visibility_creator ON tasks(visibility, created_by)`,
 		`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_owner ON push_subscriptions(owner_id)`,
+		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate visibility indexes: %w", err)
 		}
 	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,?) ON CONFLICT(version) DO NOTHING`, 1, formatTime(time.Now())); err != nil {
+		return fmt.Errorf("record SQLite schema version: %w", err)
+	}
 	_, err := s.db.ExecContext(ctx, "PRAGMA optimize")
 	return err
+}
+
+func (s *Store) migratePostgres(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(724187452910)`); err != nil {
+		return fmt.Errorf("lock PostgreSQL migrations: %w", err)
+	}
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS tasks (
+			id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT 'personal',
+			visibility TEXT NOT NULL DEFAULT 'team', created_by TEXT NOT NULL DEFAULT '',
+			section TEXT NOT NULL DEFAULT 'General', project TEXT NOT NULL DEFAULT '', repository TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL DEFAULT 'normal', due_date TEXT NOT NULL DEFAULT '', defer_until TEXT NOT NULL DEFAULT '',
+			recurrence TEXT NOT NULL DEFAULT '', sort_order BIGINT NOT NULL DEFAULT 0, reviewed_at TEXT,
+			status TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', current_note TEXT NOT NULL DEFAULT '',
+			blocker TEXT NOT NULL DEFAULT '', waiting_for TEXT NOT NULL DEFAULT '', version BIGINT NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS checklist_items (
+			id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			label TEXT NOT NULL, status TEXT NOT NULL, position INTEGER NOT NULL, required BOOLEAN NOT NULL DEFAULT TRUE,
+			note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_runs (
+			id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			agent TEXT NOT NULL, client TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+			lease_expires_at TEXT NOT NULL, last_heartbeat_at TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS events (
+			id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			run_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, actor TEXT NOT NULL,
+			message TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS push_subscriptions (
+			endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, owner_id TEXT NOT NULL DEFAULT '',
+			notify_progress BOOLEAN NOT NULL DEFAULT TRUE, notify_reminders BOOLEAN NOT NULL DEFAULT TRUE,
+			notify_summaries BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS browser_sessions (
+			token_hash BYTEA PRIMARY KEY, subject TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
+			groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS desktop_handoffs (
+			code_hash BYTEA PRIMARY KEY, subject TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
+			groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS task_templates (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+			task_type TEXT NOT NULL DEFAULT 'personal', section TEXT NOT NULL DEFAULT 'General', project TEXT NOT NULL DEFAULT '',
+			repository TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT 'normal', recurrence TEXT NOT NULL DEFAULT '',
+			checklist_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_checklist_task_position ON checklist_items(task_id, position)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_task ON agent_runs(task_id, started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_lease ON agent_runs(status, lease_expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_browser_sessions_expires ON browser_sessions(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_desktop_handoffs_expires ON desktop_handoffs(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_templates_name ON task_templates(name)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_visibility_creator ON tasks(visibility, created_by)`,
+		`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_owner ON push_subscriptions(owner_id)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("migrate PostgreSQL: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,?) ON CONFLICT(version) DO NOTHING`, 1, formatTime(time.Now())); err != nil {
+		return fmt.Errorf("record PostgreSQL schema version: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ensureColumn(ctx context.Context, table, column, definition string) error {
@@ -354,7 +471,9 @@ func (s *Store) ListPushSubscriptions(ctx context.Context) ([]PushSubscription, 
 	return subscriptions, rows.Err()
 }
 
-func InsertEvent(ctx context.Context, tx *sql.Tx, event model.Event) error {
+func InsertEvent(ctx context.Context, tx interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, event model.Event) error {
 	payload, err := json.Marshal(event.Payload)
 	if err != nil {
 		return err
@@ -499,12 +618,12 @@ func (s *Store) listItems(ctx context.Context, taskID string) ([]model.Checklist
 	items := []model.ChecklistItem{}
 	for rows.Next() {
 		var item model.ChecklistItem
-		var required int
+		var required bool
 		var updated string
 		if err := rows.Scan(&item.ID, &item.TaskID, &item.Label, &item.Status, &item.Position, &required, &item.Note, &updated); err != nil {
 			return nil, err
 		}
-		item.Required = required != 0
+		item.Required = required
 		item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		items = append(items, item)
 	}

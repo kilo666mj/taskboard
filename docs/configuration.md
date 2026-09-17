@@ -7,6 +7,7 @@ disable their feature.
 | --- | --- | --- |
 | `TASKBOARD_LISTEN_ADDRESS` | `127.0.0.1:8095` | HTTP listen address. The container image overrides this to `0.0.0.0:8095`. |
 | `TASKBOARD_DATABASE_PATH` | `taskboard.db` | SQLite database path. |
+| `TASKBOARD_DATABASE_URL` | none | PostgreSQL connection URL. When set, PostgreSQL is used and `TASKBOARD_DATABASE_PATH` is ignored. |
 | `TASKBOARD_AUTH_TOKEN` | none | Deployment-scoped MCP bearer credential; at least 32 characters. Required on non-loopback listeners. |
 | `TASKBOARD_ALLOW_INSECURE` | `false` | Allow unauthenticated use only for explicit local development. Never enable on a network listener. |
 | `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. |
@@ -32,6 +33,17 @@ disable their feature.
 OIDC requires issuer, client ID, and redirect URL together. At least one OIDC
 allowlist is recommended for a workplace deployment unless the identity
 provider application assignment already restricts access.
+
+`TASKBOARD_DATABASE_URL` accepts `postgres://` and `postgresql://` URLs. A
+multi-host URL can use `target_session_attrs=read-write` to select the writable
+node after database failover:
+
+```dotenv
+TASKBOARD_DATABASE_URL=postgresql://taskboard:password@db01:5432,db02:5432/taskboard?sslmode=verify-full&sslrootcert=system&target_session_attrs=read-write
+```
+
+Keep this value in a secret store. Taskboard applies serialized, additive
+schema migrations during startup, including when several pods start together.
 
 In `cloudflare_access` mode, Taskboard verifies the edge-injected
 `Cf-Access-Jwt-Assertion` against the team JWKS, issuer, and application
