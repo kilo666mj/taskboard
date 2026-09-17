@@ -241,6 +241,20 @@ func TestAgentPickupIsClaimableAndOwnedByTheClaimingAgent(t *testing.T) {
 	}
 }
 
+func TestActiveAgentRunPreventsReassignment(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{
+		Title: "Assigned team work", Visibility: model.VisibilityTeam, Checklist: []string{"Work"},
+	}, AgentPrincipal("codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "other-agent"
+	if _, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: started.Task.Version, Owner: &owner}, HumanPrincipal("alice@example.com")); !errors.Is(err, ErrValidation) {
+		t.Fatalf("active-run reassignment error = %v, want validation", err)
+	}
+}
+
 func stringPointer(value string) *string { return &value }
 
 func TestTitleOnlySelfTaskCanComplete(t *testing.T) {

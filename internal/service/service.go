@@ -620,6 +620,15 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 			return model.Task{}, fmt.Errorf("%w: only queued, stale, or terminal work can move to agent pickup", ErrValidation)
 		}
 	}
+	if request.Owner != nil && *request.Owner != current.Owner {
+		var activeRuns int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE task_id=? AND status=? AND ended_at IS NULL`, taskID, model.TaskActive).Scan(&activeRuns); err != nil {
+			return model.Task{}, err
+		}
+		if activeRuns > 0 {
+			return model.Task{}, fmt.Errorf("%w: owner cannot change while an agent run is active", ErrValidation)
+		}
+	}
 	resultingVisibility := current.Visibility
 	if request.Visibility != nil {
 		resultingVisibility = *request.Visibility
