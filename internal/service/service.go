@@ -155,7 +155,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 		if index == 0 {
 			status = model.ItemActive
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,1,?)`, newID(now), taskID, label, status, index, stamp(now)); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,TRUE,?)`, newID(now), taskID, label, status, index, stamp(now)); err != nil {
 			return model.StartResult{}, err
 		}
 	}
@@ -250,7 +250,7 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 		return model.Task{}, err
 	}
 	for index, label := range request.Checklist {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,1,?)`, newID(now), taskID, label, model.ItemTodo, index, stamp(now)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,TRUE,?)`, newID(now), taskID, label, model.ItemTodo, index, stamp(now)); err != nil {
 			return model.Task{}, err
 		}
 	}
@@ -648,7 +648,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 			return model.Task{}, err
 		}
 		for position, label := range *request.Checklist {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,1,?)`, newID(now), taskID, label, model.ItemTodo, position, stamp(now)); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,TRUE,?)`, newID(now), taskID, label, model.ItemTodo, position, stamp(now)); err != nil {
 				return model.Task{}, err
 			}
 		}
@@ -702,7 +702,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		if label == "" || len(label) > 300 {
 			return model.Task{}, fmt.Errorf("%w: added checklist items must contain 1-300 characters", ErrValidation)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,1,?)`, newID(now), taskID, label, model.ItemTodo, position, stamp(now)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,TRUE,?)`, newID(now), taskID, label, model.ItemTodo, position, stamp(now)); err != nil {
 			return model.Task{}, err
 		}
 		position++
@@ -713,7 +713,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	}
 	if status == model.TaskDone {
 		var remaining int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM checklist_items WHERE task_id=? AND required=1 AND status NOT IN (?,?)`, taskID, model.ItemDone, model.ItemSkipped).Scan(&remaining); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM checklist_items WHERE task_id=? AND required=TRUE AND status NOT IN (?,?)`, taskID, model.ItemDone, model.ItemSkipped).Scan(&remaining); err != nil {
 			return model.Task{}, err
 		}
 		if remaining > 0 {

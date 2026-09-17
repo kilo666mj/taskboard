@@ -20,6 +20,7 @@ const (
 type Config struct {
 	ListenAddress       string
 	DatabasePath        string
+	DatabaseURL         string
 	AuthToken           string
 	AllowInsecure       bool
 	AllowedHosts        []string
@@ -47,6 +48,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		ListenAddress:       env("TASKBOARD_LISTEN_ADDRESS", "127.0.0.1:8095"),
 		DatabasePath:        env("TASKBOARD_DATABASE_PATH", "taskboard.db"),
+		DatabaseURL:         strings.TrimSpace(os.Getenv("TASKBOARD_DATABASE_URL")),
 		AuthToken:           strings.TrimSpace(os.Getenv("TASKBOARD_AUTH_TOKEN")),
 		AllowInsecure:       envBool("TASKBOARD_ALLOW_INSECURE", false),
 		AllowedHosts:        split(os.Getenv("TASKBOARD_ALLOWED_HOSTS")),
@@ -85,6 +87,12 @@ func Load() (Config, error) {
 	}
 	if cfg.AuthToken != "" && len(cfg.AuthToken) < 32 {
 		return Config{}, fmt.Errorf("TASKBOARD_AUTH_TOKEN must contain at least 32 characters")
+	}
+	if cfg.DatabaseURL != "" {
+		databaseURL, err := url.Parse(cfg.DatabaseURL)
+		if err != nil || (databaseURL.Scheme != "postgres" && databaseURL.Scheme != "postgresql") || databaseURL.Host == "" || databaseURL.Path == "" || databaseURL.Path == "/" {
+			return Config{}, fmt.Errorf("TASKBOARD_DATABASE_URL must be a PostgreSQL URL with a host and database name")
+		}
 	}
 	if cfg.MCPDefaultTaskType != "personal" && cfg.MCPDefaultTaskType != "work" {
 		return Config{}, fmt.Errorf("TASKBOARD_MCP_DEFAULT_TYPE must be personal or work")

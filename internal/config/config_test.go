@@ -44,3 +44,23 @@ func TestCloudflareAccessConfigurationFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresDatabaseURL(t *testing.T) {
+	t.Setenv("TASKBOARD_DATABASE_URL", "postgresql://taskboard@db01,db02/taskboard?target_session_attrs=read-write")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DatabaseURL == "" {
+		t.Fatal("PostgreSQL database URL was not loaded")
+	}
+
+	for _, value := range []string{"sqlite:///tmp/taskboard.db", "postgresql:///taskboard", "postgresql://db01"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("TASKBOARD_DATABASE_URL", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid database URL %q accepted", value)
+			}
+		})
+	}
+}

@@ -1,4 +1,5 @@
 taskboard_auth_token: replace-with-at-least-32-random-characters
+taskboard_database_url: ""
 taskboard_vapid_public_key: replace-me
 taskboard_vapid_private_key: replace-me
 taskboard_vapid_contact: mailto:admin@example.com

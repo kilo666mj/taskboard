@@ -7,6 +7,7 @@
   vars:
     taskboard_build_dir: "{{ playbook_dir }}/.build"
     taskboard_binary: "{{ taskboard_build_dir }}/taskboard"
+    taskboard_database_url: ""
     taskboard_lease_seconds: 300
     taskboard_mcp_default_type: work
     taskboard_browser_auth_mode: oidc

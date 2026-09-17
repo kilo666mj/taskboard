@@ -12,6 +12,20 @@ jobs:
   go:
     name: go
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: taskboard
+          POSTGRES_PASSWORD: taskboard-test
+          POSTGRES_DB: taskboard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taskboard -d taskboard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     permissions:
       contents: read
     steps:
@@ -34,6 +48,8 @@ jobs:
           fi
       - name: Test
         run: go test -race ./...
+        env:
+          TASKBOARD_TEST_POSTGRES_URL: postgresql://taskboard:taskboard-test@127.0.0.1:5432/taskboard?sslmode=disable
       - name: Vet
         run: go vet ./...
       - name: Build commands
@@ -47,6 +63,7 @@ jobs:
         run: |
           cp .env.example .env
           docker compose config --quiet
+          POSTGRES_PASSWORD=taskboard-test docker compose -f compose.yaml -f compose.postgres.yaml config --quiet
       - name: Check diff hygiene
         run: git diff --check
 
