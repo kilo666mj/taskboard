@@ -110,7 +110,8 @@ func (s *Store) migrateSQLite(ctx context.Context) error {
         )`,
 		`CREATE TABLE IF NOT EXISTS desktop_handoffs (
             code_hash BLOB PRIMARY KEY, subject TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
-            groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+            groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+			confirmation_hash BLOB, verification_code TEXT NOT NULL DEFAULT '', confirmed_at TEXT
         )`,
 		`CREATE TABLE IF NOT EXISTS task_templates (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT 'personal',
@@ -151,6 +152,15 @@ func (s *Store) migrateSQLite(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.ensureColumn(ctx, "desktop_handoffs", "confirmed_at", `TEXT`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "desktop_handoffs", "confirmation_hash", `BLOB`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "desktop_handoffs", "verification_code", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "task_templates", "task_type", `TEXT NOT NULL DEFAULT 'personal'`); err != nil {
 		return err
 	}
@@ -173,6 +183,7 @@ func (s *Store) migrateSQLite(ctx context.Context) error {
 	for _, statement := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_tasks_visibility_creator ON tasks(visibility, created_by)`,
 		`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_owner ON push_subscriptions(owner_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_desktop_handoffs_confirmation ON desktop_handoffs(confirmation_hash)`,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -233,8 +244,12 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS desktop_handoffs (
 			code_hash BYTEA PRIMARY KEY, subject TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
-			groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+			groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+			confirmation_hash BYTEA, verification_code TEXT NOT NULL DEFAULT '', confirmed_at TEXT
 		)`,
+		`ALTER TABLE desktop_handoffs ADD COLUMN IF NOT EXISTS confirmed_at TEXT`,
+		`ALTER TABLE desktop_handoffs ADD COLUMN IF NOT EXISTS confirmation_hash BYTEA`,
+		`ALTER TABLE desktop_handoffs ADD COLUMN IF NOT EXISTS verification_code TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS task_templates (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
 			task_type TEXT NOT NULL DEFAULT 'personal', section TEXT NOT NULL DEFAULT 'General', project TEXT NOT NULL DEFAULT '',
@@ -248,6 +263,7 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_browser_sessions_expires ON browser_sessions(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_desktop_handoffs_expires ON desktop_handoffs(expires_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_desktop_handoffs_confirmation ON desktop_handoffs(confirmation_hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_templates_name ON task_templates(name)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_visibility_creator ON tasks(visibility, created_by)`,
 		`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_owner ON push_subscriptions(owner_id)`,
@@ -345,13 +361,50 @@ func (s *Store) DeleteBrowserSession(ctx context.Context, token string) error {
 	return err
 }
 
-func (s *Store) CreateDesktopHandoff(ctx context.Context, code string, identity BrowserIdentity, lifetime time.Duration) error {
+func (s *Store) CreateDesktopHandoff(ctx context.Context, code, confirmation, verificationCode string, identity BrowserIdentity, lifetime time.Duration) error {
+	if len(code) < 8 || confirmation == "" || verificationCode == "" {
+		return fmt.Errorf("desktop handoff confirmation is incomplete")
+	}
 	groups, err := json.Marshal(identity.Groups)
 	if err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO desktop_handoffs(code_hash,subject,email,groups_json,created_at,expires_at) VALUES(?,?,?,?,?,?)`, credentialHash(code), identity.Subject, identity.Email, string(groups), formatTime(now), formatTime(now.Add(lifetime)))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO desktop_handoffs(code_hash,subject,email,groups_json,created_at,expires_at,confirmation_hash,verification_code) VALUES(?,?,?,?,?,?,?,?)`, credentialHash(code), identity.Subject, identity.Email, string(groups), formatTime(now), formatTime(now.Add(lifetime)), credentialHash(confirmation), verificationCode)
+	return err
+}
+
+func (s *Store) PendingDesktopHandoff(ctx context.Context, confirmation string) (string, error) {
+	var verificationCode, expires string
+	err := s.db.QueryRowContext(ctx, `SELECT verification_code,expires_at FROM desktop_handoffs WHERE confirmation_hash=? AND confirmed_at IS NULL`, credentialHash(confirmation)).Scan(&verificationCode, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expires)
+	if err != nil || !expiresAt.After(time.Now().UTC()) {
+		_, _ = s.db.ExecContext(context.Background(), `DELETE FROM desktop_handoffs WHERE confirmation_hash=?`, credentialHash(confirmation))
+		return "", ErrNotFound
+	}
+	return verificationCode, nil
+}
+
+func (s *Store) ConfirmDesktopHandoff(ctx context.Context, confirmation string) error {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE desktop_handoffs SET confirmed_at=?,confirmation_hash=NULL WHERE confirmation_hash=? AND confirmed_at IS NULL AND expires_at>?`, formatTime(now), credentialHash(confirmation), formatTime(now))
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) CancelDesktopHandoff(ctx context.Context, confirmation string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM desktop_handoffs WHERE confirmation_hash=?`, credentialHash(confirmation))
 	return err
 }
 
@@ -363,7 +416,7 @@ func (s *Store) ExchangeDesktopHandoff(ctx context.Context, code string, session
 	defer func() { _ = tx.Rollback() }()
 	var identity BrowserIdentity
 	var groups, expires string
-	err = tx.QueryRowContext(ctx, `SELECT subject,email,groups_json,expires_at FROM desktop_handoffs WHERE code_hash=?`, credentialHash(code)).Scan(&identity.Subject, &identity.Email, &groups, &expires)
+	err = tx.QueryRowContext(ctx, `SELECT subject,email,groups_json,expires_at FROM desktop_handoffs WHERE code_hash=? AND confirmed_at IS NOT NULL`, credentialHash(code)).Scan(&identity.Subject, &identity.Email, &groups, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", time.Time{}, BrowserIdentity{}, ErrNotFound
 	}

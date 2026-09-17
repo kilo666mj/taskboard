@@ -113,7 +113,9 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.HandleFunc("GET /api/v1/session", sessionState(cfg, sessions, cloudflare))
 	mux.HandleFunc("DELETE /api/v1/session", logout(cfg, sessions))
 	mux.HandleFunc("POST /api/v1/auth/desktop/session", desktopSessionExchange(sessions))
-	mux.HandleFunc("GET /api/v1/auth/desktop/complete", desktopLoginComplete)
+	mux.HandleFunc("GET /api/v1/auth/desktop/complete", desktopLoginComplete(sessions))
+	mux.HandleFunc("POST /api/v1/auth/desktop/confirm", desktopConfirm(sessions))
+	mux.HandleFunc("POST /api/v1/auth/desktop/cancel", desktopCancel(sessions))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "taskboard", "version": Version})
 	})

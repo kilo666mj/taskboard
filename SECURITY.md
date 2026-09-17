@@ -24,3 +24,7 @@ keep credentials and inventories outside the repository, and do not expose an
 insecure-mode listener beyond loopback. In Cloudflare Access mode, restrict
 direct origin reachability and require Taskboard's cryptographic assertion
 validation; never substitute unverified identity headers.
+
+Desktop OIDC sign-in requires an explicit browser confirmation. Approve it only
+when you initiated sign-in in the Taskboard desktop app and the short code shown
+in both places matches exactly.

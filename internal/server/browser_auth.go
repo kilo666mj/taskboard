@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 const (
 	browserSessionCookie = "taskboard_session"
+	desktopConfirmCookie = "taskboard_desktop_confirm"
 	browserSessionLife   = 30 * 24 * time.Hour
 	desktopHandoffLife   = 2 * time.Minute
 )
@@ -43,8 +45,16 @@ func (s *browserSessions) Issue(w http.ResponseWriter, r *http.Request, identity
 	return nil
 }
 
-func (s *browserSessions) IssueDesktop(_ http.ResponseWriter, r *http.Request, identity oidcrp.Identity, handoff string) error {
-	return s.store.CreateDesktopHandoff(r.Context(), handoff, storeIdentity(identity), desktopHandoffLife)
+func (s *browserSessions) IssueDesktop(w http.ResponseWriter, r *http.Request, identity oidcrp.Identity, handoff string) error {
+	confirmation, err := oidcrp.NewDesktopConfirmation(handoff)
+	if err != nil {
+		return err
+	}
+	if err := s.store.CreateDesktopHandoff(r.Context(), handoff, confirmation.BrowserSecret, confirmation.VerificationCode, storeIdentity(identity), desktopHandoffLife); err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{Name: desktopConfirmCookie, Value: confirmation.BrowserSecret, Path: "/api/v1/auth/desktop", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(desktopHandoffLife.Seconds())})
+	return nil
 }
 
 func (s *browserSessions) Clear(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +86,18 @@ func (s *browserSessions) exchangeDesktop(w http.ResponseWriter, r *http.Request
 	}
 	s.setCookie(w, token, expires)
 	return nil
+}
+
+func (s *browserSessions) pendingDesktop(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie(desktopConfirmCookie)
+	if err != nil || len(cookie.Value) < 32 || len(cookie.Value) > 128 {
+		return "", false
+	}
+	return cookie.Value, true
+}
+
+func (s *browserSessions) clearDesktopConfirmation(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: desktopConfirmCookie, Value: "", Path: "/api/v1/auth/desktop", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 }
 
 func (s *browserSessions) setCookie(w http.ResponseWriter, token string, expires time.Time) {
@@ -133,11 +155,81 @@ func desktopSessionExchange(sessions *browserSessions) http.HandlerFunc {
 	}
 }
 
-func desktopLoginComplete(w http.ResponseWriter, _ *http.Request) {
+func desktopVerificationCode(handoff string) string {
+	return strings.ToUpper(handoff[:4] + "-" + handoff[4:8])
+}
+
+func desktopLoginComplete(sessions *browserSessions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		confirmation, ok := sessions.pendingDesktop(r)
+		if !ok {
+			desktopConfirmationPage(w, http.StatusGone, "Desktop sign-in expired", "Return to the Taskboard desktop app and start sign-in again.", "")
+			return
+		}
+		verificationCode, err := sessions.store.PendingDesktopHandoff(r.Context(), confirmation)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				sessions.logger.Error("load desktop confirmation", "error", err)
+			}
+			sessions.clearDesktopConfirmation(w)
+			desktopConfirmationPage(w, http.StatusGone, "Desktop sign-in expired", "Return to the Taskboard desktop app and start sign-in again.", "")
+			return
+		}
+		desktopConfirmationPage(w, http.StatusOK, "Confirm desktop sign-in", "Approve only if the Taskboard desktop app you opened shows this exact code. If you did not start sign-in, cancel.", verificationCode)
+	}
+}
+
+func desktopConfirm(sessions *browserSessions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r.Header.Get("Origin"), r.Host) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+			return
+		}
+		confirmation, ok := sessions.pendingDesktop(r)
+		if !ok {
+			desktopConfirmationPage(w, http.StatusGone, "Desktop sign-in expired", "Return to the Taskboard desktop app and start sign-in again.", "")
+			return
+		}
+		if err := sessions.store.ConfirmDesktopHandoff(r.Context(), confirmation); err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				sessions.logger.Error("confirm desktop handoff", "error", err)
+			}
+			sessions.clearDesktopConfirmation(w)
+			desktopConfirmationPage(w, http.StatusGone, "Desktop sign-in expired", "Return to the Taskboard desktop app and start sign-in again.", "")
+			return
+		}
+		sessions.clearDesktopConfirmation(w)
+		desktopConfirmationPage(w, http.StatusOK, "Desktop sign-in confirmed", "You can close this window and return to Taskboard.", "")
+	}
+}
+
+func desktopCancel(sessions *browserSessions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r.Header.Get("Origin"), r.Host) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+			return
+		}
+		if confirmation, ok := sessions.pendingDesktop(r); ok {
+			if err := sessions.store.CancelDesktopHandoff(r.Context(), confirmation); err != nil {
+				sessions.logger.Error("cancel desktop handoff", "error", err)
+			}
+		}
+		sessions.clearDesktopConfirmation(w)
+		desktopConfirmationPage(w, http.StatusOK, "Desktop sign-in cancelled", "No desktop session was created. You can close this window.", "")
+	}
+}
+
+func desktopConfirmationPage(w http.ResponseWriter, status int, title, message, verificationCode string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Taskboard sign-in complete</title></head><body><main><h1>Sign-in complete</h1><p>You can close this window and return to Taskboard.</p></main></body></html>`))
+	w.WriteHeader(status)
+	code := ""
+	actions := ""
+	if verificationCode != "" {
+		code = fmt.Sprintf(`<p><strong><code>%s</code></strong></p>`, verificationCode)
+		actions = `<form method="post" action="/api/v1/auth/desktop/confirm"><button type="submit">Confirm sign-in</button></form><form method="post" action="/api/v1/auth/desktop/cancel"><button type="submit">Cancel</button></form>`
+	}
+	_, _ = fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>%s</title></head><body><main><h1>%s</h1><p>%s</p>%s%s</main></body></html>`, title, title, message, code, actions)
 }
 
 func logout(cfg config.Config, sessions *browserSessions) http.HandlerFunc {

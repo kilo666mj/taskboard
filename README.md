@@ -116,8 +116,10 @@ access must still be restricted.
 
 The Tauri client opens the identity provider in the system browser so passkeys are not
 confined to an embedded webview. It uses a random, two-minute, single-use
-handoff to establish the ordinary Taskboard session inside its webview; the
-native shell stores no identity-provider or Taskboard credentials.
+handoff to establish the ordinary Taskboard session inside its webview. Before
+the handoff can be exchanged, the authenticated browser must explicitly approve
+the same short verification code shown by the desktop app. The native shell
+stores no identity-provider or Taskboard credentials.
 
 ## Notifications
 
