@@ -14,6 +14,12 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := legacy.Exec(`CREATE TABLE desktop_handoffs (
+		code_hash BLOB PRIMARY KEY, subject TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
+		groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	_, err = legacy.Exec(`CREATE TABLE tasks (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
         repository TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '',
@@ -56,6 +62,14 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	if task.SortOrder <= 0 || task.Priority != "normal" {
 		t.Fatalf("migrated planning defaults = %+v", task)
 	}
+	code := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, BrowserIdentity{Subject: "user-1"}, time.Minute)
+	if err != nil {
+		t.Fatalf("create handoff on migrated schema: %v", err)
+	}
+	if verification, err := database.PendingDesktopHandoff(t.Context(), confirmation); err != nil || verification != "0123-4567" {
+		t.Fatalf("migrated handoff = %q, %v", verification, err)
+	}
 }
 
 func TestSchemaCreatesQueryIndexes(t *testing.T) {
@@ -81,8 +95,8 @@ func TestSchemaCreatesQueryIndexes(t *testing.T) {
 	for rows.Next() {
 		count++
 	}
-	if count != 10 {
-		t.Fatalf("application indexes = %d, want 10", count)
+	if count != 11 {
+		t.Fatalf("application indexes = %d, want 11", count)
 	}
 }
 
@@ -125,7 +139,17 @@ func TestDesktopHandoffIsSingleUse(t *testing.T) {
 	})
 	identity := BrowserIdentity{Subject: "user-1", Email: "person@example.com"}
 	code := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	if err := database.CreateDesktopHandoff(t.Context(), code, identity, time.Minute); err != nil {
+	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, identity, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := database.ExchangeDesktopHandoff(t.Context(), code, time.Hour); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unconfirmed exchange error = %v, want not found", err)
+	}
+	if verification, err := database.PendingDesktopHandoff(t.Context(), confirmation); err != nil || verification != "0123-4567" {
+		t.Fatalf("pending handoff = %q, %v", verification, err)
+	}
+	if err := database.ConfirmDesktopHandoff(t.Context(), confirmation); err != nil {
 		t.Fatal(err)
 	}
 	token, _, loaded, err := database.ExchangeDesktopHandoff(t.Context(), code, time.Hour)
@@ -137,5 +161,24 @@ func TestDesktopHandoffIsSingleUse(t *testing.T) {
 	}
 	if _, valid, err := database.BrowserSession(t.Context(), token); err != nil || !valid {
 		t.Fatalf("exchanged session valid = %v, error = %v", valid, err)
+	}
+}
+
+func TestDesktopHandoffConfirmationExpires(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "taskboard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	code := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, BrowserIdentity{Subject: "user-1"}, -time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.PendingDesktopHandoff(t.Context(), confirmation); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired pending handoff error = %v, want not found", err)
+	}
+	if err := database.ConfirmDesktopHandoff(t.Context(), confirmation); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired confirmation error = %v, want not found", err)
 	}
 }

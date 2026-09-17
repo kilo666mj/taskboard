@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/mcpkit/mcpkittest"
+	"github.com/kilo666mj/oidcrp"
 	"github.com/kilo666mj/taskboard/internal/config"
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/push"
@@ -388,10 +389,52 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := strings.Repeat("ab", 32)
-	if err := database.CreateDesktopHandoff(t.Context(), code, store.BrowserIdentity{Subject: "subject-1", Email: "person@example.com"}, time.Minute); err != nil {
+	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, store.BrowserIdentity{Subject: "subject-1", Email: "person@example.com"}, time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]string{"code": code})
+	unconfirmed := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
+	unconfirmed.Header.Set("Origin", "https://taskboard.example.com")
+	unconfirmedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unconfirmedResponse, unconfirmed)
+	if unconfirmedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unconfirmed exchange status = %d, want 401", unconfirmedResponse.Code)
+	}
+	attackerConfirm := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/confirm", nil)
+	attackerConfirm.Header.Set("Origin", "https://taskboard.example.com")
+	attackerConfirm.AddCookie(&http.Cookie{Name: desktopConfirmCookie, Value: code, Path: "/api/v1/auth/desktop"})
+	attackerConfirmation := httptest.NewRecorder()
+	handler.ServeHTTP(attackerConfirmation, attackerConfirm)
+	if attackerConfirmation.Code != http.StatusGone {
+		t.Fatalf("attacker-known handoff confirmation status = %d, want 410", attackerConfirmation.Code)
+	}
+
+	confirmationCookie := &http.Cookie{Name: desktopConfirmCookie, Value: confirmation, Path: "/api/v1/auth/desktop"}
+	crossOriginConfirm := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/confirm", nil)
+	crossOriginConfirm.Header.Set("Origin", "https://evil.example")
+	crossOriginConfirm.AddCookie(confirmationCookie)
+	crossOriginConfirmation := httptest.NewRecorder()
+	handler.ServeHTTP(crossOriginConfirmation, crossOriginConfirm)
+	if crossOriginConfirmation.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin confirmation status = %d, want 403", crossOriginConfirmation.Code)
+	}
+	confirmationPage := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/auth/desktop/complete", nil)
+	confirmationPage.AddCookie(confirmationCookie)
+	confirmationResponse := httptest.NewRecorder()
+	handler.ServeHTTP(confirmationResponse, confirmationPage)
+	if confirmationResponse.Code != http.StatusOK || !strings.Contains(confirmationResponse.Body.String(), desktopVerificationCode(code)) {
+		t.Fatalf("confirmation page status/body = %d/%s", confirmationResponse.Code, confirmationResponse.Body.String())
+	}
+	confirm := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/confirm", nil)
+	confirm.Header.Set("Origin", "https://taskboard.example.com")
+	confirm.AddCookie(confirmationCookie)
+	confirmed := httptest.NewRecorder()
+	handler.ServeHTTP(confirmed, confirm)
+	if confirmed.Code != http.StatusOK {
+		t.Fatalf("confirmation status = %d, body=%s", confirmed.Code, confirmed.Body.String())
+	}
+
 	request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
 	request.Header.Set("Origin", "https://taskboard.example.com")
 	response := httptest.NewRecorder()
@@ -414,5 +457,54 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 	handler.ServeHTTP(rejected, crossOrigin)
 	if rejected.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin status = %d, want 403", rejected.Code)
+	}
+}
+
+func TestIssueDesktopKeepsBrowserConfirmationSecretSeparate(t *testing.T) {
+	_, database, logger := serverFixture(t)
+	sessions := newBrowserSessions(database, true, logger)
+	code := strings.Repeat("ef", 32)
+	request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/auth/oidc/callback", nil)
+	response := httptest.NewRecorder()
+	if err := sessions.IssueDesktop(response, request, oidcrp.Identity{Subject: "subject-1"}, code); err != nil {
+		t.Fatal(err)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != desktopConfirmCookie || cookies[0].Value == code || !cookies[0].HttpOnly || !cookies[0].Secure {
+		t.Fatalf("desktop confirmation cookie = %#v", cookies)
+	}
+	if verification, err := database.PendingDesktopHandoff(t.Context(), cookies[0].Value); err != nil || verification != desktopVerificationCode(code) {
+		t.Fatalf("pending browser confirmation = %q, %v", verification, err)
+	}
+}
+
+func TestDesktopSessionConfirmationCanBeCancelled(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	notifications := push.New(database, tasks, "", "", "", logger)
+	cfg := config.Config{AuthToken: strings.Repeat("test-token-", 4), LeaseDuration: time.Minute, OIDCIssuer: "https://idp.example.com", OIDCClientID: "taskboard", OIDCRedirectURL: "https://taskboard.example.com/api/v1/auth/oidc/callback"}
+	handler, err := New(cfg, database, tasks, notifications, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := strings.Repeat("cd", 32)
+	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, store.BrowserIdentity{Subject: "subject-1"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/cancel", nil)
+	cancel.Header.Set("Origin", "https://taskboard.example.com")
+	cancel.AddCookie(&http.Cookie{Name: desktopConfirmCookie, Value: confirmation, Path: "/api/v1/auth/desktop"})
+	cancelled := httptest.NewRecorder()
+	handler.ServeHTTP(cancelled, cancel)
+	if cancelled.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body=%s", cancelled.Code, cancelled.Body.String())
+	}
+	body, _ := json.Marshal(map[string]string{"code": code})
+	exchange := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
+	exchange.Header.Set("Origin", "https://taskboard.example.com")
+	exchanged := httptest.NewRecorder()
+	handler.ServeHTTP(exchanged, exchange)
+	if exchanged.Code != http.StatusUnauthorized {
+		t.Fatalf("cancelled exchange status = %d, want 401", exchanged.Code)
 	}
 }
