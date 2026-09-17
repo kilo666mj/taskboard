@@ -389,8 +389,12 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := strings.Repeat("ab", 32)
-	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, store.BrowserIdentity{Subject: "subject-1", Email: "person@example.com"}, time.Minute)
+	approval, err := oidcrp.NewDesktopConfirmation(code)
 	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := approval.BrowserSecret
+	if err := database.CreateDesktopHandoff(t.Context(), code, confirmation, approval.VerificationCode, store.BrowserIdentity{Subject: "subject-1", Email: "person@example.com"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]string{"code": code})
@@ -487,8 +491,12 @@ func TestDesktopSessionConfirmationCanBeCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := strings.Repeat("cd", 32)
-	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, store.BrowserIdentity{Subject: "subject-1"}, time.Minute)
+	approval, err := oidcrp.NewDesktopConfirmation(code)
 	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := approval.BrowserSecret
+	if err := database.CreateDesktopHandoff(t.Context(), code, confirmation, approval.VerificationCode, store.BrowserIdentity{Subject: "subject-1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	cancel := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/cancel", nil)

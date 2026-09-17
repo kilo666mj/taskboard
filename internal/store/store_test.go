@@ -63,8 +63,8 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 		t.Fatalf("migrated planning defaults = %+v", task)
 	}
 	code := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, BrowserIdentity{Subject: "user-1"}, time.Minute)
-	if err != nil {
+	confirmation := "migration-browser-confirmation-secret"
+	if err := database.CreateDesktopHandoff(t.Context(), code, confirmation, "0123-4567", BrowserIdentity{Subject: "user-1"}, time.Minute); err != nil {
 		t.Fatalf("create handoff on migrated schema: %v", err)
 	}
 	if verification, err := database.PendingDesktopHandoff(t.Context(), confirmation); err != nil || verification != "0123-4567" {
@@ -139,8 +139,8 @@ func TestDesktopHandoffIsSingleUse(t *testing.T) {
 	})
 	identity := BrowserIdentity{Subject: "user-1", Email: "person@example.com"}
 	code := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, identity, time.Minute)
-	if err != nil {
+	confirmation := "single-use-browser-confirmation-secret"
+	if err := database.CreateDesktopHandoff(t.Context(), code, confirmation, "0123-4567", identity, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := database.ExchangeDesktopHandoff(t.Context(), code, time.Hour); !errors.Is(err, ErrNotFound) {
@@ -171,8 +171,8 @@ func TestDesktopHandoffConfirmationExpires(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	code := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
-	confirmation, err := database.CreateDesktopHandoff(t.Context(), code, BrowserIdentity{Subject: "user-1"}, -time.Second)
-	if err != nil {
+	confirmation := "expired-browser-confirmation-secret"
+	if err := database.CreateDesktopHandoff(t.Context(), code, confirmation, "FEDC-BA98", BrowserIdentity{Subject: "user-1"}, -time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.PendingDesktopHandoff(t.Context(), confirmation); !errors.Is(err, ErrNotFound) {

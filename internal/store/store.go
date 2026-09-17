@@ -361,25 +361,17 @@ func (s *Store) DeleteBrowserSession(ctx context.Context, token string) error {
 	return err
 }
 
-func (s *Store) CreateDesktopHandoff(ctx context.Context, code string, identity BrowserIdentity, lifetime time.Duration) (string, error) {
-	if len(code) < 8 {
-		return "", fmt.Errorf("desktop handoff code is too short")
+func (s *Store) CreateDesktopHandoff(ctx context.Context, code, confirmation, verificationCode string, identity BrowserIdentity, lifetime time.Duration) error {
+	if len(code) < 8 || confirmation == "" || verificationCode == "" {
+		return fmt.Errorf("desktop handoff confirmation is incomplete")
 	}
 	groups, err := json.Marshal(identity.Groups)
 	if err != nil {
-		return "", err
-	}
-	confirmation, err := randomCredential()
-	if err != nil {
-		return "", err
+		return err
 	}
 	now := time.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO desktop_handoffs(code_hash,subject,email,groups_json,created_at,expires_at,confirmation_hash,verification_code) VALUES(?,?,?,?,?,?,?,?)`, credentialHash(code), identity.Subject, identity.Email, string(groups), formatTime(now), formatTime(now.Add(lifetime)), credentialHash(confirmation), handoffVerificationCode(code))
-	return confirmation, err
-}
-
-func handoffVerificationCode(code string) string {
-	return strings.ToUpper(code[:4] + "-" + code[4:8])
+	_, err = s.db.ExecContext(ctx, `INSERT INTO desktop_handoffs(code_hash,subject,email,groups_json,created_at,expires_at,confirmation_hash,verification_code) VALUES(?,?,?,?,?,?,?,?)`, credentialHash(code), identity.Subject, identity.Email, string(groups), formatTime(now), formatTime(now.Add(lifetime)), credentialHash(confirmation), verificationCode)
+	return err
 }
 
 func (s *Store) PendingDesktopHandoff(ctx context.Context, confirmation string) (string, error) {

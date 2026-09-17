@@ -46,11 +46,14 @@ func (s *browserSessions) Issue(w http.ResponseWriter, r *http.Request, identity
 }
 
 func (s *browserSessions) IssueDesktop(w http.ResponseWriter, r *http.Request, identity oidcrp.Identity, handoff string) error {
-	confirmation, err := s.store.CreateDesktopHandoff(r.Context(), handoff, storeIdentity(identity), desktopHandoffLife)
+	confirmation, err := oidcrp.NewDesktopConfirmation(handoff)
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: desktopConfirmCookie, Value: confirmation, Path: "/api/v1/auth/desktop", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(desktopHandoffLife.Seconds())})
+	if err := s.store.CreateDesktopHandoff(r.Context(), handoff, confirmation.BrowserSecret, confirmation.VerificationCode, storeIdentity(identity), desktopHandoffLife); err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{Name: desktopConfirmCookie, Value: confirmation.BrowserSecret, Path: "/api/v1/auth/desktop", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(desktopHandoffLife.Seconds())})
 	return nil
 }
 
