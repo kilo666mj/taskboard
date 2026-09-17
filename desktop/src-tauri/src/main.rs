@@ -41,17 +41,26 @@ fn normalize_origin(origin: &str) -> Result<String, String> {
 }
 
 fn stored_origin(app: &AppHandle) -> Option<String> {
-    app.store(STORE_FILE).ok()?.get(ORIGIN_KEY)?.as_str().map(str::to_string)
+    app.store(STORE_FILE)
+        .ok()?
+        .get(ORIGIN_KEY)?
+        .as_str()
+        .map(str::to_string)
 }
 
 fn allow_origin(app: &AppHandle, origin: &str) -> Result<(), String> {
-    let capability = format!(r#"{{
+    let capability = format!(
+        r#"{{
         "identifier":"taskboard-remote-{}",
         "windows":["main"],
         "remote":{{"urls":["{}/*"]}},
         "permissions":["allow-set-attention","allow-alert","allow-begin-oidc-login","core:event:default","core:window:allow-set-focus"]
-    }}"#, origin.replace([':', '/', '.'], "-"), origin);
-    app.add_capability(capability).map_err(|error| error.to_string())
+    }}"#,
+        origin.replace([':', '/', '.'], "-"),
+        origin
+    );
+    app.add_capability(capability)
+        .map_err(|error| error.to_string())
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -68,7 +77,9 @@ fn navigate(window: &WebviewWindow, target: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn configured_origin(app: AppHandle) -> Option<String> { stored_origin(&app) }
+fn configured_origin(app: AppHandle) -> Option<String> {
+    stored_origin(&app)
+}
 
 #[tauri::command]
 fn configure(app: AppHandle, origin: String) -> Result<String, String> {
@@ -77,15 +88,23 @@ fn configure(app: AppHandle, origin: String) -> Result<String, String> {
     store.set(ORIGIN_KEY, origin.clone());
     store.save().map_err(|error| error.to_string())?;
     allow_origin(&app, &origin)?;
-    app.autolaunch().enable().map_err(|error| error.to_string())?;
-    let window = app.get_webview_window(MAIN_WINDOW).ok_or("main window is unavailable")?;
+    app.autolaunch()
+        .enable()
+        .map_err(|error| error.to_string())?;
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or("main window is unavailable")?;
     navigate(&window, &origin)?;
     Ok(origin)
 }
 
 #[tauri::command]
 fn begin_oidc_login(app: AppHandle, handoff: String) -> Result<(), String> {
-    if handoff.len() != 64 || !handoff.chars().all(|character| character.is_ascii_hexdigit()) {
+    if handoff.len() != 64
+        || !handoff
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
         return Err("desktop sign-in handoff is invalid".into());
     }
     let origin = stored_origin(&app).ok_or("server origin is not configured")?;
@@ -108,16 +127,31 @@ fn open_in_system_browser(target: &str) -> Result<(), String> {
         command.arg("url.dll,FileProtocolHandler");
         command
     };
-    command.arg(parsed.as_str()).spawn().map_err(|error| error.to_string())?;
+    command
+        .arg(parsed.as_str())
+        .spawn()
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn set_attention(app: AppHandle, count: u32) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id("taskboard") {
-        let icon = if count > 0 { TRAY_ATTENTION_ICON } else { TRAY_ICON };
-        tray.set_icon(Some(Image::from_bytes(icon).map_err(|error| error.to_string())?)).map_err(|error| error.to_string())?;
-        tray.set_tooltip(Some(if count > 0 { format!("Taskboard — {count} need attention") } else { "Taskboard".into() })).map_err(|error| error.to_string())?;
+        let icon = if count > 0 {
+            TRAY_ATTENTION_ICON
+        } else {
+            TRAY_ICON
+        };
+        tray.set_icon(Some(
+            Image::from_bytes(icon).map_err(|error| error.to_string())?,
+        ))
+        .map_err(|error| error.to_string())?;
+        tray.set_tooltip(Some(if count > 0 {
+            format!("Taskboard — {count} need attention")
+        } else {
+            "Taskboard".into()
+        }))
+        .map_err(|error| error.to_string())?;
     }
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.set_badge_count((count > 0).then_some(count as i64));
@@ -127,8 +161,15 @@ fn set_attention(app: AppHandle, count: u32) -> Result<(), String> {
 
 #[tauri::command]
 fn alert(app: AppHandle, payload: AlertPayload) -> Result<(), String> {
-    let mut notification = app.notification().builder().title(payload.title).body(payload.body).group(format!("taskboard-{}", payload.id));
-    if !payload.urgent { notification = notification.silent(); }
+    let mut notification = app
+        .notification()
+        .builder()
+        .title(payload.title)
+        .body(payload.body)
+        .group(format!("taskboard-{}", payload.id));
+    if !payload.urgent {
+        notification = notification.silent();
+    }
     notification.show().map_err(|error| error.to_string())
 }
 
@@ -137,14 +178,25 @@ fn build_tray(app: &AppHandle, icon: Image<'_>) -> tauri::Result<()> {
     let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &refresh, &quit])?;
-    TrayIconBuilder::with_id("taskboard").icon(icon).tooltip("Taskboard").menu(&menu).show_menu_on_left_click(false)
+    TrayIconBuilder::with_id("taskboard")
+        .icon(icon)
+        .tooltip("Taskboard")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
-            "refresh" => { let _ = app.emit("taskboard://refresh", ()); show_main_window(app); },
+            "refresh" => {
+                let _ = app.emit("taskboard://refresh", ());
+                show_main_window(app);
+            }
             "quit" => app.exit(0),
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| { if let TrayIconEvent::Click { .. } = event { show_main_window(tray.app_handle()); } })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { .. } = event {
+                show_main_window(tray.app_handle());
+            }
+        })
         .build(app)?;
     Ok(())
 }
@@ -153,36 +205,70 @@ fn main() {
     // Fedora/KWin can terminate GTK WebKit clients on the explicit-sync Wayland
     // path. XWayland is stable on Plasma and preserves tray/notification support.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("GDK_BACKEND").is_none() { std::env::set_var("GDK_BACKEND", "x11"); }
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
     #[cfg(target_os = "linux")]
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1"); }
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main_window(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            show_main_window(app)
+        }))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
-        .invoke_handler(tauri::generate_handler![configured_origin, configure, begin_oidc_login, set_attention, alert])
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .invoke_handler(tauri::generate_handler![
+            configured_origin,
+            configure,
+            begin_oidc_login,
+            set_attention,
+            alert
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
-            let icon = handle.default_window_icon().expect("bundle icon configured").clone();
-            if let Some(window) = handle.get_webview_window(MAIN_WINDOW) { window.set_icon(icon.clone())?; }
+            let icon = handle
+                .default_window_icon()
+                .expect("bundle icon configured")
+                .clone();
+            if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
+                window.set_icon(icon.clone())?;
+            }
             build_tray(&handle, Image::from_bytes(TRAY_ICON)?)?;
             if let Some(origin) = stored_origin(&handle) {
-				if let Err(error) = handle.autolaunch().enable() {
-					eprintln!("taskboard: cannot enable autostart: {error}");
-				}
-				match allow_origin(&handle, &origin) {
-					Ok(()) => {
-						if let Some(window) = handle.get_webview_window(MAIN_WINDOW) { let _ = navigate(&window, &origin); }
-					}
-					Err(error) => eprintln!("taskboard: cannot trust {origin}: {error}"),
-				}
+                if let Err(error) = handle.autolaunch().enable() {
+                    eprintln!("taskboard: cannot enable autostart: {error}");
+                }
+                match allow_origin(&handle, &origin) {
+                    Ok(()) => {
+                        if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
+                            let _ = navigate(&window, &origin);
+                        }
+                    }
+                    Err(error) => eprintln!("taskboard: cannot trust {origin}: {error}"),
+                }
             }
             Ok(())
         })
-        .on_window_event(|window, event| { if let WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); let _ = window.hide(); } })
-        .build(tauri::generate_context!()).expect("build Taskboard desktop client")
-        .run(|_, event| { if let RunEvent::ExitRequested { api, code, .. } = event { if code.is_none() { api.prevent_exit(); } } });
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("build Taskboard desktop client")
+        .run(|_, event| {
+            if let RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
