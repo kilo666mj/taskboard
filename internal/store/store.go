@@ -18,7 +18,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict")
+)
 
 type Store struct{ db *DB }
 
@@ -486,9 +489,16 @@ func (s *Store) SavePushSubscription(ctx context.Context, subscription PushSubsc
 		subscription.NotifyProgress = true
 		subscription.NotifyReminders = true
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO push_subscriptions(endpoint,p256dh,auth,owner_id,notify_progress,notify_reminders,notify_summaries,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,owner_id=excluded.owner_id,updated_at=excluded.updated_at`, subscription.Endpoint, subscription.P256DH, subscription.Auth, subscription.OwnerID, subscription.NotifyProgress, subscription.NotifyReminders, subscription.NotifySummaries, now, now)
-	return err
+	result, err := s.db.ExecContext(ctx, `INSERT INTO push_subscriptions(endpoint,p256dh,auth,owner_id,notify_progress,notify_reminders,notify_summaries,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,updated_at=excluded.updated_at
+		WHERE push_subscriptions.owner_id=excluded.owner_id`, subscription.Endpoint, subscription.P256DH, subscription.Auth, subscription.OwnerID, subscription.NotifyProgress, subscription.NotifyReminders, subscription.NotifySummaries, now, now)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Store) UpdatePushPreferences(ctx context.Context, endpoint, ownerID string, progress, reminders, summaries bool) error {

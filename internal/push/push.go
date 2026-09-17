@@ -33,7 +33,7 @@ type notification struct {
 }
 
 func New(database *store.Store, tasks *service.Service, publicKey, privateKey, contact string, logger *slog.Logger) *Service {
-	return &Service{database: database, tasks: tasks, publicKey: publicKey, privateKey: privateKey, contact: contact, logger: logger, client: &http.Client{Timeout: 15 * time.Second}}
+	return &Service{database: database, tasks: tasks, publicKey: publicKey, privateKey: privateKey, contact: contact, logger: logger, client: pwakit.NewPublicHTTPClient(15 * time.Second)}
 }
 
 func (s *Service) Enabled() bool     { return s.publicKey != "" && s.privateKey != "" }

@@ -163,11 +163,17 @@ func TestPostgresTaskLifecycleAndAtomicClaim(t *testing.T) {
 	if err := database.SavePushSubscription(t.Context(), subscription); err != nil {
 		t.Fatal(err)
 	}
+	conflicting := subscription
+	conflicting.OwnerID = "other-postgres-user"
+	conflicting.P256DH = "replacement-key"
+	if err := database.SavePushSubscription(t.Context(), conflicting); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting PostgreSQL subscription error = %v, want conflict", err)
+	}
 	if err := database.UpdatePushPreferences(t.Context(), subscription.Endpoint, identity.Subject, false, true, true); err != nil {
 		t.Fatal(err)
 	}
 	subscriptions, err := database.ListPushSubscriptions(t.Context())
-	if err != nil || len(subscriptions) != 1 || subscriptions[0].NotifyProgress || !subscriptions[0].NotifyReminders || !subscriptions[0].NotifySummaries {
+	if err != nil || len(subscriptions) != 1 || subscriptions[0].OwnerID != identity.Subject || subscriptions[0].P256DH != "key" || subscriptions[0].NotifyProgress || !subscriptions[0].NotifyReminders || !subscriptions[0].NotifySummaries {
 		t.Fatalf("PostgreSQL subscriptions = %+v, err=%v", subscriptions, err)
 	}
 }

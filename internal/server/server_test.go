@@ -165,6 +165,58 @@ func TestSavePushSubscriptionAcceptsExpirationTime(t *testing.T) {
 	}
 }
 
+func TestPushSubscriptionEndpointCannotBeTakenOver(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	notifications := push.New(database, tasks, "public-key", "private-key", "mailto:test@example.com", logger)
+	requestFor := func(subject, body string) *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(body))
+		return request.WithContext(context.WithValue(request.Context(), principalKey{}, service.HumanPrincipal(subject)))
+	}
+	aliceBody := `{"endpoint":"https://web.push.apple.com/device","keys":{"p256dh":"alice-key","auth":"alice-auth"}}`
+	response := httptest.NewRecorder()
+	savePushSubscription(notifications).ServeHTTP(response, requestFor("alice@example.com", aliceBody))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("alice save status = %d, body=%s", response.Code, response.Body.String())
+	}
+
+	bobBody := `{"endpoint":"https://web.push.apple.com/device","keys":{"p256dh":"bob-key","auth":"bob-auth"}}`
+	response = httptest.NewRecorder()
+	savePushSubscription(notifications).ServeHTTP(response, requestFor("bob@example.com", bobBody))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("bob save status = %d, body=%s", response.Code, response.Body.String())
+	}
+	subscriptions, err := database.ListPushSubscriptions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subscriptions) != 1 || subscriptions[0].OwnerID != "alice@example.com" || subscriptions[0].P256DH != "alice-key" || subscriptions[0].Auth != "alice-auth" {
+		t.Fatalf("subscription was replaced: %#v", subscriptions)
+	}
+
+	preferences := httptest.NewRequest(http.MethodPatch, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(`{"endpoint":"https://web.push.apple.com/device","progress":false}`))
+	preferences = preferences.WithContext(context.WithValue(preferences.Context(), principalKey{}, service.HumanPrincipal("bob@example.com")))
+	response = httptest.NewRecorder()
+	updatePushPreferences(notifications).ServeHTTP(response, preferences)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("bob preferences status = %d, body=%s", response.Code, response.Body.String())
+	}
+
+	remove := httptest.NewRequest(http.MethodDelete, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(`{"endpoint":"https://web.push.apple.com/device"}`))
+	remove = remove.WithContext(context.WithValue(remove.Context(), principalKey{}, service.HumanPrincipal("bob@example.com")))
+	response = httptest.NewRecorder()
+	deletePushSubscription(notifications).ServeHTTP(response, remove)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("bob delete status = %d, body=%s", response.Code, response.Body.String())
+	}
+	subscriptions, err = database.ListPushSubscriptions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subscriptions) != 1 || subscriptions[0].OwnerID != "alice@example.com" {
+		t.Fatalf("subscription was deleted: %#v", subscriptions)
+	}
+}
+
 func TestRESTCreatesAndListsMultipleTasks(t *testing.T) {
 	tasks, database, logger := serverFixture(t)
 	notifications := push.New(database, tasks, "", "", "", logger)
