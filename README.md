@@ -6,9 +6,10 @@ start it themselves or assign it to an agent. Agents use the same durable tasks
 through MCP, while execution status arrives through native desktop
 notifications or Web Push.
 
-It is designed for a trusted personal or team workspace. The current release is
-not tenant-isolated; see [Workplace readiness](docs/workplace-readiness.md) for
-the path to individually authorized agents, roles, and workspace boundaries.
+It is designed for a trusted personal or team workspace. Task visibility is
+server-enforced, but the current release is not tenant-isolated; see
+[Workplace readiness](docs/workplace-readiness.md) for the path to individually
+authorized agents, roles, and workspace boundaries.
 
 Taskboard is an upstream application, not state embedded in Switchboard:
 
@@ -39,6 +40,20 @@ capability is in `capabilities/taskboard.example.json`.
 
 ## Planning and review
 
+Every task has an independent visibility lane:
+
+- **Private** tasks are visible only to the stable identity-provider subject
+  that created them and are never returned through the agent MCP API.
+- **Team** tasks are visible to authenticated people. An agent sees a team task
+  only when its authenticated agent name matches the task's assignee.
+- **Agent pickup** tasks are visible to people and eligible agents, and a queued
+  or stale task is atomically claimed by one agent before work starts.
+
+Existing databases migrate tasks to the team lane. New browser tasks default to
+private, while MCP-created work defaults to agent pickup. A task keeps its
+immutable creator when published; that creator may later make it private again.
+Visibility cannot change during an active agent run.
+
 Every task has a `personal` or `work` type. Existing tasks and browser-created
 tasks default to `personal`; set `TASKBOARD_MCP_DEFAULT_TYPE=work` to classify
 agent-created tasks as work unless an MCP caller explicitly chooses otherwise.
@@ -48,10 +63,11 @@ metadata; they never masquerade as the blocked or waiting execution states.
 Recurring daily, weekly, or monthly tasks create their next queued occurrence
 when completed, including a fresh copy of the checklist.
 
-The board opens with every unfinished task visible. Optional compact views cover
-Inbox, Today, Upcoming, Waiting, Active agents, Completed, and daily and weekly
-review queues. Search always spans all tasks by title, context, section, project,
-repository, and owner, regardless of the selected view. Review queues surface
+The board opens with every unfinished visible task. Optional compact views cover
+Private, Team, Agent pickup, Inbox, Today, Upcoming, Waiting, Active agents,
+Completed, and daily and weekly review queues. Search always spans all visible
+tasks by title, context, lane, section, project, repository, and owner,
+regardless of the selected view. Review queues surface
 unplanned, overdue, stale, and waiting work and let a person explicitly mark a
 task reviewed. Reusable templates preserve planning fields and checklists.
 

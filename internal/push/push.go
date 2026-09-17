@@ -41,11 +41,11 @@ func (s *Service) PublicKey() string { return s.publicKey }
 func (s *Service) Save(ctx context.Context, subscription store.PushSubscription) error {
 	return s.database.SavePushSubscription(ctx, subscription)
 }
-func (s *Service) Delete(ctx context.Context, endpoint string) error {
-	return s.database.DeletePushSubscription(ctx, endpoint)
+func (s *Service) Delete(ctx context.Context, endpoint, ownerID string) error {
+	return s.database.DeletePushSubscription(ctx, endpoint, ownerID)
 }
-func (s *Service) UpdatePreferences(ctx context.Context, endpoint string, progress, reminders, summaries bool) error {
-	return s.database.UpdatePushPreferences(ctx, endpoint, progress, reminders, summaries)
+func (s *Service) UpdatePreferences(ctx context.Context, endpoint, ownerID string, progress, reminders, summaries bool) error {
+	return s.database.UpdatePushPreferences(ctx, endpoint, ownerID, progress, reminders, summaries)
 }
 
 func (s *Service) Run(ctx context.Context) {
@@ -96,12 +96,12 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 	for _, message := range notifications {
 		payload, _ := json.Marshal(map[string]any{"title": message.title, "body": message.body, "tag": message.tag, "url": "/?task=" + task.ID, "urgent": message.urgent})
 		for _, subscription := range subscriptions {
-			if !subscription.NotifyProgress {
+			if !subscription.NotifyProgress || !service.CanView(task, service.HumanPrincipal(subscription.OwnerID)) {
 				continue
 			}
 			result, err := pwakit.Send(ctx, pwakit.Config{PublicKey: s.publicKey, PrivateKey: s.privateKey, Contact: s.contact}, pwakit.Subscription{Endpoint: subscription.Endpoint, Keys: pwakit.Keys{P256dh: subscription.P256DH, Auth: subscription.Auth}}, payload, pwakit.Options{TTL: 300, Urgency: "normal", HTTPClient: s.client})
 			if result.Expired() {
-				_ = s.database.DeletePushSubscription(ctx, subscription.Endpoint)
+				_ = s.database.DeletePushSubscription(ctx, subscription.Endpoint, subscription.OwnerID)
 			}
 			if err != nil {
 				s.logger.Warn("push delivery failed", "error", err)

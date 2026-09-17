@@ -27,6 +27,10 @@ participation in that task.
   the next queued occurrence and resets its copied checklist.
 - Named templates store reusable task metadata and checklist labels without
   creating a task or run.
+- Visibility is independent of assignment. Private tasks are creator-only,
+  team tasks are shared with people and explicitly assigned agents, and agent
+  pickup tasks form a claimable queue. The immutable creator can publish a
+  private task and later make it private again when no agent run is active.
 
 ## State model
 
@@ -78,8 +82,10 @@ The initial shared credential proves the calling installation, not a particular
 agent. A later Switchboard identity-forwarding extension can sign client and
 run claims without changing the task model.
 
-The current deployment is one trusted workspace. OIDC identities improve
-attribution but do not create tenant, project, or task authorization boundaries,
-and the deployment bearer identifies an installation rather than an individual
-agent. The staged design for workplace identity, roles, and workspace isolation
-is documented in `docs/workplace-readiness.md`.
+The current deployment is one trusted workspace. OIDC and Cloudflare Access
+browser identities enforce creator-only private tasks across REST, SSE, and Web
+Push. Private tasks are excluded from MCP entirely. Agent-pickup tasks and
+explicit team assignments are enforced through MCP, but a shared deployment
+bearer plus client name is not a cryptographically individual agent credential.
+Workspace roles and tenant isolation remain future work documented in
+`docs/workplace-readiness.md`.

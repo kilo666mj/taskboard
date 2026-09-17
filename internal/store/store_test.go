@@ -50,6 +50,9 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	if task.Type != "personal" {
 		t.Fatalf("migrated type = %q, want personal", task.Type)
 	}
+	if task.Visibility != "team" {
+		t.Fatalf("migrated visibility = %q, want team", task.Visibility)
+	}
 	if task.SortOrder <= 0 || task.Priority != "normal" {
 		t.Fatalf("migrated planning defaults = %+v", task)
 	}
@@ -78,8 +81,8 @@ func TestSchemaCreatesQueryIndexes(t *testing.T) {
 	for rows.Next() {
 		count++
 	}
-	if count != 8 {
-		t.Fatalf("application indexes = %d, want 8", count)
+	if count != 10 {
+		t.Fatalf("application indexes = %d, want 10", count)
 	}
 }
 

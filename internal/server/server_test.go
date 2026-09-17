@@ -69,7 +69,7 @@ func TestMCPDefaultsNewTasksToConfiguredType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Type != model.TaskWork {
+	if len(items) != 1 || items[0].Type != model.TaskWork || items[0].Visibility != model.VisibilityAgent {
 		t.Fatalf("created tasks = %+v", items)
 	}
 }
@@ -318,6 +318,64 @@ func TestIdentityBoundBrowserSession(t *testing.T) {
 	handler.ServeHTTP(cookieMCPResponse, cookieMCP)
 	if cookieMCPResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("browser cookie on MCP status = %d, want 401", cookieMCPResponse.Code)
+	}
+}
+
+func TestRESTEnforcesPrivateAndTeamVisibility(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	notifications := push.New(database, tasks, "", "", "", logger)
+	cfg := config.Config{AuthToken: strings.Repeat("test-token-", 4), LeaseDuration: time.Minute, OIDCIssuer: "https://idp.example.com", OIDCClientID: "taskboard", OIDCRedirectURL: "https://taskboard.example.com/api/v1/auth/oidc/callback"}
+	handler, err := New(cfg, database, tasks, notifications, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSession := func(email string) string {
+		t.Helper()
+		token, _, err := database.CreateBrowserSession(t.Context(), store.BrowserIdentity{Subject: email, Email: email}, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	alice, bob := newSession("alice@example.com"), newSession("bob@example.com")
+	create := func(session, title, visibility string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"title": title, "visibility": visibility})
+		request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/tasks/capture", bytes.NewReader(body))
+		request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: session})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create %q status = %d, body=%s", title, response.Code, response.Body.String())
+		}
+	}
+	list := func(session string) []model.Task {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/tasks?limit=200", nil)
+		request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: session})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("list status = %d, body=%s", response.Code, response.Body.String())
+		}
+		var output tasksOutput
+		if err := json.Unmarshal(response.Body.Bytes(), &output); err != nil {
+			t.Fatal(err)
+		}
+		return output.Tasks
+	}
+
+	create(alice, "Alice private", "private")
+	if got := list(bob); len(got) != 0 {
+		t.Fatalf("bob private list = %+v, want empty", got)
+	}
+	create(alice, "Team task", "team")
+	got := list(bob)
+	if len(got) != 1 || got[0].Title != "Team task" || got[0].Visibility != model.VisibilityTeam {
+		t.Fatalf("bob team list = %+v", got)
+	}
+	if got := list(alice); len(got) != 2 {
+		t.Fatalf("alice list length = %d, want 2", len(got))
 	}
 }
 

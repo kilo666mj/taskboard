@@ -67,7 +67,7 @@ func TestCloudflareAccessAuthenticatesBrowserAndMCP(t *testing.T) {
 	browserRequest.Header.Set(cloudflareAccessJWTHeader, "browser-assertion")
 	browserResponse := httptest.NewRecorder()
 	handler.ServeHTTP(browserResponse, browserRequest)
-	if browserResponse.Code != http.StatusNoContent || browserResponse.Header().Get("X-Test-Actor") != "agent@example.com" {
+	if browserResponse.Code != http.StatusNoContent || browserResponse.Header().Get("X-Test-Actor") != "cloudflare_access:agent-subject" {
 		t.Fatalf("browser status/actor = %d/%q", browserResponse.Code, browserResponse.Header().Get("X-Test-Actor"))
 	}
 

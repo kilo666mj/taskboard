@@ -7,9 +7,10 @@ workspace. It must not be described or deployed as a tenant-isolated service.
 
 ## Current trust boundary
 
-- Every permitted browser identity can see and change the shared board.
-- OIDC identifies people and records their actions, but does not grant per-task
-  or per-project permissions.
+- Every permitted browser identity can see and change team and agent-pickup
+  tasks. Private tasks are restricted to their immutable creator.
+- OIDC or Cloudflare Access identifies people and enforces private-task access,
+  but does not yet grant workspace roles or project permissions.
 - All agents use one deployment-scoped MCP bearer credential. A task records the
   agent-provided name, not a cryptographically distinct agent principal.
 - Sections and projects organize work; they are not authorization boundaries.
@@ -19,23 +20,23 @@ team. Separate deployments are the safe isolation mechanism today.
 
 ## Changes for shared workplace deployments
 
-### Work lanes
+### Implemented work lanes
 
-Work mode should expose three explicit lanes while keeping visibility and
-assignment as separate server-side concepts:
+Work mode exposes three explicit lanes while keeping visibility and assignment
+as separate server-side concepts:
 
-- **Private work** is visible only to its creator and collaborators they invite.
-- **Team work** is visible to members of the selected workspace or project and
-  may be assigned to a person or an agent.
-- **Agent queue work** is visible to eligible agents and is atomically claimed
-  by one agent. Capability labels, concurrency limits, and lease expiry decide
-  which agents may claim it and when abandoned work becomes available again.
+- **Private work** is visible only to its creator. Collaborator invitations are
+  not yet implemented.
+- **Team work** is visible to authenticated people and to the explicitly
+  assigned agent.
+- **Agent pickup work** is visible to agents and is atomically claimed by one
+  agent. Lease expiry makes abandoned work claimable again.
 
-These lanes must be enforced by every REST, SSE, and MCP query. A client-side
-filter is a presentation choice, not an authorization boundary. Tasks should
-store a visibility policy independently from an optional assignee so, for
-example, a team-visible task can still be assigned to an agent without
-disappearing from the team board.
+The lanes are enforced by REST, SSE, Web Push, and MCP. A client-side lane view
+is only a presentation choice. Existing tasks migrate to team visibility; new
+browser tasks default to private and MCP tasks default to agent pickup. The
+creator remains immutable so a published task can be made private again, while
+an active agent run blocks that transition.
 
 1. **First-class principals and credentials.** Store individually revocable,
    hashed agent credentials with stable principal IDs, scopes, expiry, and
@@ -44,10 +45,9 @@ disappearing from the team board.
 2. **Workspace and project authorization.** Add workspace IDs to durable data,
    memberships, roles such as owner/admin/member/viewer, project-level grants,
    and server-side authorization on every REST, SSE, and MCP operation.
-3. **Assignment policy.** Distinguish who may create, assign, claim, reassign,
-   approve, and complete work. Make agent-queue claims atomic, use leases for
-   recovery, and support capability labels and concurrency limits without
-   allowing an agent to broaden its own access.
+3. **Expanded assignment policy.** Add roles for assigning, reassigning,
+   approving, and completing work, plus capability labels and concurrency
+   limits without allowing an agent to broaden its own access.
 4. **Administrative lifecycle.** Add credential rotation and revocation,
    membership offboarding, OIDC group-to-role mapping, export/deletion,
    configurable retention, and an auditable administrative log.

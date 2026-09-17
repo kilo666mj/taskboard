@@ -29,7 +29,7 @@ import (
 
 var Version = "dev"
 
-type actorKey struct{}
+type principalKey struct{}
 
 type taskIDInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
@@ -158,7 +158,7 @@ func savePushSubscription(notifications *push.Service) http.HandlerFunc {
 			return
 		}
 
-		if err := notifications.Save(r.Context(), store.PushSubscription{Endpoint: input.Endpoint, P256DH: input.Keys.P256dh, Auth: input.Keys.Auth}); err != nil {
+		if err := notifications.Save(r.Context(), store.PushSubscription{Endpoint: input.Endpoint, P256DH: input.Keys.P256dh, Auth: input.Keys.Auth, OwnerID: actor(r.Context())}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save subscription"})
 			return
 		}
@@ -178,7 +178,7 @@ func deletePushSubscription(notifications *push.Service) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "endpoint is required"})
 			return
 		}
-		if err := notifications.Delete(r.Context(), input.Endpoint); err != nil {
+		if err := notifications.Delete(r.Context(), input.Endpoint, actor(r.Context())); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not remove subscription"})
 			return
 		}
@@ -201,7 +201,7 @@ func updatePushPreferences(notifications *push.Service) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "endpoint is required"})
 			return
 		}
-		if apiError(w, notifications.UpdatePreferences(r.Context(), input.Endpoint, input.Progress, input.Reminders, input.Summaries)) {
+		if apiError(w, notifications.UpdatePreferences(r.Context(), input.Endpoint, actor(r.Context()), input.Progress, input.Reminders, input.Summaries)) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -220,43 +220,43 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		if input.Type == "" {
 			input.Type = defaultTaskType
 		}
-		result, err := tasks.Start(ctx, input, mcpActor(ctx, request))
+		result, err := tasks.StartFor(ctx, input, mcpPrincipal(ctx, request))
 		return nil, result, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_create", Description: "Capture future work without starting execution. Creates a queued task with no agent run; title is the only required field.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.CreateRequest) (*mcp.CallToolResult, taskOutput, error) {
 		if input.Type == "" {
 			input.Type = defaultTaskType
 		}
-		task, err := tasks.Create(ctx, input, mcpActor(ctx, request))
+		task, err := tasks.CreateFor(ctx, input, mcpPrincipal(ctx, request))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. expected_version prevents overwriting another agent's changes.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
-		task, err := tasks.Update(ctx, input.TaskID, input.UpdateRequest, mcpActor(ctx, request))
+		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx, request))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_claim", Description: "Claim an existing non-terminal task and receive a fresh leased run. Use this for handoff or to resume a task after its prior run became stale.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input claimInput) (*mcp.CallToolResult, model.StartResult, error) {
-		result, err := tasks.Claim(ctx, input.TaskID, input.ClaimRequest, mcpActor(ctx, request))
+		result, err := tasks.ClaimFor(ctx, input.TaskID, input.ClaimRequest, mcpPrincipal(ctx, request))
 		return nil, result, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_move", Description: "Move an open task up or down within its section while preserving optimistic version checks.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input moveInput) (*mcp.CallToolResult, taskOutput, error) {
-		task, err := tasks.Move(ctx, input.TaskID, input.MoveRequest, mcpActor(ctx, request))
+		task, err := tasks.MoveFor(ctx, input.TaskID, input.MoveRequest, mcpPrincipal(ctx, request))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_complete", Description: "Mark a task done. Rejected while any required checklist item remains open; skipped items require a recorded reason.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		input.Status = model.TaskDone
-		task, err := tasks.Update(ctx, input.TaskID, input.UpdateRequest, mcpActor(ctx, request))
+		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx, request))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_heartbeat", Description: "Renew an active run lease during long work. The harness should call this automatically; expired runs become stale.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input heartbeatInput) (*mcp.CallToolResult, runOutput, error) {
-		run, err := tasks.Heartbeat(ctx, input.TaskID, input.RunID, mcpActor(ctx, request))
+		run, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx, request))
 		return nil, runOutput{Run: run}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and agent runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, input taskIDInput) (*mcp.CallToolResult, taskOutput, error) {
-		task, err := tasks.Get(ctx, input.TaskID)
+	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and agent runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input taskIDInput) (*mcp.CallToolResult, taskOutput, error) {
+		task, err := tasks.GetFor(ctx, input.TaskID, mcpPrincipal(ctx, request))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List multiple tasks for the central checklist view, optionally filtered by status.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
-		items, err := tasks.List(ctx, input.Statuses, input.Limit)
+	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
+		items, err := tasks.ListFor(ctx, input.Statuses, input.Limit, mcpPrincipal(ctx, request))
 		return nil, tasksOutput{Tasks: items}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_template_list", Description: "List reusable Taskboard task and checklist templates.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, templatesOutput, error) {
@@ -312,7 +312,7 @@ func listTasks(tasks *service.Service) http.HandlerFunc {
 			}
 		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		items, err := tasks.List(r.Context(), statuses, limit)
+		items, err := tasks.ListFor(r.Context(), statuses, limit, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -325,7 +325,7 @@ func startTask(tasks *service.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		result, err := tasks.Start(r.Context(), input, actor(r.Context()))
+		result, err := tasks.StartFor(r.Context(), input, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -338,7 +338,7 @@ func createTask(tasks *service.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		task, err := tasks.Create(r.Context(), input, actor(r.Context()))
+		task, err := tasks.CreateFor(r.Context(), input, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -347,7 +347,7 @@ func createTask(tasks *service.Service) http.HandlerFunc {
 }
 func getTask(tasks *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		task, err := tasks.Get(r.Context(), r.PathValue("id"))
+		task, err := tasks.GetFor(r.Context(), r.PathValue("id"), principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -360,7 +360,7 @@ func updateTask(tasks *service.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		task, err := tasks.Update(r.Context(), r.PathValue("id"), input, actor(r.Context()))
+		task, err := tasks.UpdateFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -373,7 +373,7 @@ func claimTask(tasks *service.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		result, err := tasks.Claim(r.Context(), r.PathValue("id"), input, actor(r.Context()))
+		result, err := tasks.ClaimFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -386,7 +386,7 @@ func moveTask(tasks *service.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		task, err := tasks.Move(r.Context(), r.PathValue("id"), input, actor(r.Context()))
+		task, err := tasks.MoveFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -395,7 +395,7 @@ func moveTask(tasks *service.Service) http.HandlerFunc {
 }
 func heartbeat(tasks *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		run, err := tasks.Heartbeat(r.Context(), r.PathValue("id"), r.PathValue("run"), actor(r.Context()))
+		run, err := tasks.HeartbeatFor(r.Context(), r.PathValue("id"), r.PathValue("run"), principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -433,6 +433,12 @@ func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration
 				if !ok {
 					return
 				}
+				if _, err := tasks.GetFor(r.Context(), event.TaskID, principal(r.Context())); err != nil {
+					if _, changed := event.Payload["visibility"]; !changed {
+						continue
+					}
+					event = model.Event{ID: event.ID, TaskID: event.TaskID, Kind: "task.visibility_changed", Payload: map[string]any{"reload": true}, CreatedAt: event.CreatedAt}
+				}
 				payload, _ := json.Marshal(event)
 				if _, err := fmt.Fprintf(w, "id: %s\nevent: task\ndata: %s\n\n", event.ID, payload); err != nil {
 					return
@@ -454,7 +460,8 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if cfg.AllowInsecure && cfg.AuthToken == "" {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, "local")))
+				isAgent := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: "local", Agent: isAgent})))
 				return
 			}
 			valid, who := false, ""
@@ -480,11 +487,11 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			} else if cloudflare != nil {
 				if identity, err := cloudflare.identity(r); err == nil {
 					valid = true
-					who = identityActor(identity)
+					who = identity.Subject
 				}
 			} else if identity, ok := sessions.identity(r.Context(), r); ok {
 				valid = true
-				who = identityActor(identity)
+				who = identity.Subject
 			}
 			if !valid {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="taskboard"`)
@@ -499,7 +506,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					return
 				}
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, who)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: who, Agent: mcpRequest})))
 		})
 	}
 }
@@ -540,6 +547,9 @@ func apiError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, service.ErrConflict):
 		status = http.StatusConflict
 		message = err.Error()
+	case errors.Is(err, service.ErrForbidden):
+		status = http.StatusForbidden
+		message = "forbidden"
 	case errors.Is(err, service.ErrValidation):
 		status = http.StatusBadRequest
 		message = err.Error()
@@ -562,7 +572,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
-func actor(ctx context.Context) string { value, _ := ctx.Value(actorKey{}).(string); return value }
+func principal(ctx context.Context) service.Principal {
+	value, _ := ctx.Value(principalKey{}).(service.Principal)
+	return value
+}
+func actor(ctx context.Context) string { return principal(ctx).ID }
 func mcpActor(ctx context.Context, request *mcp.CallToolRequest) string {
 	if authenticated := actor(ctx); authenticated != "" && authenticated != "agent" {
 		return authenticated
@@ -571,6 +585,9 @@ func mcpActor(ctx context.Context, request *mcp.CallToolRequest) string {
 		return strings.TrimSpace(client.Name)
 	}
 	return actor(ctx)
+}
+func mcpPrincipal(ctx context.Context, request *mcp.CallToolRequest) service.Principal {
+	return service.AgentPrincipal(mcpActor(ctx, request))
 }
 func secureEqual(left, right string) bool {
 	if left == "" || right == "" || len(left) != len(right) {

@@ -100,6 +100,9 @@ button,input,textarea,select{font:inherit}
 .template-controls{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:.55rem;align-items:end}
 .task-meta{display:flex;flex-wrap:wrap;gap:.38rem;margin-top:.45rem;color:var(--muted);font-size:.76rem}
 .task-meta span{padding:.18rem .48rem;border-radius:999px;background:var(--panel-2);border:1px solid var(--line)}
+.task-modal .field-help{margin:.55rem 0 0;font-size:.78rem}
+.task-classification-row{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:720px){.task-classification-row{grid-template-columns:1fr}}
 .task-management{display:flex;gap:.38rem;flex-wrap:wrap;margin-top:.55rem}
 .task-management button{padding:.35rem .52rem;font-size:.8rem}
 .settings-options{display:grid;gap:.8rem;margin:1rem 0}

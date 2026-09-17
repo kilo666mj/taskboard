@@ -40,6 +40,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT 'personal',
+			visibility TEXT NOT NULL DEFAULT 'team', created_by TEXT NOT NULL DEFAULT '',
             section TEXT NOT NULL DEFAULT 'General', project TEXT NOT NULL DEFAULT '', repository TEXT NOT NULL DEFAULT '',
             priority TEXT NOT NULL DEFAULT 'normal', due_date TEXT NOT NULL DEFAULT '', defer_until TEXT NOT NULL DEFAULT '',
             recurrence TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL DEFAULT 0, reviewed_at TEXT,
@@ -63,7 +64,7 @@ func (s *Store) migrate(ctx context.Context) error {
             message TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
         )`,
 		`CREATE TABLE IF NOT EXISTS push_subscriptions (
-			endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+			endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, owner_id TEXT NOT NULL DEFAULT '',
 			notify_progress INTEGER NOT NULL DEFAULT 1, notify_reminders INTEGER NOT NULL DEFAULT 1, notify_summaries INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )`,
@@ -100,6 +101,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	for _, migration := range []struct{ name, definition string }{
 		{"task_type", `TEXT NOT NULL DEFAULT 'personal'`},
+		{"visibility", `TEXT NOT NULL DEFAULT 'team'`},
+		{"created_by", `TEXT NOT NULL DEFAULT ''`},
 		{"project", `TEXT NOT NULL DEFAULT ''`},
 		{"priority", `TEXT NOT NULL DEFAULT 'normal'`},
 		{"due_date", `TEXT NOT NULL DEFAULT ''`},
@@ -118,13 +121,25 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET sort_order=rowid*1024 WHERE sort_order=0`); err != nil {
 		return fmt.Errorf("backfill task ordering: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET created_by=COALESCE((SELECT actor FROM events WHERE events.task_id=tasks.id ORDER BY created_at LIMIT 1),'') WHERE created_by=''`); err != nil {
+		return fmt.Errorf("backfill task creators: %w", err)
+	}
 	for _, migration := range []struct{ name, definition string }{
+		{"owner_id", `TEXT NOT NULL DEFAULT ''`},
 		{"notify_progress", `INTEGER NOT NULL DEFAULT 1`},
 		{"notify_reminders", `INTEGER NOT NULL DEFAULT 1`},
 		{"notify_summaries", `INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if err := s.ensureColumn(ctx, "push_subscriptions", migration.name, migration.definition); err != nil {
 			return err
+		}
+	}
+	for _, statement := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_tasks_visibility_creator ON tasks(visibility, created_by)`,
+		`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_owner ON push_subscriptions(owner_id)`,
+	} {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("migrate visibility indexes: %w", err)
 		}
 	}
 	_, err := s.db.ExecContext(ctx, "PRAGMA optimize")
@@ -288,6 +303,7 @@ type PushSubscription struct {
 	Endpoint        string
 	P256DH          string
 	Auth            string
+	OwnerID         string
 	NotifyProgress  bool
 	NotifyReminders bool
 	NotifySummaries bool
@@ -300,13 +316,13 @@ func (s *Store) SavePushSubscription(ctx context.Context, subscription PushSubsc
 		subscription.NotifyProgress = true
 		subscription.NotifyReminders = true
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO push_subscriptions(endpoint,p256dh,auth,notify_progress,notify_reminders,notify_summaries,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
-		ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,updated_at=excluded.updated_at`, subscription.Endpoint, subscription.P256DH, subscription.Auth, subscription.NotifyProgress, subscription.NotifyReminders, subscription.NotifySummaries, now, now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO push_subscriptions(endpoint,p256dh,auth,owner_id,notify_progress,notify_reminders,notify_summaries,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,owner_id=excluded.owner_id,updated_at=excluded.updated_at`, subscription.Endpoint, subscription.P256DH, subscription.Auth, subscription.OwnerID, subscription.NotifyProgress, subscription.NotifyReminders, subscription.NotifySummaries, now, now)
 	return err
 }
 
-func (s *Store) UpdatePushPreferences(ctx context.Context, endpoint string, progress, reminders, summaries bool) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE push_subscriptions SET notify_progress=?,notify_reminders=?,notify_summaries=?,updated_at=? WHERE endpoint=?`, progress, reminders, summaries, formatTime(time.Now()), endpoint)
+func (s *Store) UpdatePushPreferences(ctx context.Context, endpoint, ownerID string, progress, reminders, summaries bool) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE push_subscriptions SET notify_progress=?,notify_reminders=?,notify_summaries=?,updated_at=? WHERE endpoint=? AND owner_id=?`, progress, reminders, summaries, formatTime(time.Now()), endpoint, ownerID)
 	if err != nil {
 		return err
 	}
@@ -316,13 +332,13 @@ func (s *Store) UpdatePushPreferences(ctx context.Context, endpoint string, prog
 	return nil
 }
 
-func (s *Store) DeletePushSubscription(ctx context.Context, endpoint string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE endpoint=?`, endpoint)
+func (s *Store) DeletePushSubscription(ctx context.Context, endpoint, ownerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE endpoint=? AND owner_id=?`, endpoint, ownerID)
 	return err
 }
 
 func (s *Store) ListPushSubscriptions(ctx context.Context) ([]PushSubscription, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT endpoint,p256dh,auth,notify_progress,notify_reminders,notify_summaries FROM push_subscriptions ORDER BY created_at`)
+	rows, err := s.db.QueryContext(ctx, `SELECT endpoint,p256dh,auth,owner_id,notify_progress,notify_reminders,notify_summaries FROM push_subscriptions ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +346,7 @@ func (s *Store) ListPushSubscriptions(ctx context.Context) ([]PushSubscription, 
 	var subscriptions []PushSubscription
 	for rows.Next() {
 		var item PushSubscription
-		if err := rows.Scan(&item.Endpoint, &item.P256DH, &item.Auth, &item.NotifyProgress, &item.NotifyReminders, &item.NotifySummaries); err != nil {
+		if err := rows.Scan(&item.Endpoint, &item.P256DH, &item.Auth, &item.OwnerID, &item.NotifyProgress, &item.NotifyReminders, &item.NotifySummaries); err != nil {
 			return nil, err
 		}
 		subscriptions = append(subscriptions, item)
@@ -355,8 +371,8 @@ func LoadTask(ctx context.Context, q interface {
 	var created, updated string
 	var completed sql.NullString
 	var reviewed sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT id,title,summary,task_type,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks WHERE id=?`, id).
-		Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed)
+	err := q.QueryRowContext(ctx, `SELECT id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks WHERE id=?`, id).
+		Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Task{}, ErrNotFound
 	}
@@ -391,21 +407,43 @@ func (s *Store) GetTask(ctx context.Context, id string) (model.Task, error) {
 }
 
 func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limit int) ([]model.Task, error) {
+	return s.listTasks(ctx, statuses, limit, "", nil)
+}
+
+func (s *Store) ListVisibleTasks(ctx context.Context, statuses []model.TaskStatus, limit int, viewer string, agent bool) ([]model.Task, error) {
+	if agent {
+		return s.listTasks(ctx, statuses, limit, `(visibility=? OR (visibility=? AND owner=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer})
+	}
+	return s.listTasks(ctx, statuses, limit, `(visibility IN (?,?) OR (visibility=? AND created_by=?))`, []any{model.VisibilityTeam, model.VisibilityAgent, model.VisibilityPrivate, viewer})
+}
+
+func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limit int, visibilityClause string, visibilityArgs []any) ([]model.Task, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	query := `SELECT id,title,summary,task_type,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks`
-	args := make([]any, 0, len(statuses)+1)
+	query := `SELECT id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks`
+	args := make([]any, 0, len(statuses)+len(visibilityArgs)+1)
+	where := ""
+	if visibilityClause != "" {
+		where = visibilityClause
+		args = append(args, visibilityArgs...)
+	}
 	if len(statuses) > 0 {
-		query += " WHERE status IN ("
+		if where != "" {
+			where += " AND "
+		}
+		where += "status IN ("
 		for i, status := range statuses {
 			if i > 0 {
-				query += ","
+				where += ","
 			}
-			query += "?"
+			where += "?"
 			args = append(args, status)
 		}
-		query += ")"
+		where += ")"
+	}
+	if where != "" {
+		query += " WHERE " + where
 	}
 	query += " ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'active' THEN 1 WHEN 'waiting' THEN 2 WHEN 'queued' THEN 3 ELSE 4 END, section, sort_order, updated_at DESC LIMIT ?"
 	args = append(args, limit)
@@ -418,7 +456,7 @@ func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limi
 		var task model.Task
 		var created, updated string
 		var reviewed, completed sql.NullString
-		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed); err != nil {
+		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed); err != nil {
 			return nil, err
 		}
 		task.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
