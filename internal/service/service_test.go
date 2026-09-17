@@ -160,6 +160,89 @@ func TestQueuedTaskCanStartWithoutAgentRunOrBeClaimed(t *testing.T) {
 	}
 }
 
+func TestPrivateTaskIsVisibleOnlyToItsCreator(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Private plan"}, HumanPrincipal("alice@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Visibility != model.VisibilityPrivate || created.CreatedBy != "alice@example.com" {
+		t.Fatalf("created task = %+v", created)
+	}
+	if _, err := tasks.GetFor(t.Context(), created.ID, HumanPrincipal("bob@example.com")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("other user get error = %v, want not found", err)
+	}
+	if _, err := tasks.GetFor(t.Context(), created.ID, AgentPrincipal("codex")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("agent get error = %v, want not found", err)
+	}
+	visible, err := tasks.ListFor(t.Context(), nil, 100, HumanPrincipal("alice@example.com"))
+	if err != nil || len(visible) != 1 || visible[0].ID != created.ID {
+		t.Fatalf("creator list = %+v, %v", visible, err)
+	}
+	hidden, err := tasks.ListFor(t.Context(), nil, 100, HumanPrincipal("bob@example.com"))
+	if err != nil || len(hidden) != 0 {
+		t.Fatalf("other user list = %+v, %v", hidden, err)
+	}
+}
+
+func TestCreatorCanPublishAndReprivatizeTask(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	alice := HumanPrincipal("alice@example.com")
+	bob := HumanPrincipal("bob@example.com")
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Draft"}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	team := model.VisibilityTeam
+	published, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Visibility: &team}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.GetFor(t.Context(), created.ID, bob); err != nil {
+		t.Fatalf("team task hidden from teammate: %v", err)
+	}
+	private := model.VisibilityPrivate
+	if _, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: published.Version, Visibility: &private}, bob); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-creator reprivatize error = %v, want forbidden", err)
+	}
+	reprivatized, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: published.Version, Visibility: &private}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reprivatized.Visibility != model.VisibilityPrivate {
+		t.Fatalf("visibility = %q, want private", reprivatized.Visibility)
+	}
+}
+
+func TestAgentPickupIsClaimableAndOwnedByTheClaimingAgent(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Pickup", Checklist: []string{"Do it"}}, HumanPrincipal("alice@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentLane := model.VisibilityAgent
+	created, err = tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Visibility: &agentLane}, HumanPrincipal("alice@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: created.Version}, AgentPrincipal("codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Task.Owner != "codex" || claimed.Task.Status != model.TaskActive {
+		t.Fatalf("claimed task = %+v", claimed.Task)
+	}
+	if _, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: claimed.Task.Version, CurrentNote: stringPointer("intrude")}, AgentPrincipal("other-agent")); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("other agent update error = %v, want forbidden", err)
+	}
+	team := model.VisibilityTeam
+	if _, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: claimed.Task.Version, Visibility: &team}, HumanPrincipal("alice@example.com")); !errors.Is(err, ErrValidation) {
+		t.Fatalf("active-run visibility change error = %v, want validation", err)
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
 func TestTitleOnlySelfTaskCanComplete(t *testing.T) {
 	service := testService(t, time.Minute)
 	created, err := service.Create(t.Context(), model.CreateRequest{Title: "Call the dentist"}, "person")
@@ -292,7 +375,7 @@ func TestClaimRecoversStaleTaskAndOldRunCannotHeartbeat(t *testing.T) {
 }
 
 func TestOneExpiredRunDoesNotStaleTaskWithAnotherActiveRun(t *testing.T) {
-	service := testService(t, 40*time.Millisecond)
+	service := testService(t, time.Minute)
 	started, err := service.Start(context.Background(), model.StartRequest{Title: "Shared task", Checklist: []string{"Work"}}, "first-agent")
 	if err != nil {
 		t.Fatal(err)
@@ -301,11 +384,13 @@ func TestOneExpiredRunDoesNotStaleTaskWithAnotherActiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(25 * time.Millisecond)
-	if _, err := service.Heartbeat(t.Context(), claimed.Task.ID, claimed.Run.ID, "second-agent"); err != nil {
+	now := time.Now().UTC()
+	if _, err := service.store.DB().ExecContext(t.Context(), `UPDATE agent_runs SET lease_expires_at=? WHERE id=?`, stamp(now.Add(-time.Minute)), started.Run.ID); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(20 * time.Millisecond)
+	if _, err := service.store.DB().ExecContext(t.Context(), `UPDATE agent_runs SET lease_expires_at=?,last_heartbeat_at=? WHERE id=?`, stamp(now.Add(time.Minute)), stamp(now), claimed.Run.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := service.SweepStale(t.Context()); err != nil {
 		t.Fatal(err)
 	}

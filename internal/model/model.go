@@ -8,9 +8,17 @@ const DefaultSection = "General"
 
 type TaskType string
 
+type TaskVisibility string
+
 const (
 	TaskPersonal TaskType = "personal"
 	TaskWork     TaskType = "work"
+)
+
+const (
+	VisibilityPrivate TaskVisibility = "private"
+	VisibilityTeam    TaskVisibility = "team"
+	VisibilityAgent   TaskVisibility = "agent"
 )
 
 type Priority string
@@ -45,6 +53,8 @@ type Task struct {
 	ID          string          `json:"id"`
 	Title       string          `json:"title"`
 	Type        TaskType        `json:"type"`
+	Visibility  TaskVisibility  `json:"visibility"`
+	CreatedBy   string          `json:"created_by"`
 	Summary     string          `json:"summary,omitempty"`
 	Section     string          `json:"section"`
 	Project     string          `json:"project,omitempty"`
@@ -103,60 +113,63 @@ type Event struct {
 }
 
 type StartRequest struct {
-	Title      string   `json:"title"`
-	Type       TaskType `json:"type,omitempty"`
-	Summary    string   `json:"summary,omitempty"`
-	Section    string   `json:"section,omitempty"`
-	Project    string   `json:"project,omitempty"`
-	Repository string   `json:"repository,omitempty"`
-	Priority   Priority `json:"priority,omitempty"`
-	DueDate    string   `json:"due_date,omitempty"`
-	DeferUntil string   `json:"defer_until,omitempty"`
-	Recurrence string   `json:"recurrence,omitempty"`
-	Checklist  []string `json:"checklist"`
-	Agent      string   `json:"agent,omitempty"`
-	Client     string   `json:"client,omitempty"`
+	Title      string         `json:"title"`
+	Type       TaskType       `json:"type,omitempty"`
+	Visibility TaskVisibility `json:"visibility,omitempty"`
+	Summary    string         `json:"summary,omitempty"`
+	Section    string         `json:"section,omitempty"`
+	Project    string         `json:"project,omitempty"`
+	Repository string         `json:"repository,omitempty"`
+	Priority   Priority       `json:"priority,omitempty"`
+	DueDate    string         `json:"due_date,omitempty"`
+	DeferUntil string         `json:"defer_until,omitempty"`
+	Recurrence string         `json:"recurrence,omitempty"`
+	Checklist  []string       `json:"checklist"`
+	Agent      string         `json:"agent,omitempty"`
+	Client     string         `json:"client,omitempty"`
 }
 
 type CreateRequest struct {
-	Title      string   `json:"title"`
-	Type       TaskType `json:"type,omitempty"`
-	Summary    string   `json:"summary,omitempty"`
-	Section    string   `json:"section,omitempty"`
-	Project    string   `json:"project,omitempty"`
-	Repository string   `json:"repository,omitempty"`
-	Priority   Priority `json:"priority,omitempty"`
-	DueDate    string   `json:"due_date,omitempty"`
-	DeferUntil string   `json:"defer_until,omitempty"`
-	Recurrence string   `json:"recurrence,omitempty"`
-	Checklist  []string `json:"checklist,omitempty"`
+	Title      string         `json:"title"`
+	Type       TaskType       `json:"type,omitempty"`
+	Visibility TaskVisibility `json:"visibility,omitempty"`
+	Summary    string         `json:"summary,omitempty"`
+	Section    string         `json:"section,omitempty"`
+	Project    string         `json:"project,omitempty"`
+	Repository string         `json:"repository,omitempty"`
+	Priority   Priority       `json:"priority,omitempty"`
+	DueDate    string         `json:"due_date,omitempty"`
+	DeferUntil string         `json:"defer_until,omitempty"`
+	Recurrence string         `json:"recurrence,omitempty"`
+	Checklist  []string       `json:"checklist,omitempty"`
 }
 
 type UpdateRequest struct {
-	ExpectedVersion int64      `json:"expected_version"`
-	RunID           string     `json:"run_id,omitempty"`
-	Status          TaskStatus `json:"status,omitempty"`
-	Title           *string    `json:"title,omitempty"`
-	Type            *TaskType  `json:"type,omitempty"`
-	Summary         *string    `json:"summary,omitempty"`
-	Owner           *string    `json:"owner,omitempty"`
-	Section         *string    `json:"section,omitempty"`
-	Project         *string    `json:"project,omitempty"`
-	Repository      *string    `json:"repository,omitempty"`
-	Priority        *Priority  `json:"priority,omitempty"`
-	DueDate         *string    `json:"due_date,omitempty"`
-	DeferUntil      *string    `json:"defer_until,omitempty"`
-	Recurrence      *string    `json:"recurrence,omitempty"`
-	Reviewed        bool       `json:"reviewed,omitempty"`
-	Checklist       *[]string  `json:"checklist,omitempty"`
-	CurrentNote     *string    `json:"current_note,omitempty"`
-	Blocker         *string    `json:"blocker,omitempty"`
-	WaitingFor      *string    `json:"waiting_for,omitempty"`
-	CurrentItemID   string     `json:"current_item_id,omitempty"`
-	CompleteItemIDs []string   `json:"complete_item_ids,omitempty"`
-	SkipItemIDs     []string   `json:"skip_item_ids,omitempty"`
-	SkipReason      string     `json:"skip_reason,omitempty"`
-	AddItems        []string   `json:"add_items,omitempty"`
+	ExpectedVersion int64           `json:"expected_version"`
+	RunID           string          `json:"run_id,omitempty"`
+	Status          TaskStatus      `json:"status,omitempty"`
+	Title           *string         `json:"title,omitempty"`
+	Type            *TaskType       `json:"type,omitempty"`
+	Visibility      *TaskVisibility `json:"visibility,omitempty"`
+	Summary         *string         `json:"summary,omitempty"`
+	Owner           *string         `json:"owner,omitempty"`
+	Section         *string         `json:"section,omitempty"`
+	Project         *string         `json:"project,omitempty"`
+	Repository      *string         `json:"repository,omitempty"`
+	Priority        *Priority       `json:"priority,omitempty"`
+	DueDate         *string         `json:"due_date,omitempty"`
+	DeferUntil      *string         `json:"defer_until,omitempty"`
+	Recurrence      *string         `json:"recurrence,omitempty"`
+	Reviewed        bool            `json:"reviewed,omitempty"`
+	Checklist       *[]string       `json:"checklist,omitempty"`
+	CurrentNote     *string         `json:"current_note,omitempty"`
+	Blocker         *string         `json:"blocker,omitempty"`
+	WaitingFor      *string         `json:"waiting_for,omitempty"`
+	CurrentItemID   string          `json:"current_item_id,omitempty"`
+	CompleteItemIDs []string        `json:"complete_item_ids,omitempty"`
+	SkipItemIDs     []string        `json:"skip_item_ids,omitempty"`
+	SkipReason      string          `json:"skip_reason,omitempty"`
+	AddItems        []string        `json:"add_items,omitempty"`
 }
 
 type StartResult struct {
@@ -225,6 +238,15 @@ func IsPriority(value Priority) bool {
 func IsTaskType(value TaskType) bool {
 	switch value {
 	case TaskPersonal, TaskWork:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsTaskVisibility(value TaskVisibility) bool {
+	switch value {
+	case VisibilityPrivate, VisibilityTeam, VisibilityAgent:
 		return true
 	default:
 		return false

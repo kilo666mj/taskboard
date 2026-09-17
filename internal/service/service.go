@@ -17,8 +17,34 @@ import (
 
 var (
 	ErrConflict   = errors.New("task version conflict")
+	ErrForbidden  = errors.New("task access forbidden")
 	ErrValidation = errors.New("validation failed")
 )
+
+type Principal struct {
+	ID    string
+	Agent bool
+}
+
+func HumanPrincipal(id string) Principal { return Principal{ID: strings.TrimSpace(id)} }
+func AgentPrincipal(id string) Principal { return Principal{ID: strings.TrimSpace(id), Agent: true} }
+
+func CanView(task model.Task, principal Principal) bool {
+	if principal.Agent {
+		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && task.Owner == principal.ID
+	}
+	return task.Visibility != model.VisibilityPrivate || task.CreatedBy != "" && task.CreatedBy == principal.ID
+}
+
+func canMutate(task model.Task, principal Principal) bool {
+	if !CanView(task, principal) {
+		return false
+	}
+	if !principal.Agent {
+		return true
+	}
+	return task.Owner != "" && task.Owner == principal.ID
+}
 
 type Service struct {
 	store         *store.Store
@@ -62,6 +88,7 @@ func (s *Service) publish(event model.Event) {
 func (s *Service) Start(ctx context.Context, request model.StartRequest, actor string) (model.StartResult, error) {
 	request.Title = strings.TrimSpace(request.Title)
 	request.Type = normalizedTaskType(request.Type)
+	request.Visibility = normalizedVisibility(request.Visibility, model.VisibilityTeam)
 	request.Summary = strings.TrimSpace(request.Summary)
 	request.Section = normalizedSection(request.Section)
 	request.Project = strings.TrimSpace(request.Project)
@@ -77,6 +104,9 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	}
 	if !model.IsTaskType(request.Type) {
 		return model.StartResult{}, fmt.Errorf("%w: type must be personal or work", ErrValidation)
+	}
+	if !model.IsTaskVisibility(request.Visibility) {
+		return model.StartResult{}, fmt.Errorf("%w: visibility must be private, team, or agent", ErrValidation)
 	}
 	if len(request.Title) > 200 || len(request.Summary) > 2000 || len(request.Section) > 80 || len(request.Project) > 120 || len(request.Repository) > 300 || len(request.Agent) > 100 || len(request.Client) > 100 {
 		return model.StartResult{}, fmt.Errorf("%w: task text is too long", ErrValidation)
@@ -114,8 +144,9 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	if err != nil {
 		return model.StartResult{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,owner,version,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskActive, request.Agent, stamp(now), stamp(now))
+	creator := defaultActor(actor, "user")
+	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,owner,version,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskActive, request.Agent, stamp(now), stamp(now))
 	if err != nil {
 		return model.StartResult{}, err
 	}
@@ -148,11 +179,27 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	return model.StartResult{Task: task, Run: task.Runs[0]}, nil
 }
 
+func (s *Service) StartFor(ctx context.Context, request model.StartRequest, principal Principal) (model.StartResult, error) {
+	if principal.Agent {
+		if request.Visibility == "" {
+			request.Visibility = model.VisibilityAgent
+		}
+		if request.Visibility == model.VisibilityPrivate {
+			return model.StartResult{}, ErrForbidden
+		}
+		request.Agent = principal.ID
+	} else if request.Visibility == "" {
+		request.Visibility = model.VisibilityPrivate
+	}
+	return s.Start(ctx, request, principal.ID)
+}
+
 // Create records work without starting it. Queued tasks deliberately have no
 // run or lease; those are attached only when an agent claims the task.
 func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor string) (model.Task, error) {
 	request.Title = strings.TrimSpace(request.Title)
 	request.Type = normalizedTaskType(request.Type)
+	request.Visibility = normalizedVisibility(request.Visibility, model.VisibilityTeam)
 	request.Summary = strings.TrimSpace(request.Summary)
 	request.Section = normalizedSection(request.Section)
 	request.Project = strings.TrimSpace(request.Project)
@@ -166,6 +213,9 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 	}
 	if !model.IsTaskType(request.Type) {
 		return model.Task{}, fmt.Errorf("%w: type must be personal or work", ErrValidation)
+	}
+	if !model.IsTaskVisibility(request.Visibility) {
+		return model.Task{}, fmt.Errorf("%w: visibility must be private, team, or agent", ErrValidation)
 	}
 	if len(request.Title) > 200 || len(request.Summary) > 2000 || len(request.Section) > 80 || len(request.Project) > 120 || len(request.Repository) > 300 {
 		return model.Task{}, fmt.Errorf("%w: task text is too long", ErrValidation)
@@ -194,8 +244,9 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 	if err != nil {
 		return model.Task{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
+	creator := defaultActor(actor, "user")
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
 		return model.Task{}, err
 	}
 	for index, label := range request.Checklist {
@@ -203,7 +254,7 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 			return model.Task{}, err
 		}
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: defaultActor(actor, "user"), Message: request.Title, Payload: map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type}, CreatedAt: now}
+	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}, CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.Task{}, err
 	}
@@ -215,6 +266,20 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 		s.publish(event)
 	}
 	return task, err
+}
+
+func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
+	if principal.Agent {
+		if request.Visibility == "" {
+			request.Visibility = model.VisibilityAgent
+		}
+		if request.Visibility != model.VisibilityAgent {
+			return model.Task{}, ErrForbidden
+		}
+	} else if request.Visibility == "" {
+		request.Visibility = model.VisibilityPrivate
+	}
+	return s.Create(ctx, request, principal.ID)
 }
 
 func (s *Service) SaveTemplate(ctx context.Context, request model.TemplateRequest) (model.Template, error) {
@@ -313,6 +378,17 @@ func (s *Service) Get(ctx context.Context, id string) (model.Task, error) {
 	return s.store.GetTask(ctx, strings.TrimSpace(id))
 }
 
+func (s *Service) GetFor(ctx context.Context, id string, principal Principal) (model.Task, error) {
+	task, err := s.Get(ctx, id)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if !CanView(task, principal) {
+		return model.Task{}, store.ErrNotFound
+	}
+	return task, nil
+}
+
 func (s *Service) List(ctx context.Context, statuses []model.TaskStatus, limit int) ([]model.Task, error) {
 	for _, status := range statuses {
 		if !model.IsTaskStatus(status) {
@@ -320,6 +396,33 @@ func (s *Service) List(ctx context.Context, statuses []model.TaskStatus, limit i
 		}
 	}
 	return s.store.ListTasks(ctx, statuses, limit)
+}
+
+func (s *Service) ListFor(ctx context.Context, statuses []model.TaskStatus, limit int, principal Principal) ([]model.Task, error) {
+	for _, status := range statuses {
+		if !model.IsTaskStatus(status) {
+			return nil, fmt.Errorf("%w: unknown status %q", ErrValidation, status)
+		}
+	}
+	return s.store.ListVisibleTasks(ctx, statuses, limit, principal.ID, principal.Agent)
+}
+
+func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.ClaimRequest, principal Principal) (model.StartResult, error) {
+	if !principal.Agent {
+		return model.StartResult{}, ErrForbidden
+	}
+	task, err := s.GetFor(ctx, taskID, principal)
+	if err != nil {
+		return model.StartResult{}, err
+	}
+	if task.Status != model.TaskQueued && task.Status != model.TaskStale {
+		return model.StartResult{}, fmt.Errorf("%w: only queued or stale work can be claimed", ErrValidation)
+	}
+	if task.Visibility == model.VisibilityTeam && task.Owner != principal.ID {
+		return model.StartResult{}, ErrForbidden
+	}
+	request.Agent = principal.ID
+	return s.Claim(ctx, taskID, request, principal.ID)
 }
 
 func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimRequest, actor string) (model.StartResult, error) {
@@ -400,6 +503,13 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 			return model.Task{}, fmt.Errorf("%w: type must be personal or work", ErrValidation)
 		}
 		request.Type = &value
+	}
+	if request.Visibility != nil {
+		value := model.TaskVisibility(strings.ToLower(strings.TrimSpace(string(*request.Visibility))))
+		if !model.IsTaskVisibility(value) {
+			return model.Task{}, fmt.Errorf("%w: visibility must be private, team, or agent", ErrValidation)
+		}
+		request.Visibility = &value
 	}
 	if request.Status == model.TaskBlocked && (request.Blocker == nil || strings.TrimSpace(*request.Blocker) == "") {
 		return model.Task{}, fmt.Errorf("%w: blocked status requires blocker", ErrValidation)
@@ -495,6 +605,28 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if current.Version != request.ExpectedVersion {
 		return model.Task{}, ErrConflict
 	}
+	if request.Visibility != nil && *request.Visibility != current.Visibility {
+		var activeRuns int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE task_id=? AND status=? AND ended_at IS NULL`, taskID, model.TaskActive).Scan(&activeRuns); err != nil {
+			return model.Task{}, err
+		}
+		if activeRuns > 0 {
+			return model.Task{}, fmt.Errorf("%w: visibility cannot change while an agent run is active", ErrValidation)
+		}
+		if *request.Visibility == model.VisibilityPrivate && (current.CreatedBy == "" || current.CreatedBy != strings.TrimSpace(actor)) {
+			return model.Task{}, ErrForbidden
+		}
+		if *request.Visibility == model.VisibilityAgent && current.Status != model.TaskQueued && current.Status != model.TaskStale && current.Status != model.TaskDone && current.Status != model.TaskCancelled {
+			return model.Task{}, fmt.Errorf("%w: only queued, stale, or terminal work can move to agent pickup", ErrValidation)
+		}
+	}
+	resultingVisibility := current.Visibility
+	if request.Visibility != nil {
+		resultingVisibility = *request.Visibility
+	}
+	if resultingVisibility == model.VisibilityAgent && request.Owner != nil && *request.Owner != "" {
+		return model.Task{}, fmt.Errorf("%w: agent-pickup ownership is set by claim", ErrValidation)
+	}
 	if request.Checklist != nil {
 		var runCount int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE task_id=?`, taskID).Scan(&runCount); err != nil {
@@ -587,6 +719,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		}
 	}
 	title, summary, taskType := current.Title, current.Summary, current.Type
+	visibility := current.Visibility
 	project, repository := current.Project, current.Repository
 	priority = current.Priority
 	dueDate, deferUntil, recurrence = current.DueDate, current.DeferUntil, current.Recurrence
@@ -598,6 +731,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	}
 	if request.Type != nil {
 		taskType = *request.Type
+	}
+	if request.Visibility != nil {
+		visibility = *request.Visibility
 	}
 	if request.Project != nil {
 		project = *request.Project
@@ -621,6 +757,11 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	owner, section := current.Owner, current.Section
 	if request.Owner != nil {
 		owner = *request.Owner
+	}
+	if request.Visibility != nil && *request.Visibility != current.Visibility {
+		if visibility == model.VisibilityAgent || visibility == model.VisibilityPrivate && owner != current.CreatedBy {
+			owner = ""
+		}
 	}
 	if request.Section != nil {
 		section = *request.Section
@@ -664,7 +805,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.Reviewed {
 		reviewed = stamp(now)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE tasks SET title=?,summary=?,task_type=?,status=?,owner=?,section=?,project=?,repository=?,priority=?,due_date=?,defer_until=?,recurrence=?,sort_order=?,reviewed_at=?,current_note=?,blocker=?,waiting_for=?,version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`, title, summary, taskType, status, owner, section, project, repository, priority, dueDate, deferUntil, recurrence, sortOrder, reviewed, currentNote, blocker, waitingFor, stamp(now), completed, taskID, request.ExpectedVersion)
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET title=?,summary=?,task_type=?,visibility=?,status=?,owner=?,section=?,project=?,repository=?,priority=?,due_date=?,defer_until=?,recurrence=?,sort_order=?,reviewed_at=?,current_note=?,blocker=?,waiting_for=?,version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`, title, summary, taskType, visibility, status, owner, section, project, repository, priority, dueDate, deferUntil, recurrence, sortOrder, reviewed, currentNote, blocker, waitingFor, stamp(now), completed, taskID, request.ExpectedVersion)
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -682,8 +823,8 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		if err != nil {
 			return model.Task{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, nextID, title, summary, taskType, section, project, repository, priority, nextDue, "", recurrence, nextOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, nextID, title, summary, taskType, visibility, current.CreatedBy, section, project, repository, priority, nextDue, "", recurrence, nextOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
 			return model.Task{}, err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT label,required FROM checklist_items WHERE task_id=? ORDER BY position`, taskID)
@@ -743,6 +884,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.Type != nil {
 		payload["type"] = taskType
 	}
+	if request.Visibility != nil {
+		payload["visibility"] = visibility
+	}
 	if len(completedItemIDs) > 0 {
 		payload["completed_item_ids"] = completedItemIDs
 	}
@@ -763,6 +907,23 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	return task, err
 }
 
+func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.UpdateRequest, principal Principal) (model.Task, error) {
+	current, err := s.GetFor(ctx, taskID, principal)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if !canMutate(current, principal) {
+		return model.Task{}, ErrForbidden
+	}
+	if principal.Agent && request.Visibility != nil {
+		return model.Task{}, ErrForbidden
+	}
+	if principal.Agent && request.Owner != nil && strings.TrimSpace(*request.Owner) != principal.ID {
+		return model.Task{}, ErrForbidden
+	}
+	return s.Update(ctx, taskID, request, principal.ID)
+}
+
 func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (model.AgentRun, error) {
 	now := time.Now().UTC()
 	result, err := s.store.DB().ExecContext(ctx, `UPDATE agent_runs SET lease_expires_at=?,last_heartbeat_at=? WHERE id=? AND task_id=? AND ended_at IS NULL AND status=?`, stamp(now.Add(s.leaseDuration)), stamp(now), strings.TrimSpace(runID), strings.TrimSpace(taskID), model.TaskActive)
@@ -779,6 +940,22 @@ func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (m
 	for _, run := range task.Runs {
 		if run.ID == runID {
 			return run, nil
+		}
+	}
+	return model.AgentRun{}, store.ErrNotFound
+}
+
+func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, principal Principal) (model.AgentRun, error) {
+	if !principal.Agent {
+		return model.AgentRun{}, ErrForbidden
+	}
+	task, err := s.GetFor(ctx, taskID, principal)
+	if err != nil {
+		return model.AgentRun{}, err
+	}
+	for _, run := range task.Runs {
+		if run.ID == strings.TrimSpace(runID) && run.Agent == principal.ID {
+			return s.Heartbeat(ctx, taskID, runID, principal.ID)
 		}
 	}
 	return model.AgentRun{}, store.ErrNotFound
@@ -852,6 +1029,20 @@ func (s *Service) Move(ctx context.Context, taskID string, request model.MoveReq
 	return task, err
 }
 
+func (s *Service) MoveFor(ctx context.Context, taskID string, request model.MoveRequest, principal Principal) (model.Task, error) {
+	if principal.Agent {
+		return model.Task{}, ErrForbidden
+	}
+	task, err := s.GetFor(ctx, taskID, principal)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if !canMutate(task, principal) {
+		return model.Task{}, ErrForbidden
+	}
+	return s.Move(ctx, taskID, request, principal.ID)
+}
+
 func (s *Service) SweepStale(ctx context.Context) (int64, error) {
 	now := time.Now().UTC()
 	result, err := s.store.DB().ExecContext(ctx, `UPDATE agent_runs SET status=? WHERE ended_at IS NULL AND status=? AND lease_expires_at < ?`, model.TaskStale, model.TaskActive, stamp(now))
@@ -901,6 +1092,13 @@ func normalizedTaskType(value model.TaskType) model.TaskType {
 	value = model.TaskType(strings.ToLower(strings.TrimSpace(string(value))))
 	if value == "" {
 		return model.TaskPersonal
+	}
+	return value
+}
+func normalizedVisibility(value, fallback model.TaskVisibility) model.TaskVisibility {
+	value = model.TaskVisibility(strings.ToLower(strings.TrimSpace(string(value))))
+	if value == "" {
+		return fallback
 	}
 	return value
 }

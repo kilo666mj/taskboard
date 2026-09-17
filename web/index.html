@@ -50,6 +50,11 @@
           <span class="visually-hidden">Task view</span>
           <select id="viewFilter" aria-label="Task view">
             <option value="open" selected>Open tasks</option>
+            <optgroup label="Lanes">
+              <option value="private">Private to me</option>
+              <option value="team">Team tasks</option>
+              <option value="agent">Agent pickup</option>
+            </optgroup>
             <optgroup label="Focus">
               <option value="inbox">Inbox</option>
               <option value="today">Today</option>
@@ -98,8 +103,10 @@
       <label>Title<input id="taskTitle" maxlength="200" required placeholder="What needs to be done?"></label>
       <div class="form-row">
         <label>Type<select id="taskType"><option value="personal" selected>Personal</option><option value="work">Work</option></select></label>
+        <label>Lane<select id="taskVisibility"><option value="private" selected>Private to me</option><option value="team">Team</option><option value="agent">Agent pickup</option></select></label>
         <label>Priority<select id="taskPriority"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
       </div>
+      <p class="field-help">Private tasks are visible only to their creator. Agent-pickup tasks are available for an agent to claim.</p>
       <div class="form-row">
         <label>Section<input id="taskSection" maxlength="80" list="sectionOptions" placeholder="General"></label>
         <label>Project<input id="taskProject" maxlength="120" list="projectOptions" placeholder="Home"></label>
