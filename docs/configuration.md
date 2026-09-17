@@ -8,7 +8,7 @@ disable their feature.
 | `TASKBOARD_LISTEN_ADDRESS` | `127.0.0.1:8095` | HTTP listen address. The container image overrides this to `0.0.0.0:8095`. |
 | `TASKBOARD_DATABASE_PATH` | `taskboard.db` | SQLite database path. |
 | `TASKBOARD_DATABASE_URL` | none | PostgreSQL connection URL. When set, PostgreSQL is used and `TASKBOARD_DATABASE_PATH` is ignored. |
-| `TASKBOARD_AUTH_TOKEN` | none | Deployment-scoped MCP bearer credential; at least 32 characters. Required on non-loopback listeners. |
+| `TASKBOARD_AUTH_TOKEN` | none | Deployment-scoped MCP bearer credential; at least 32 characters. Required on non-loopback listeners. Calls using it are attributed to `agent:shared`. |
 | `TASKBOARD_ALLOW_INSECURE` | `false` | Allow unauthenticated use only for explicit local development. Without a token, startup refuses non-loopback listeners. |
 | `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. In unauthenticated local mode this safely defaults to `localhost`, `127.0.0.1`, and `::1`. |
 | `TASKBOARD_LEASE_SECONDS` | `120` | Agent lease duration, from 30 through 3600 seconds. |
@@ -61,6 +61,14 @@ For identity-provider sessions, subject allowlist entries are the Access `sub`
 claim. Cloudflare service-token assertions have no `sub` or email; Taskboard
 gives them the stable subject `service_token:<common_name>`, which can also be
 placed in the subject allowlist.
+
+Actor IDs are assigned only from trusted authentication state. Browser users
+keep the stable subject issued by OIDC or Cloudflare Access. The shared MCP
+bearer uses `agent:shared`, unauthenticated loopback development uses
+`agent:local`, and verified Cloudflare Access MCP workloads use their
+`cloudflare_access:<subject>` identity (including
+`cloudflare_access:service_token:<common_name>`). MCP `clientInfo` is untrusted
+display metadata and is recorded separately on an agent run.
 
 Generate an agent credential with a password manager or a system random source,
 for example:

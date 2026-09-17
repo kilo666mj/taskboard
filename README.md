@@ -38,6 +38,13 @@ The MCP server exposes `task_create`, `task_start`, `task_claim`, `task_update`,
 `task_template_list`, and `task_template_save`. The example Switchboard
 capability is in `capabilities/taskboard.example.json`.
 
+Audit actors always come from authenticated server context. The deployment
+bearer token maps to the stable `agent:shared` actor, while an MCP client's
+self-reported name and version are stored only as run metadata. Cloudflare
+Access MCP workloads retain their verified Access subject as their stable
+service identity. An MCP client name can therefore aid diagnostics without
+impersonating a person or another service in task history.
+
 ## Planning and review
 
 Every task has an independent visibility lane:

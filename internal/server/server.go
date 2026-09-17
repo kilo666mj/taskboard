@@ -226,43 +226,45 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		if input.Type == "" {
 			input.Type = defaultTaskType
 		}
-		result, err := tasks.StartFor(ctx, input, mcpPrincipal(ctx, request))
+		input.Client = mcpClient(request)
+		result, err := tasks.StartFor(ctx, input, mcpPrincipal(ctx))
 		return nil, result, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_create", Description: "Capture future work without starting execution. Creates a queued task with no agent run; title is the only required field.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.CreateRequest) (*mcp.CallToolResult, taskOutput, error) {
 		if input.Type == "" {
 			input.Type = defaultTaskType
 		}
-		task, err := tasks.CreateFor(ctx, input, mcpPrincipal(ctx, request))
+		task, err := tasks.CreateFor(ctx, input, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. expected_version prevents overwriting another agent's changes.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
-		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx, request))
+		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_claim", Description: "Claim an existing non-terminal task and receive a fresh leased run. Use this for handoff or to resume a task after its prior run became stale.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input claimInput) (*mcp.CallToolResult, model.StartResult, error) {
-		result, err := tasks.ClaimFor(ctx, input.TaskID, input.ClaimRequest, mcpPrincipal(ctx, request))
+		input.Client = mcpClient(request)
+		result, err := tasks.ClaimFor(ctx, input.TaskID, input.ClaimRequest, mcpPrincipal(ctx))
 		return nil, result, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_move", Description: "Move an open task up or down within its section while preserving optimistic version checks.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input moveInput) (*mcp.CallToolResult, taskOutput, error) {
-		task, err := tasks.MoveFor(ctx, input.TaskID, input.MoveRequest, mcpPrincipal(ctx, request))
+		task, err := tasks.MoveFor(ctx, input.TaskID, input.MoveRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_complete", Description: "Mark a task done. Rejected while any required checklist item remains open; skipped items require a recorded reason.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		input.Status = model.TaskDone
-		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx, request))
+		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_heartbeat", Description: "Renew an active run lease during long work. The harness should call this automatically; expired runs become stale.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input heartbeatInput) (*mcp.CallToolResult, runOutput, error) {
-		run, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx, request))
+		run, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx))
 		return nil, runOutput{Run: run}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and agent runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input taskIDInput) (*mcp.CallToolResult, taskOutput, error) {
-		task, err := tasks.GetFor(ctx, input.TaskID, mcpPrincipal(ctx, request))
+		task, err := tasks.GetFor(ctx, input.TaskID, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
-		items, err := tasks.ListFor(ctx, input.Statuses, input.Limit, mcpPrincipal(ctx, request))
+		items, err := tasks.ListFor(ctx, input.Statuses, input.Limit, mcpPrincipal(ctx))
 		return nil, tasksOutput{Tasks: items}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_template_list", Description: "List reusable Taskboard task and checklist templates.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, templatesOutput, error) {
@@ -532,7 +534,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				} else if len(values) == 1 && strings.HasPrefix(values[0], "Bearer ") {
 					presented := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))
 					valid = secureEqual(presented, cfg.AuthToken)
-					who = "agent"
+					who = "agent:shared"
 				}
 			} else if cloudflare != nil {
 				if identity, err := cloudflare.identity(r); err == nil {
@@ -634,17 +636,38 @@ func principal(ctx context.Context) service.Principal {
 	return value
 }
 func actor(ctx context.Context) string { return principal(ctx).ID }
-func mcpActor(ctx context.Context, request *mcp.CallToolRequest) string {
-	if authenticated := actor(ctx); authenticated != "" && authenticated != "agent" {
-		return authenticated
+func mcpPrincipal(ctx context.Context) service.Principal {
+	switch authenticated := strings.TrimSpace(actor(ctx)); authenticated {
+	case "", "agent":
+		return service.AgentPrincipal("agent:shared")
+	case "local":
+		return service.AgentPrincipal("agent:local")
+	default:
+		return service.AgentPrincipal(authenticated)
 	}
-	if client := request.ClientInfo(); client != nil && strings.TrimSpace(client.Name) != "" {
-		return strings.TrimSpace(client.Name)
-	}
-	return actor(ctx)
 }
-func mcpPrincipal(ctx context.Context, request *mcp.CallToolRequest) service.Principal {
-	return service.AgentPrincipal(mcpActor(ctx, request))
+func mcpClient(request *mcp.CallToolRequest) string {
+	if request == nil || request.ClientInfo() == nil {
+		return ""
+	}
+	name := cleanClientMetadata(request.ClientInfo().Name)
+	version := cleanClientMetadata(request.ClientInfo().Version)
+	client := name
+	if name != "" && version != "" {
+		client += "/" + version
+	}
+	if len(client) > 100 {
+		client = strings.ToValidUTF8(client[:100], "")
+	}
+	return client
+}
+func cleanClientMetadata(value string) string {
+	return strings.Map(func(character rune) rune {
+		if character < ' ' || character == '\u007f' {
+			return -1
+		}
+		return character
+	}, strings.TrimSpace(value))
 }
 func secureEqual(left, right string) bool {
 	if left == "" || right == "" || len(left) != len(right) {
