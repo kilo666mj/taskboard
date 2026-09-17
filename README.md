@@ -42,8 +42,8 @@ capability is in `capabilities/taskboard.example.json`.
 
 Every task has an independent visibility lane:
 
-- **Private** tasks are visible only to the browser identity that created them
-  and are never returned through the agent MCP API.
+- **Private** tasks are visible only to the stable identity-provider subject
+  that created them and are never returned through the agent MCP API.
 - **Team** tasks are visible to authenticated people. An agent sees a team task
   only when its authenticated agent name matches the task's assignee.
 - **Agent pickup** tasks are visible to people and eligible agents, and a queued

@@ -487,11 +487,11 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			} else if cloudflare != nil {
 				if identity, err := cloudflare.identity(r); err == nil {
 					valid = true
-					who = identityActor(identity)
+					who = identity.Subject
 				}
 			} else if identity, ok := sessions.identity(r.Context(), r); ok {
 				valid = true
-				who = identityActor(identity)
+				who = identity.Subject
 			}
 			if !valid {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="taskboard"`)
