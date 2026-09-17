@@ -39,6 +39,26 @@ func serverFixture(t *testing.T) (*service.Service, *store.Store, *slog.Logger) 
 	return service.New(database, time.Minute), database, slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func connectMCPAs(t *testing.T, server *mcp.Server, name, version string) *mcp.ClientSession {
+	t.Helper()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: version}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		_ = serverSession.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = clientSession.Close()
+		_ = serverSession.Close()
+	})
+	return clientSession
+}
+
 func TestMCPToolSurfaceIsAnnotated(t *testing.T) {
 	tasks, _, logger := serverFixture(t)
 	session := mcpkittest.Connect(t, newMCPServer(tasks, model.TaskWork, logger))
@@ -72,6 +92,77 @@ func TestMCPDefaultsNewTasksToConfiguredType(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Type != model.TaskWork || items[0].Visibility != model.VisibilityAgent {
 		t.Fatalf("created tasks = %+v", items)
+	}
+}
+
+func TestMCPClientNameCannotSpoofCanonicalActor(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	session := connectMCPAs(t, newMCPServer(tasks, model.TaskWork, logger), "victim@example.com", "9.4")
+	_, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_start", Arguments: map[string]any{
+		"title":     "Spoof-resistant task",
+		"checklist": []string{"Verify attribution"},
+		"agent":     "admin@example.com",
+		"client":    "forged-client",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := tasks.List(t.Context(), nil, 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("list tasks = %+v, %v", items, err)
+	}
+	task, err := tasks.Get(t.Context(), items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.CreatedBy != "agent:shared" || task.Owner != "agent:shared" {
+		t.Fatalf("task attribution = creator %q, owner %q", task.CreatedBy, task.Owner)
+	}
+	if len(task.Runs) != 1 || task.Runs[0].Agent != "agent:shared" || task.Runs[0].Client != "victim@example.com/9.4" {
+		t.Fatalf("run attribution = %+v", task.Runs)
+	}
+	var eventActor string
+	if err := database.DB().QueryRowContext(t.Context(), `SELECT actor FROM events WHERE task_id=? AND kind='task.started'`, task.ID).Scan(&eventActor); err != nil {
+		t.Fatal(err)
+	}
+	if eventActor != "agent:shared" {
+		t.Fatalf("event actor = %q, want agent:shared", eventActor)
+	}
+}
+
+func TestMCPPrincipalUsesOnlyTrustedAuthenticationContext(t *testing.T) {
+	for _, test := range []struct {
+		principal service.Principal
+		want      string
+	}{
+		{want: "agent:shared"},
+		{principal: service.AgentPrincipal("agent"), want: "agent:shared"},
+		{principal: service.AgentPrincipal("local"), want: "agent:local"},
+		{principal: service.AgentPrincipal("cloudflare_access:service_token:build-bot"), want: "cloudflare_access:service_token:build-bot"},
+	} {
+		ctx := context.WithValue(t.Context(), principalKey{}, test.principal)
+		if got := mcpPrincipal(ctx); got.ID != test.want || !got.Agent {
+			t.Errorf("mcpPrincipal(%q) = %+v, want agent %q", test.principal.ID, got, test.want)
+		}
+	}
+}
+
+func TestBearerAuthenticationUsesSharedCanonicalAgent(t *testing.T) {
+	_, database, logger := serverFixture(t)
+	token := strings.Repeat("shared-token-", 3)
+	handler := auth(config.Config{AuthToken: token}, newBrowserSessions(database, true, logger), nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := principal(r.Context())
+		if got.ID != "agent:shared" || !got.Agent {
+			t.Errorf("principal = %+v, want shared agent", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/mcp", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", response.Code)
 	}
 }
 
