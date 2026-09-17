@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::Deserialize;
+use std::net::IpAddr;
 use std::process::Command;
 use tauri::{
     image::Image,
@@ -37,15 +38,51 @@ fn normalize_origin(origin: &str) -> Result<String, String> {
     if parsed.query().is_some() || parsed.fragment().is_some() || parsed.path() != "/" {
         return Err("origin must not contain a path, query, or fragment".into());
     }
+    let host = parsed.host_str().ok_or("origin must include a host")?;
+    let address_host = host.trim_start_matches('[').trim_end_matches(']');
+    if parsed.scheme() == "http"
+        && !host.eq_ignore_ascii_case("localhost")
+        && !address_host
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    {
+        return Err("HTTP origins are allowed only on loopback".into());
+    }
     Ok(parsed.origin().ascii_serialization())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::normalize_origin;
+
+    #[test]
+    fn origin_requires_https_except_on_loopback() {
+        for origin in [
+            "https://taskboard.example.com",
+            "http://localhost:8095",
+            "http://127.0.0.1:8095",
+            "http://[::1]:8095",
+        ] {
+            assert!(normalize_origin(origin).is_ok(), "rejected {origin}");
+        }
+        for origin in [
+            "http://taskboard.internal",
+            "http://192.168.1.20:8095",
+            "http://10.0.0.2",
+        ] {
+            assert!(normalize_origin(origin).is_err(), "accepted {origin}");
+        }
+    }
+}
+
 fn stored_origin(app: &AppHandle) -> Option<String> {
-    app.store(STORE_FILE)
+    let origin = app
+        .store(STORE_FILE)
         .ok()?
         .get(ORIGIN_KEY)?
         .as_str()
-        .map(str::to_string)
+        .map(str::to_string)?;
+    normalize_origin(&origin).ok()
 }
 
 fn allow_origin(app: &AppHandle, origin: &str) -> Result<(), String> {

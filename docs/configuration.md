@@ -9,8 +9,8 @@ disable their feature.
 | `TASKBOARD_DATABASE_PATH` | `taskboard.db` | SQLite database path. |
 | `TASKBOARD_DATABASE_URL` | none | PostgreSQL connection URL. When set, PostgreSQL is used and `TASKBOARD_DATABASE_PATH` is ignored. |
 | `TASKBOARD_AUTH_TOKEN` | none | Deployment-scoped MCP bearer credential; at least 32 characters. Required on non-loopback listeners. |
-| `TASKBOARD_ALLOW_INSECURE` | `false` | Allow unauthenticated use only for explicit local development. Never enable on a network listener. |
-| `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. |
+| `TASKBOARD_ALLOW_INSECURE` | `false` | Allow unauthenticated use only for explicit local development. Without a token, startup refuses non-loopback listeners. |
+| `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. In unauthenticated local mode this safely defaults to `localhost`, `127.0.0.1`, and `::1`. |
 | `TASKBOARD_LEASE_SECONDS` | `120` | Agent lease duration, from 30 through 3600 seconds. |
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Default type for agent-created tasks: `personal` or `work`. |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
@@ -51,6 +51,11 @@ audience. Assertions may authenticate browser REST/SSE requests and MCP agents.
 Requests that supply both an Access assertion and the deployment bearer fail
 closed as ambiguous. Restrict direct origin access because a valid assertion is
 still a bearer credential until it expires.
+
+Browser mutations require an exact same-origin `Origin` header, reject
+`Sec-Fetch-Site: cross-site`, and accept JSON request bodies only with an
+`application/json` media type. Live event streams are limited to four per
+identity and 128 per server process.
 
 For identity-provider sessions, subject allowlist entries are the Access `sub`
 claim. Cloudflare service-token assertions have no `sub` or email; Taskboard

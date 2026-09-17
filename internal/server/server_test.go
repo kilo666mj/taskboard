@@ -136,6 +136,7 @@ func TestSavePushSubscriptionAcceptsExpirationTime(t *testing.T) {
 	notifications := push.New(database, tasks, "public-key", "private-key", "mailto:test@example.com", logger)
 	body := []byte(`{"endpoint":"https://web.push.apple.com/test","expirationTime":null,"keys":{"p256dh":"test-p256dh","auth":"test-auth"}}`)
 	request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/push/subscriptions", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 
 	savePushSubscription(notifications).ServeHTTP(response, request)
@@ -151,6 +152,7 @@ func TestSavePushSubscriptionAcceptsExpirationTime(t *testing.T) {
 		t.Fatalf("subscriptions = %#v", subscriptions)
 	}
 	preferences := httptest.NewRequest(http.MethodPatch, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(`{"endpoint":"https://web.push.apple.com/test","progress":false,"reminders":true,"summaries":true}`))
+	preferences.Header.Set("Content-Type", "application/json")
 	preferenceResponse := httptest.NewRecorder()
 	updatePushPreferences(notifications).ServeHTTP(preferenceResponse, preferences)
 	if preferenceResponse.Code != http.StatusNoContent {
@@ -170,6 +172,7 @@ func TestPushSubscriptionEndpointCannotBeTakenOver(t *testing.T) {
 	notifications := push.New(database, tasks, "public-key", "private-key", "mailto:test@example.com", logger)
 	requestFor := func(subject, body string) *http.Request {
 		request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
 		return request.WithContext(context.WithValue(request.Context(), principalKey{}, service.HumanPrincipal(subject)))
 	}
 	aliceBody := `{"endpoint":"https://web.push.apple.com/device","keys":{"p256dh":"alice-key","auth":"alice-auth"}}`
@@ -194,6 +197,7 @@ func TestPushSubscriptionEndpointCannotBeTakenOver(t *testing.T) {
 	}
 
 	preferences := httptest.NewRequest(http.MethodPatch, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(`{"endpoint":"https://web.push.apple.com/device","progress":false}`))
+	preferences.Header.Set("Content-Type", "application/json")
 	preferences = preferences.WithContext(context.WithValue(preferences.Context(), principalKey{}, service.HumanPrincipal("bob@example.com")))
 	response = httptest.NewRecorder()
 	updatePushPreferences(notifications).ServeHTTP(response, preferences)
@@ -202,6 +206,7 @@ func TestPushSubscriptionEndpointCannotBeTakenOver(t *testing.T) {
 	}
 
 	remove := httptest.NewRequest(http.MethodDelete, "https://taskboard.example.com/api/v1/push/subscriptions", strings.NewReader(`{"endpoint":"https://web.push.apple.com/device"}`))
+	remove.Header.Set("Content-Type", "application/json")
 	remove = remove.WithContext(context.WithValue(remove.Context(), principalKey{}, service.HumanPrincipal("bob@example.com")))
 	response = httptest.NewRecorder()
 	deletePushSubscription(notifications).ServeHTTP(response, remove)
@@ -227,6 +232,8 @@ func TestRESTCreatesAndListsMultipleTasks(t *testing.T) {
 	for _, title := range []string{"First task", "Second task"} {
 		body, _ := json.Marshal(map[string]any{"title": title, "checklist": []string{"One", "Two"}})
 		request := httptest.NewRequest(http.MethodPost, "http://taskboard/api/v1/tasks", bytes.NewReader(body))
+		request.Header.Set("Origin", "http://taskboard")
+		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusCreated {
@@ -255,6 +262,8 @@ func TestRESTCapturesTitleOnlyTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://taskboard/api/v1/tasks/capture", strings.NewReader(`{"title":"Inbox item","section":"Personal"}`))
+	request.Header.Set("Origin", "http://taskboard")
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
@@ -276,7 +285,7 @@ func TestEventsExposeReadyAndKeepaliveSignals(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "http://taskboard/api/v1/events", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
-		eventsWithKeepalive(tasks, time.Millisecond).ServeHTTP(response, request)
+		eventsWithKeepalive(tasks, time.Millisecond, newEventStreamLimiter(10, 10)).ServeHTTP(response, request)
 		close(done)
 	}()
 
@@ -296,6 +305,121 @@ func TestEventsExposeReadyAndKeepaliveSignals(t *testing.T) {
 	}
 	if !strings.Contains(body, "retry: 2000") || !strings.Contains(body, "event: ready") {
 		t.Fatalf("stream did not contain retry and ready signals: %q", body)
+	}
+}
+
+func TestEventStreamLimitsPerPrincipalAndGlobally(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	limiter := newEventStreamLimiter(2, 1)
+	handler := eventsWithKeepalive(tasks, time.Hour, limiter)
+	type stream struct {
+		cancel   context.CancelFunc
+		done     chan struct{}
+		response *flushingRecorder
+	}
+	open := func(subject string) stream {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		ctx = context.WithValue(ctx, principalKey{}, service.HumanPrincipal(subject))
+		request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/events", nil).WithContext(ctx)
+		response := newFlushingRecorder()
+		done := make(chan struct{})
+		go func() {
+			handler.ServeHTTP(response, request)
+			close(done)
+		}()
+		select {
+		case <-response.flushed:
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("timed out opening event stream")
+		}
+		return stream{cancel: cancel, done: done, response: response}
+	}
+	rejected := func(subject string) *httptest.ResponseRecorder {
+		t.Helper()
+		ctx := context.WithValue(t.Context(), principalKey{}, service.HumanPrincipal(subject))
+		request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/events", nil).WithContext(ctx)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	alice := open("alice@example.com")
+	defer func() { alice.cancel(); <-alice.done }()
+	if response := rejected("alice@example.com"); response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") == "" {
+		t.Fatalf("per-principal limit status/headers = %d/%v", response.Code, response.Header())
+	}
+	bob := open("bob@example.com")
+	if response := rejected("charlie@example.com"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("global limit status = %d", response.Code)
+	}
+	bob.cancel()
+	<-bob.done
+	charlie := open("charlie@example.com")
+	charlie.cancel()
+	<-charlie.done
+}
+
+func TestBrowserMutationsRequireSameOriginAndJSON(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	notifications := push.New(database, tasks, "", "", "", logger)
+	handler, err := New(config.Config{AllowInsecure: true, LeaseDuration: time.Minute}, database, tasks, notifications, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(origin, contentType, fetchSite string) *http.Request {
+		result := httptest.NewRequest(http.MethodPost, "http://taskboard/api/v1/tasks/capture", strings.NewReader(`{"title":"Boundary test"}`))
+		if origin != "" {
+			result.Header.Set("Origin", origin)
+		}
+		if contentType != "" {
+			result.Header.Set("Content-Type", contentType)
+		}
+		if fetchSite != "" {
+			result.Header.Set("Sec-Fetch-Site", fetchSite)
+		}
+		return result
+	}
+	for _, test := range []struct {
+		name       string
+		request    *http.Request
+		wantStatus int
+	}{
+		{"missing origin", request("", "application/json", ""), http.StatusForbidden},
+		{"cross origin", request("https://evil.example", "application/json", ""), http.StatusForbidden},
+		{"cross-site metadata", request("http://taskboard", "application/json", "cross-site"), http.StatusForbidden},
+		{"missing content type", request("http://taskboard", "", "same-origin"), http.StatusUnsupportedMediaType},
+		{"wrong content type", request("http://taskboard", "text/plain", "same-origin"), http.StatusUnsupportedMediaType},
+		{"same origin JSON", request("http://taskboard", "application/json; charset=utf-8", "same-origin"), http.StatusCreated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, test.request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestLogoutRequiresSameOrigin(t *testing.T) {
+	_, database, logger := serverFixture(t)
+	sessions := newBrowserSessions(database, true, logger)
+	handler := logout(config.Config{}, sessions)
+
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodDelete, "https://taskboard.example.com/api/v1/session", nil))
+	if missing.Code != http.StatusForbidden {
+		t.Fatalf("missing-origin logout status = %d", missing.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, "https://taskboard.example.com/api/v1/session", nil)
+	request.Header.Set("Origin", "https://taskboard.example.com")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("same-origin logout status = %d", response.Code)
 	}
 }
 
@@ -395,6 +519,8 @@ func TestRESTEnforcesPrivateAndTeamVisibility(t *testing.T) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]string{"title": title, "visibility": visibility})
 		request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/tasks/capture", bytes.NewReader(body))
+		request.Header.Set("Origin", "https://taskboard.example.com")
+		request.Header.Set("Content-Type", "application/json")
 		request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: session})
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -452,6 +578,7 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"code": code})
 	unconfirmed := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
 	unconfirmed.Header.Set("Origin", "https://taskboard.example.com")
+	unconfirmed.Header.Set("Content-Type", "application/json")
 	unconfirmedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(unconfirmedResponse, unconfirmed)
 	if unconfirmedResponse.Code != http.StatusUnauthorized {
@@ -493,6 +620,7 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
 	request.Header.Set("Origin", "https://taskboard.example.com")
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent || len(response.Result().Cookies()) != 1 {
@@ -501,6 +629,7 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 
 	replay := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
 	replay.Header.Set("Origin", "https://taskboard.example.com")
+	replay.Header.Set("Content-Type", "application/json")
 	replayed := httptest.NewRecorder()
 	handler.ServeHTTP(replayed, replay)
 	if replayed.Code != http.StatusUnauthorized {
@@ -509,6 +638,7 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 
 	crossOrigin := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
 	crossOrigin.Header.Set("Origin", "https://evil.example")
+	crossOrigin.Header.Set("Content-Type", "application/json")
 	rejected := httptest.NewRecorder()
 	handler.ServeHTTP(rejected, crossOrigin)
 	if rejected.Code != http.StatusForbidden {
@@ -562,6 +692,7 @@ func TestDesktopSessionConfirmationCanBeCancelled(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"code": code})
 	exchange := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/session", bytes.NewReader(body))
 	exchange.Header.Set("Origin", "https://taskboard.example.com")
+	exchange.Header.Set("Content-Type", "application/json")
 	exchanged := httptest.NewRecorder()
 	handler.ServeHTTP(exchanged, exchange)
 	if exchanged.Code != http.StatusUnauthorized {

@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kilo666mj/mcpkit"
@@ -101,7 +103,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("POST /api/v1/tasks/{id}/runs", authenticated(http.HandlerFunc(claimTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/move", authenticated(http.HandlerFunc(moveTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs/{run}/heartbeat", authenticated(http.HandlerFunc(heartbeat(service))))
-	mux.Handle("GET /api/v1/events", authenticated(http.HandlerFunc(events(service))))
+	mux.Handle("GET /api/v1/events", authenticated(http.HandlerFunc(events(service, newEventStreamLimiter(128, 4)))))
 	mux.Handle("GET /api/v1/templates", authenticated(http.HandlerFunc(listTemplates(service))))
 	mux.Handle("POST /api/v1/templates", authenticated(http.HandlerFunc(saveTemplate(service))))
 	mux.Handle("DELETE /api/v1/templates/{id}", authenticated(http.HandlerFunc(deleteTemplate(service))))
@@ -152,6 +154,9 @@ func savePushSubscription(notifications *push.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !notifications.Enabled() {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Web Push is not configured"})
+			return
+		}
+		if !requireJSONContentType(w, r) {
 			return
 		}
 		input, err := pwakit.DecodeSubscription(r.Body)
@@ -406,12 +411,52 @@ func heartbeat(tasks *service.Service) http.HandlerFunc {
 
 const eventKeepaliveInterval = 20 * time.Second
 
-func events(tasks *service.Service) http.HandlerFunc {
-	return eventsWithKeepalive(tasks, eventKeepaliveInterval)
+type eventStreamLimiter struct {
+	mu              sync.Mutex
+	global          int
+	byPrincipal     map[string]int
+	maxGlobal       int
+	maxPerPrincipal int
 }
 
-func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration) http.HandlerFunc {
+func newEventStreamLimiter(maxGlobal, maxPerPrincipal int) *eventStreamLimiter {
+	return &eventStreamLimiter{byPrincipal: make(map[string]int), maxGlobal: maxGlobal, maxPerPrincipal: maxPerPrincipal}
+}
+
+func (l *eventStreamLimiter) acquire(principalID string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.global >= l.maxGlobal || l.byPrincipal[principalID] >= l.maxPerPrincipal {
+		return false
+	}
+	l.global++
+	l.byPrincipal[principalID]++
+	return true
+}
+
+func (l *eventStreamLimiter) release(principalID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.global--
+	l.byPrincipal[principalID]--
+	if l.byPrincipal[principalID] == 0 {
+		delete(l.byPrincipal, principalID)
+	}
+}
+
+func events(tasks *service.Service, limiter *eventStreamLimiter) http.HandlerFunc {
+	return eventsWithKeepalive(tasks, eventKeepaliveInterval, limiter)
+}
+
+func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration, limiter *eventStreamLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		principalID := principal(r.Context()).ID
+		if !limiter.acquire(principalID) {
+			w.Header().Set("Retry-After", "5")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many live event streams"})
+			return
+		}
+		defer limiter.release(principalID)
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unavailable"})
@@ -460,13 +505,17 @@ func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration
 func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mcpRequest := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
+			if !mcpRequest && !safeMethod(r.Method) && !safeBrowserMutation(r) {
+				logger.Warn("rejected unsafe browser mutation")
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
+				return
+			}
 			if cfg.AllowInsecure && cfg.AuthToken == "" {
-				isAgent := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: "local", Agent: isAgent})))
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: "local", Agent: mcpRequest})))
 				return
 			}
 			valid, who := false, ""
-			mcpRequest := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
 			if mcpRequest {
 				values := r.Header.Values("Authorization")
 				accessValues := r.Header.Values(cloudflareAccessJWTHeader)
@@ -498,14 +547,6 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				w.Header().Set("WWW-Authenticate", `Bearer realm="taskboard"`)
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 				return
-			}
-			if who != "agent" && r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
-				origin := r.Header.Get("Origin")
-				if origin != "" && !sameOrigin(origin, r.Host) {
-					logger.Warn("rejected cross-origin cookie request")
-					writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
-					return
-				}
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: who, Agent: mcpRequest})))
 		})
@@ -562,11 +603,23 @@ func apiError(w http.ResponseWriter, err error) bool {
 	return true
 }
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	if !requireJSONContentType(w, r) {
+		return false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON request"})
+		return false
+	}
+	return true
+}
+
+func requireJSONContentType(w http.ResponseWriter, r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
 		return false
 	}
 	return true
@@ -602,6 +655,17 @@ func secureEqual(left, right string) bool {
 func sameOrigin(origin, host string) bool {
 	parsed, err := url.Parse(origin)
 	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == host && parsed.User == nil
+}
+
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+}
+
+func safeBrowserMutation(r *http.Request) bool {
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+		return false
+	}
+	return sameOrigin(r.Header.Get("Origin"), r.Host)
 }
 func requireAllowedHost(allowed []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

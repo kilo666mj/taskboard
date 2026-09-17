@@ -2,6 +2,40 @@ package config
 
 import "testing"
 
+func TestInsecureModeIsLoopbackOnlyWithSafeHostDefaults(t *testing.T) {
+	t.Setenv("TASKBOARD_ALLOW_INSECURE", "true")
+	for _, listener := range []string{"0.0.0.0:8095", ":8095", "[::]:8095", "192.168.1.20:8095"} {
+		t.Setenv("TASKBOARD_LISTEN_ADDRESS", listener)
+		if _, err := Load(); err == nil {
+			t.Fatalf("insecure mode accepted non-loopback listener %q", listener)
+		}
+	}
+
+	t.Setenv("TASKBOARD_LISTEN_ADDRESS", "127.0.0.1:8095")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"localhost", "127.0.0.1", "::1"}
+	if len(cfg.AllowedHosts) != len(want) {
+		t.Fatalf("allowed hosts = %v, want %v", cfg.AllowedHosts, want)
+	}
+	for index := range want {
+		if cfg.AllowedHosts[index] != want[index] {
+			t.Fatalf("allowed hosts = %v, want %v", cfg.AllowedHosts, want)
+		}
+	}
+
+	t.Setenv("TASKBOARD_ALLOWED_HOSTS", "board.localhost")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AllowedHosts) != 1 || cfg.AllowedHosts[0] != "board.localhost" {
+		t.Fatalf("explicit allowed hosts = %v", cfg.AllowedHosts)
+	}
+}
+
 func TestMCPDefaultTaskType(t *testing.T) {
 	t.Setenv("TASKBOARD_MCP_DEFAULT_TYPE", "personal")
 	cfg, err := Load()
