@@ -82,8 +82,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid TASKBOARD_LISTEN_ADDRESS: %w", err)
 	}
+	if cfg.AllowInsecure && cfg.AuthToken == "" && !isLoopback(host) {
+		return Config{}, fmt.Errorf("TASKBOARD_ALLOW_INSECURE without a token requires a loopback listener")
+	}
 	if !cfg.AllowInsecure && cfg.AuthToken == "" && !isLoopback(host) {
 		return Config{}, fmt.Errorf("TASKBOARD_AUTH_TOKEN is required for a non-loopback listener")
+	}
+	if cfg.AllowInsecure && cfg.AuthToken == "" && len(cfg.AllowedHosts) == 0 {
+		cfg.AllowedHosts = []string{"localhost", "127.0.0.1", "::1"}
 	}
 	if cfg.AuthToken != "" && len(cfg.AuthToken) < 32 {
 		return Config{}, fmt.Errorf("TASKBOARD_AUTH_TOKEN must contain at least 32 characters")
@@ -172,5 +178,6 @@ func split(value string) []string {
 }
 
 func isLoopback(host string) bool {
-	return host == "localhost" || host == "" || net.ParseIP(host).IsLoopback()
+	address := net.ParseIP(host)
+	return strings.EqualFold(host, "localhost") || address != nil && address.IsLoopback()
 }

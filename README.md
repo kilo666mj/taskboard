@@ -93,6 +93,11 @@ TASKBOARD_ALLOWED_HOSTS=taskboard.example.com
 TASKBOARD_MCP_DEFAULT_TYPE=work
 ```
 
+Unauthenticated mode refuses non-loopback listeners and defaults its Host
+allowlist to loopback names. The desktop client likewise accepts plain HTTP
+only for `localhost` and loopback IP addresses; use HTTPS for every remote
+Taskboard origin.
+
 SQLite remains the zero-configuration default. Set `TASKBOARD_DATABASE_URL` to
 use PostgreSQL for Kubernetes, EKS, or other deployments where application pods
 must not own durable state. PostgreSQL startup migrations are serialized so

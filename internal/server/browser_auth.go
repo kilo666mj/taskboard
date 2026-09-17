@@ -234,7 +234,7 @@ func desktopConfirmationPage(w http.ResponseWriter, status int, title, message, 
 
 func logout(cfg config.Config, sessions *browserSessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
+		if !safeBrowserMutation(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
 			return
 		}
