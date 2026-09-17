@@ -160,8 +160,7 @@ func savePushSubscription(notifications *push.Service) http.HandlerFunc {
 			return
 		}
 
-		if err := notifications.Save(r.Context(), store.PushSubscription{Endpoint: input.Endpoint, P256DH: input.Keys.P256dh, Auth: input.Keys.Auth, OwnerID: actor(r.Context())}); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save subscription"})
+		if apiError(w, notifications.Save(r.Context(), store.PushSubscription{Endpoint: input.Endpoint, P256DH: input.Keys.P256dh, Auth: input.Keys.Auth, OwnerID: actor(r.Context())})) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -546,6 +545,9 @@ func apiError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 		message = "not found"
+	case errors.Is(err, store.ErrConflict):
+		status = http.StatusConflict
+		message = "conflict"
 	case errors.Is(err, service.ErrConflict):
 		status = http.StatusConflict
 		message = err.Error()

@@ -35,8 +35,8 @@ github.com/kilo666mj/mcpkit v0.1.0 h1:+dxBnxrhBzyKPdGseviVHu30obXJbq9YZKTfCER9od
 github.com/kilo666mj/mcpkit v0.1.0/go.mod h1:K90JuDJZ7QV7LKGwagxr4PWLa5Wf86m+CCTs7ZMK5qA=
 github.com/kilo666mj/oidcrp v0.2.1 h1:BgeO2XdyJ9Oi3NtYSnA0vErMKu/PYKA/H8YCuzcBA0U=
 github.com/kilo666mj/oidcrp v0.2.1/go.mod h1:SOrzVbfoK5x7pPRAIo8F/EPVkIP8qcPD87SCBpEEBDM=
-github.com/kilo666mj/pwa-kit v0.1.0 h1:1rNTaE8jFJSYjO0ABZF0GvF9VQbyyxfwywSjQfPAm2U=
-github.com/kilo666mj/pwa-kit v0.1.0/go.mod h1:Z+nYUczPzyR2hAFfkv9NnyxChGWhBbWpUIhQqeLT7qg=
+github.com/kilo666mj/pwa-kit v0.2.0 h1:rDruKnL4DIHNiM0mms+W6rEXQmIIoRe77LFAhghoNRY=
+github.com/kilo666mj/pwa-kit v0.2.0/go.mod h1:Z+nYUczPzyR2hAFfkv9NnyxChGWhBbWpUIhQqeLT7qg=
 github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
 github.com/mattn/go-isatty v0.0.24/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
 github.com/modelcontextprotocol/go-sdk v1.7.0 h1:yqjY2dsbKAC0LSuWZVBMrHgiG8ukXv6NRo0JiALay44=
