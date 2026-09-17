@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#03060f">
+  <meta name="description" content="A shared task system for personal work and agent execution.">
+  <title>Taskboard</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/taskboard.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="Taskboard home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Taskboard</span>
+      </a>
+      <div class="top-actions">
+        <span id="connection" class="connection" data-state="loading">Connecting</span>
+        <button id="notifyButton" class="icon-button notification-button" type="button" data-state="checking" title="Checking notifications" aria-label="Checking notifications" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/><path class="notification-check" d="m14 10 3 3 6-7"/><path class="notification-off" d="m3 3 18 18"/></svg>
+          <span id="notifyLabel" aria-hidden="true">…</span>
+        </button>
+        <button id="settingsButton" class="icon-button" type="button" title="Task settings" aria-label="Task settings">⚙</button>
+        <button id="logoutButton" class="text-button" type="button" hidden>Sign out</button>
+        <button id="newTaskButton" class="icon-button new-task-button" type="button" title="Create task with details" aria-label="Create task with details"><span aria-hidden="true">+</span></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <main>
+      <p id="notificationMessage" class="notification-message" role="status" hidden></p>
+      <section class="overview" aria-labelledby="overviewHeading">
+        <div>
+          <p class="eyebrow">Personal + agent work / live status</p>
+          <h1 id="overviewHeading">What’s <span>moving</span></h1>
+        </div>
+        <div class="metrics" aria-label="Task summary">
+          <div><strong id="activeCount">0</strong><span>Active</span></div>
+          <div><strong id="blockedCount">0</strong><span>Need attention</span></div>
+          <div><strong id="doneCount">0</strong><span>Done today</span></div>
+        </div>
+      </section>
+
+      <div class="view-toolbar">
+        <label class="view-picker">
+          <span class="visually-hidden">Task view</span>
+          <select id="viewFilter" aria-label="Task view">
+            <option value="open" selected>Open tasks</option>
+            <optgroup label="Focus">
+              <option value="inbox">Inbox</option>
+              <option value="today">Today</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="waiting">Waiting</option>
+            </optgroup>
+            <optgroup label="Operations">
+              <option value="agents">Active agents</option>
+            </optgroup>
+            <optgroup label="Reviews">
+              <option value="review">Daily review</option>
+              <option value="weekly">Weekly review</option>
+            </optgroup>
+            <optgroup label="History">
+              <option value="done">Completed</option>
+              <option value="all">All tasks</option>
+            </optgroup>
+          </select>
+        </label>
+        <label class="search-box"><span class="visually-hidden">Search all tasks</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search all tasks"></label>
+      </div>
+
+      <section id="board" class="board" aria-live="polite" aria-busy="true"></section>
+    </main>
+  </div>
+
+  <dialog id="loginDialog" class="modal" aria-labelledby="loginTitle">
+    <form id="loginForm" method="dialog">
+      <span class="modal-mark" aria-hidden="true"></span>
+      <p class="eyebrow">Private workspace</p>
+      <h2 id="loginTitle">Connect to Taskboard</h2>
+      <p id="loginCopy">Use your organization account to continue.</p>
+      <p id="loginError" class="form-error" role="alert"></p>
+      <button id="oidcLoginButton" class="primary wide" type="submit">Continue to sign in</button>
+    </form>
+  </dialog>
+
+  <dialog id="taskDialog" class="modal task-modal" aria-labelledby="taskDialogTitle">
+    <form id="taskForm" method="dialog">
+      <input id="taskID" type="hidden">
+      <input id="taskVersion" type="hidden">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">Add work</p><h2 id="taskDialogTitle">New task</h2></div>
+        <button class="close-button" type="button" data-close aria-label="Close">×</button>
+      </div>
+      <label>Title<input id="taskTitle" maxlength="200" required placeholder="What needs to be done?"></label>
+      <div class="form-row">
+        <label>Type<select id="taskType"><option value="personal" selected>Personal</option><option value="work">Work</option></select></label>
+        <label>Priority<select id="taskPriority"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+      </div>
+      <div class="form-row">
+        <label>Section<input id="taskSection" maxlength="80" list="sectionOptions" placeholder="General"></label>
+        <label>Project<input id="taskProject" maxlength="120" list="projectOptions" placeholder="Home"></label>
+      </div>
+      <datalist id="sectionOptions"></datalist>
+      <datalist id="projectOptions"></datalist>
+      <label>Repository <span>(optional)</span><input id="taskRepository" maxlength="300" placeholder="taskboard"></label>
+      <div class="form-row planning-row">
+        <label>Due date<input id="taskDueDate" type="date"></label>
+        <label>Defer until<input id="taskDeferUntil" type="date"></label>
+        <label>Repeat<select id="taskRecurrence"><option value="">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+      </div>
+      <label>Context<textarea id="taskSummary" maxlength="2000" rows="2" placeholder="A concise outcome or constraint"></textarea></label>
+      <fieldset>
+        <legend>Checklist <span>(optional)</span></legend>
+        <div id="checklistEditor" class="checklist-editor"></div>
+        <button id="addChecklistItem" class="text-button" type="button">+ Add step</button>
+      </fieldset>
+      <div class="template-controls">
+        <label>Template<select id="taskTemplateSelect"><option value="">None</option></select></label>
+        <button id="saveTemplateButton" class="text-button" type="button">Save as template</button>
+        <button id="deleteTemplateButton" class="text-button" type="button">Delete template</button>
+      </div>
+      <p id="taskError" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close>Cancel</button><button id="taskSubmitButton" class="primary" type="submit">Create task</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="modal" aria-labelledby="settingsTitle">
+    <form id="settingsForm" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Preferences</p><h2 id="settingsTitle">Task settings</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
+      <fieldset class="settings-options"><legend>Notifications</legend>
+        <label><input id="notifyProgress" type="checkbox" checked> Agent progress and status changes</label>
+        <label><input id="notifyReminders" type="checkbox" checked> Due-date reminders</label>
+        <label><input id="notifySummaries" type="checkbox"> Optional daily summaries</label>
+      </fieldset>
+      <div class="dialog-actions"><button class="primary" type="submit">Save settings</button></div>
+    </form>
+  </dialog>
+
+  <template id="taskTemplate">
+    <article class="task-card">
+      <button class="task-summary" type="button" aria-expanded="true">
+        <span class="status-rail"></span>
+        <span class="task-main"><span class="task-topline"><span class="task-title"></span><span class="task-progress"></span></span><span class="task-note"></span></span>
+        <span class="task-side"><span class="agent-chip"></span><time></time><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 5 5-5"/></svg></span>
+      </button>
+      <div class="task-detail">
+        <div class="attention-note" hidden></div>
+        <div class="task-meta" hidden></div>
+        <ol class="checklist"></ol>
+        <p class="empty-checklist" hidden>No checklist yet. Start it yourself or assign it to an agent.</p>
+        <div class="task-actions" hidden>
+          <button class="secondary start-self" type="button">Start myself</button>
+          <form class="assign-form">
+            <label class="visually-hidden">Agent name</label>
+            <input maxlength="100" required autocomplete="off" aria-label="Agent name" placeholder="Agent name">
+            <button class="secondary" type="submit">Assign to agent</button>
+          </form>
+          <button class="secondary finish-self" type="button">Mark done</button>
+        </div>
+        <div class="task-management">
+          <button class="text-button edit-task" type="button">Edit</button>
+          <button class="text-button move-up" type="button" aria-label="Move task up">↑</button>
+          <button class="text-button move-down" type="button" aria-label="Move task down">↓</button>
+          <button class="text-button review-task" type="button">Reviewed</button>
+        </div>
+        <div class="task-footer"><span class="repository"></span><span class="run-state"></span></div>
+      </div>
+    </article>
+  </template>
+  <script src="/pwa-kit/browser.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for Taskboard's bundled setup page.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-configured-origin",
+    "allow-configure",
+    "allow-set-attention",
+    "allow-alert",
+    "core:window:allow-set-focus",
+    "store:default",
+    "notification:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
+  ]
+}

@@ -1,0 +1,134 @@
+---
+- name: Deploy Taskboard
+  hosts: taskboard
+  become: true
+  vars_files:
+    - private.yml
+  vars:
+    taskboard_build_dir: "{{ playbook_dir }}/.build"
+    taskboard_binary: "{{ taskboard_build_dir }}/taskboard"
+    taskboard_lease_seconds: 300
+    taskboard_mcp_default_type: work
+    taskboard_browser_auth_mode: oidc
+    taskboard_cf_access_team_domain: ""
+    taskboard_cf_access_aud: ""
+    taskboard_cf_access_allowed_subjects: []
+    taskboard_cf_access_allowed_emails: []
+    taskboard_cf_access_allowed_groups: []
+
+  pre_tasks:
+    - name: Validate deployment inputs
+      ansible.builtin.assert:
+        that:
+          - taskboard_auth_token | length >= 32
+          - taskboard_vapid_public_key | length > 32
+          - taskboard_vapid_private_key | length > 32
+          - taskboard_vapid_contact | length > 0
+          - taskboard_allowed_hosts | length > 0
+          - taskboard_browser_auth_mode in ['oidc', 'cloudflare_access']
+          - taskboard_browser_auth_mode != 'oidc' or taskboard_oidc_issuer | length > 0
+          - taskboard_browser_auth_mode != 'oidc' or taskboard_oidc_client_id | length > 0
+          - taskboard_browser_auth_mode != 'oidc' or taskboard_oidc_redirect_url | length > 0
+          - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_team_domain | length > 0
+          - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_aud | length > 0
+          - taskboard_mcp_default_type in ['personal', 'work']
+          - "'replace' not in (taskboard_auth_token | lower)"
+        fail_msg: Run go run ./cmd/taskboard-init-config before deploying.
+      no_log: true
+
+    - name: Create local build directory
+      ansible.builtin.file:
+        path: "{{ taskboard_build_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Build Taskboard on the controller
+      ansible.builtin.command:
+        argv: [go, build, -trimpath, -ldflags=-s -w, -o, "{{ taskboard_binary }}", ./cmd/taskboard]
+        chdir: "{{ playbook_dir }}/.."
+      environment:
+        GOCACHE: /tmp/taskboard-ansible-go-cache
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: true
+
+  tasks:
+    - name: Create service account
+      ansible.builtin.user:
+        name: taskboard
+        system: true
+        home: /var/lib/taskboard
+        shell: /usr/sbin/nologin
+
+    - name: Create configuration directory
+      ansible.builtin.file:
+        path: /etc/taskboard
+        state: directory
+        owner: root
+        group: taskboard
+        mode: "0750"
+
+    - name: Create state directory
+      ansible.builtin.file:
+        path: /var/lib/taskboard
+        state: directory
+        owner: taskboard
+        group: taskboard
+        mode: "0750"
+
+    - name: Install Taskboard binary
+      ansible.builtin.copy:
+        src: "{{ taskboard_binary }}"
+        dest: /usr/local/bin/taskboard
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart Taskboard
+
+    - name: Install protected environment
+      ansible.builtin.template:
+        src: templates/taskboard.env.j2
+        dest: /etc/taskboard/taskboard.env
+        owner: root
+        group: taskboard
+        mode: "0640"
+      notify: Restart Taskboard
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: templates/taskboard.service.j2
+        dest: /etc/systemd/system/taskboard.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Taskboard
+
+    - name: Enable Taskboard
+      ansible.builtin.systemd_service:
+        name: taskboard
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply pending restarts
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify local readiness
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8095/readyz
+        status_code: 200
+      register: readiness
+      retries: 10
+      delay: 1
+      until: readiness.status == 200
+
+  handlers:
+    - name: Restart Taskboard
+      ansible.builtin.systemd_service:
+        name: taskboard
+        state: restarted
+        daemon_reload: true

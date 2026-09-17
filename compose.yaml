@@ -1,0 +1,12 @@
+services:
+  taskboard:
+    image: ghcr.io/kilo666mj/taskboard:latest
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - taskboard-data:/var/lib/taskboard
+    ports:
+      - "127.0.0.1:8095:8095"
+volumes:
+  taskboard-data:

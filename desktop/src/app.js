@@ -1,0 +1,1 @@
+document.querySelector('#setup').addEventListener('submit',async event=>{event.preventDefault();const error=document.querySelector('#error');error.textContent='';try{await window.__TAURI__.core.invoke('configure',{origin:document.querySelector('#origin').value})}catch(reason){error.textContent=String(reason)}});

@@ -1,0 +1,12 @@
+/taskboard
+/*.db
+/*.db-shm
+/*.db-wal
+/.env
+/ansible/private.yml
+/ansible/inventory.local.ini
+/ansible/.build/
+/desktop/src-tauri/target/
+__pycache__/
+*.pyc
+/dist/

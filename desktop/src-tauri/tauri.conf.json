@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Taskboard",
+  "version": "0.1.0",
+  "identifier": "com.kilo666.taskboard",
+  "build": {"frontendDist":"../src"},
+  "app": {
+    "withGlobalTauri": true,
+    "enableGTKAppId": true,
+    "windows": [{"label":"main","title":"Taskboard","width":1120,"height":800,"minWidth":620,"minHeight":480,"backgroundColor":"#090d16","visible":true}],
+    "security": {"csp":"default-src 'self'; base-uri 'none'; connect-src ipc: http://ipc.localhost; frame-ancestors 'none'; img-src 'self' asset: http://asset.localhost data:; object-src 'none'; script-src 'self'; style-src 'self'"}
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage","deb","rpm"],
+    "icon": ["icons/icon.png"],
+    "category": "Productivity",
+    "shortDescription": "Live checklist for agent work",
+    "longDescription": "A tray-resident live checklist showing current agent work, blockers, waiting tasks, and completions."
+  }
+}

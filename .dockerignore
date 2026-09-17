@@ -1,0 +1,12 @@
+.git
+.github
+.env
+*.db
+*.db-shm
+*.db-wal
+ansible
+desktop
+dist
+taskboard
+__pycache__
+*.pyc
