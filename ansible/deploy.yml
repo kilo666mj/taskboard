@@ -21,6 +21,19 @@
     taskboard_admin_groups: []
     taskboard_member_groups: []
     taskboard_viewer_groups: []
+    taskboard_agent_capabilities:
+      - task:read
+      - task:create
+      - task:claim
+      - task:update
+      - task:complete
+      - template:read
+      - template:manage
+    taskboard_agent_max_concurrent_runs: 4
+    taskboard_agent_max_pickups_per_minute: 30
+    taskboard_agent_max_run_seconds: 28800
+    taskboard_agent_require_idempotency: false
+    taskboard_agent_policies_json: ""
 
   pre_tasks:
     - name: Validate deployment inputs
@@ -39,6 +52,9 @@
           - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_aud | length > 0
           - taskboard_mcp_default_type in ['personal', 'work']
           - taskboard_default_role in ['owner', 'admin', 'member', 'viewer']
+          - taskboard_agent_max_concurrent_runs | int >= 1
+          - taskboard_agent_max_pickups_per_minute | int >= 1
+          - taskboard_agent_max_run_seconds | int >= 60
           - "'replace' not in (taskboard_auth_token | lower)"
         fail_msg: Run go run ./cmd/taskboard-init-config before deploying.
       no_log: true

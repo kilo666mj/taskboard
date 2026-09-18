@@ -35,6 +35,12 @@ disable their feature.
 | `TASKBOARD_ADMIN_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `admin`. |
 | `TASKBOARD_MEMBER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `member`. |
 | `TASKBOARD_VIEWER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `viewer`. |
+| `TASKBOARD_AGENT_CAPABILITIES` | safe task/template capabilities | Comma-separated default capabilities for service principals. `task:sensitive` is deliberately excluded. |
+| `TASKBOARD_AGENT_MAX_CONCURRENT_RUNS` | `4` | Maximum live leased runs per service principal (1-100). |
+| `TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE` | `30` | Maximum task starts and claims per service principal per minute (1-1000). |
+| `TASKBOARD_AGENT_MAX_RUN_SECONDS` | `28800` | Maximum run age that may be extended by heartbeat (60-604800 seconds). |
+| `TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY` | `false` | Require `idempotency_key` on mutating task operations for service principals. |
+| `TASKBOARD_AGENT_POLICIES_JSON` | none | JSON object containing per-principal capability and limit overrides. |
 
 OIDC requires issuer, client ID, and redirect URL together. At least one OIDC
 allowlist is recommended for a workplace deployment unless the identity
@@ -57,6 +63,30 @@ Private tasks remain visible only to their immutable creator, including for
 owners and admins. Roles apply to the single trusted workspace and do not add
 tenant or project isolation. MCP service principals keep the existing agent
 authorization model; automated-agent capabilities are configured separately.
+
+## Automated-agent safety policies
+
+Service principals receive named capabilities instead of inheriting browser
+roles. The supported labels are `task:read`, `task:create`, `task:claim`,
+`task:update`, `task:complete`, `task:sensitive`, `template:read`, and
+`template:manage`. Cancelling a task or skipping checklist items requires the
+separate `task:sensitive` capability. It is excluded from the default policy,
+so granting it is the operator approval gate for those irreversible actions.
+
+Per-principal policies use the canonical authenticated actor ID. For example,
+this policy gives a Cloudflare service token read/claim access, one concurrent
+run, a two-hour maximum run, and mandatory idempotency keys:
+
+```dotenv
+TASKBOARD_AGENT_POLICIES_JSON={"cloudflare_access:service_token:build":{"capabilities":["task:read","task:claim","task:update","task:complete"],"max_concurrent_runs":1,"max_pickups_per_minute":10,"max_run_seconds":7200,"require_idempotency":true}}
+```
+
+Mutating MCP task tools accept an `idempotency_key` of 8-128 letters, digits,
+periods, underscores, colons, or hyphens. Repeating the same operation and
+request returns the original task/run identity (with its current task state);
+reusing a key with different input is a conflict. Heartbeats are naturally
+idempotent. In-process serialization closes concurrent duplicate races for the
+supported single-replica deployment model.
 
 `TASKBOARD_DATABASE_URL` accepts `postgres://` and `postgresql://` URLs. A
 multi-host URL can use `target_session_attrs=read-write` to select the writable

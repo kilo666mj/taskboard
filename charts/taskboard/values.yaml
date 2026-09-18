@@ -83,6 +83,13 @@ taskboard:
     adminGroups: []
     memberGroups: []
     viewerGroups: []
+  agentPolicy:
+    capabilities: ["task:read", "task:create", "task:claim", "task:update", "task:complete", "template:read", "template:manage"]
+    maxConcurrentRuns: 4
+    maxPickupsPerMinute: 30
+    maxRunSeconds: 28800
+    requireIdempotency: false
+    policiesJSON: ""
   oidc:
     issuer: https://idp.example.com
     clientID: taskboard

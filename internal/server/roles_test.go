@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/kilo666mj/taskboard/internal/config"
 	"github.com/kilo666mj/taskboard/internal/service"
@@ -73,5 +74,24 @@ func TestCloudflareBrowserGroupsBecomeRoleButMCPRemainsAgent(t *testing.T) {
 		if response.Code != http.StatusNoContent || response.Header().Get("X-Test-Role") != test.wantRole || response.Header().Get("X-Test-Agent") != test.wantAgent {
 			t.Fatalf("%s status/role/agent = %d/%q/%q", test.path, response.Code, response.Header().Get("X-Test-Role"), response.Header().Get("X-Test-Agent"))
 		}
+	}
+}
+
+func TestAgentPrincipalUsesPerIdentitySafetyPolicy(t *testing.T) {
+	capabilities := []string{service.CapabilityTaskRead, service.CapabilityTaskClaim}
+	maxConcurrent := 1
+	requireIdempotency := true
+	cfg := config.Config{
+		AgentCapabilities:        []string{service.CapabilityTaskRead, service.CapabilityTaskCreate},
+		AgentMaxConcurrentRuns:   4,
+		AgentMaxPickupsPerMinute: 30,
+		AgentMaxRunDuration:      8 * time.Hour,
+		AgentPolicies: map[string]config.AgentPolicy{
+			"agent:build": {Capabilities: &capabilities, MaxConcurrentRuns: &maxConcurrent, RequireIdempotency: &requireIdempotency},
+		},
+	}
+	principal := agentPrincipal(cfg, "agent:build")
+	if !principal.HasCapability(service.CapabilityTaskClaim) || principal.HasCapability(service.CapabilityTaskCreate) || principal.Policy.MaxConcurrentRuns != 1 || !principal.Policy.RequireIdempotency {
+		t.Fatalf("resolved agent policy = %+v", principal.Policy)
 	}
 }

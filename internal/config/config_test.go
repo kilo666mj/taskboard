@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestInsecureModeIsLoopbackOnlyWithSafeHostDefaults(t *testing.T) {
 	t.Setenv("TASKBOARD_ALLOW_INSECURE", "true")
@@ -83,6 +86,28 @@ func TestWorkplaceRoleConfiguration(t *testing.T) {
 	t.Setenv("TASKBOARD_DEFAULT_ROLE", "superuser")
 	if _, err := Load(); err == nil {
 		t.Fatal("invalid default role was accepted")
+	}
+}
+
+func TestAgentSafetyPolicyConfiguration(t *testing.T) {
+	t.Setenv("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:claim,task:update")
+	t.Setenv("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", "2")
+	t.Setenv("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", "12")
+	t.Setenv("TASKBOARD_AGENT_MAX_RUN_SECONDS", "3600")
+	t.Setenv("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", "true")
+	t.Setenv("TASKBOARD_AGENT_POLICIES_JSON", `{"cloudflare_access:service_token:build":{"capabilities":["task:read","task:claim"],"max_concurrent_runs":1,"require_idempotency":true}}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := cfg.AgentPolicies["cloudflare_access:service_token:build"]
+	if cfg.AgentMaxConcurrentRuns != 2 || cfg.AgentMaxPickupsPerMinute != 12 || cfg.AgentMaxRunDuration != time.Hour || !cfg.AgentRequireIdempotency || policy.Capabilities == nil || len(*policy.Capabilities) != 2 {
+		t.Fatalf("agent policy configuration = %#v / %#v", cfg, policy)
+	}
+
+	t.Setenv("TASKBOARD_AGENT_CAPABILITIES", "task:read,unknown:power")
+	if _, err := Load(); err == nil {
+		t.Fatal("unknown agent capability was accepted")
 	}
 }
 

@@ -52,9 +52,10 @@ an active agent run blocks that transition.
    implemented for the trusted workspace. Add workspace IDs, durable
    memberships, and project-level grants only if multi-workspace or project
    isolation becomes a requirement.
-3. **Expanded assignment policy.** Add roles for assigning, reassigning,
-   approving, and completing work, plus capability labels and concurrency
-   limits without allowing an agent to broaden its own access.
+3. **Expanded assignment policy.** Service-principal capability labels,
+   concurrency/pickup/run limits, idempotency keys, and a separately granted
+   sensitive-action capability are implemented. Future workflow-specific
+   approvals can build on the same immutable principal policy boundary.
 4. **Administrative lifecycle.** Add credential rotation and revocation,
    membership offboarding, export/deletion, configurable retention, and an
    auditable administrative log.
