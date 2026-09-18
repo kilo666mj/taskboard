@@ -42,7 +42,8 @@ func (d *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sq
 	return d.raw.QueryRowContext(ctx, rebind(d.dialect, query), args...)
 }
 
-func (d *DB) Dialect() Dialect { return d.dialect }
+func (d *DB) Dialect() Dialect   { return d.dialect }
+func (d *DB) Stats() sql.DBStats { return d.raw.Stats() }
 
 type Tx struct {
 	raw     *sql.Tx

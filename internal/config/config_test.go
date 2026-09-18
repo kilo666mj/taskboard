@@ -98,3 +98,19 @@ func TestPostgresDatabaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestMetricsListenerIsOptionalAndValidated(t *testing.T) {
+	t.Setenv("TASKBOARD_METRICS_LISTEN_ADDRESS", "127.0.0.1:9090")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsListenAddress != "127.0.0.1:9090" {
+		t.Fatalf("metrics address = %q", cfg.MetricsListenAddress)
+	}
+
+	t.Setenv("TASKBOARD_METRICS_LISTEN_ADDRESS", "not-an-address")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid metrics listener was accepted")
+	}
+}

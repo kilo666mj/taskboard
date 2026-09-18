@@ -6,6 +6,7 @@ disable their feature.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `TASKBOARD_LISTEN_ADDRESS` | `127.0.0.1:8095` | HTTP listen address. The container image overrides this to `0.0.0.0:8095`. |
+| `TASKBOARD_METRICS_LISTEN_ADDRESS` | none | Optional, separate Prometheus listener (for example `127.0.0.1:9090`). It serves only `GET /metrics` and has no application authentication. |
 | `TASKBOARD_DATABASE_PATH` | `taskboard.db` | SQLite database path. |
 | `TASKBOARD_DATABASE_URL` | none | PostgreSQL connection URL. When set, PostgreSQL is used and `TASKBOARD_DATABASE_PATH` is ignored. |
 | `TASKBOARD_AUTH_TOKEN` | none | Deployment-scoped MCP bearer credential; at least 32 characters. Required on non-loopback listeners. Calls using it are attributed to `agent:shared`. |
