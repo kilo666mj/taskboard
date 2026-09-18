@@ -65,10 +65,18 @@ with an advisory transaction lock, but a pre-upgrade backup and a documented
 rollback remain required. Do not run an older Taskboard binary after a release
 whose notes require a database restore for rollback.
 
-The current live-event broadcaster is process-local. Run one Taskboard replica
-until cross-pod event fan-out is configured in a later release; multiple pods
-would share durable state correctly but an SSE client connected to one pod
-would not immediately receive a change handled by another pod.
+PostgreSQL deployments distribute task events through a dedicated
+`LISTEN taskboard_events` connection per replica. Notifications contain only a
+26-character durable event ID; replicas then read ordered event data from the
+database. A reconnecting replica catches up from its last delivered event, and
+local notification echoes are deduplicated. This keeps SSE clients and Web Push
+workers coherent across replicas.
+
+Readiness fails while a configured PostgreSQL replica cannot establish or
+recover its event listener. PostgreSQL proxies must support session-level
+`LISTEN/NOTIFY`; use a direct connection or PgBouncer session pooling rather
+than transaction pooling for Taskboard's database URL. SQLite remains a
+single-replica deployment.
 
 ## Release binary
 

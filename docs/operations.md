@@ -106,6 +106,10 @@ an existing version-1 schema is upgraded, validated, and sealed with baseline
 metadata. A database containing only part of the legacy schema is rejected
 instead of being guessed into a usable shape.
 
+Version 2 installs PostgreSQL's transactional event-notification trigger.
+SQLite records the version as a compatibility no-op. PostgreSQL startup also
+verifies that the trigger exists and rejects a partially modified schema.
+
 Migration files are append-only after release: never edit, reorder, or reuse a
 version. CI must exercise a fresh database and an upgrade from every supported
 schema version for both backends. Release notes must state the new schema
@@ -118,6 +122,24 @@ rejects the schema, retain the error and database untouched; do not manually
 edit `schema_migrations`. Roll back by stopping Taskboard, restoring both the
 previous binary or image and its matching database backup, then checking
 `/readyz` before reopening traffic.
+
+## PostgreSQL event fan-out
+
+Each PostgreSQL-backed process maintains a dedicated session named
+`taskboard-event-fanout`. The transaction that inserts an audit event also emits
+a `taskboard_events` notification containing only its ULID. On startup and
+after every listener reconnect, Taskboard reads events after its in-memory
+cursor in batches from the durable `events` table before reporting the listener
+healthy. Live SSE and Web Push delivery are therefore coherent across replicas
+without placing task content in PostgreSQL notification payloads.
+
+`/readyz` returns unavailable while the listener is reconnecting. Alert on
+readiness failures and
+`taskboard_event_deliveries_total{outcome="fanout_error"}`. A brief outage may
+delay live delivery, but catch-up restores it after reconnection. Audit history
+and task mutations remain committed independently of live delivery. Use a
+direct PostgreSQL connection or a session-pooling proxy; transaction-pooling
+proxies cannot preserve `LISTEN` state.
 
 ## Credential rotation
 

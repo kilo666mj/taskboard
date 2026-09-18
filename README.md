@@ -108,9 +108,10 @@ Taskboard origin.
 SQLite remains the zero-configuration default. Set `TASKBOARD_DATABASE_URL` to
 use PostgreSQL for Kubernetes, EKS, or other deployments where application pods
 must not own durable state. PostgreSQL startup migrations are serialized so
-several starting processes cannot race schema creation. See the
-[deployment guide](docs/deployment.md) for managed-database guidance and the
-current single-replica live-event limitation.
+several starting processes cannot race schema creation. PostgreSQL replicas use
+durable `LISTEN/NOTIFY` fan-out so SSE and Web Push stay coherent across pods.
+See the [deployment guide](docs/deployment.md) for managed-database and
+session-pooling guidance.
 
 Agents send that token as a bearer credential to `/mcp`; it is never accepted
 as a human login credential. Browser users authenticate through an OIDC provider

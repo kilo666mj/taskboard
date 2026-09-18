@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kilo666mj/taskboard/internal/model"
@@ -53,17 +55,63 @@ type Service struct {
 	mu            sync.RWMutex
 	subscribers   map[chan model.Event]struct{}
 	metrics       *observability.Metrics
+	fanoutEnabled atomic.Bool
+	fanoutHealthy atomic.Bool
+	fanoutWait    sync.WaitGroup
+	recentMu      sync.Mutex
+	recentEvents  map[string]time.Time
+	recentOrder   []recentEvent
+}
+
+type recentEvent struct {
+	id   string
+	seen time.Time
 }
 
 func New(database *store.Store, leaseDuration time.Duration, metrics ...*observability.Metrics) *Service {
-	service := &Service{store: database, leaseDuration: leaseDuration, subscribers: make(map[chan model.Event]struct{})}
+	service := &Service{store: database, leaseDuration: leaseDuration, subscribers: make(map[chan model.Event]struct{}), recentEvents: make(map[string]time.Time)}
 	if len(metrics) > 0 {
 		service.metrics = metrics[0]
 	}
 	return service
 }
 
-func (s *Service) Ready(ctx context.Context) error { return s.store.Ping(ctx) }
+func (s *Service) Ready(ctx context.Context) error {
+	if err := s.store.Ping(ctx); err != nil {
+		return err
+	}
+	if s.fanoutEnabled.Load() && !s.fanoutHealthy.Load() {
+		return errors.New("PostgreSQL event fan-out is not healthy")
+	}
+	return nil
+}
+
+func (s *Service) RunEventFanout(ctx context.Context, logger *slog.Logger) {
+	if s.store.Dialect() != store.DialectPostgres || s.fanoutEnabled.Swap(true) {
+		return
+	}
+	s.fanoutWait.Add(1)
+	go func() {
+		defer s.fanoutWait.Done()
+		s.store.RunEventFanout(ctx, func(healthy bool, err error) {
+			s.fanoutHealthy.Store(healthy)
+			if err != nil {
+				logger.Warn("PostgreSQL event fan-out unavailable", "error", err)
+				if s.metrics != nil {
+					s.metrics.ObserveEvent("fanout_error")
+				}
+			}
+		}, func(event model.Event) {
+			if s.metrics != nil {
+				s.metrics.ObserveEvent("fanout_received")
+			}
+			s.publish(event)
+		})
+		s.fanoutHealthy.Store(false)
+	}()
+}
+
+func (s *Service) WaitEventFanout() { s.fanoutWait.Wait() }
 
 func (s *Service) Subscribe() (<-chan model.Event, func()) {
 	channel := make(chan model.Event, 16)
@@ -87,6 +135,12 @@ func (s *Service) Subscribe() (<-chan model.Event, func()) {
 }
 
 func (s *Service) publish(event model.Event) {
+	if event.ID != "" && !s.markEventSeen(event.ID) {
+		if s.metrics != nil {
+			s.metrics.ObserveEvent("deduplicated")
+		}
+		return
+	}
 	if s.metrics != nil {
 		s.metrics.ObserveEvent("published")
 	}
@@ -104,6 +158,26 @@ func (s *Service) publish(event model.Event) {
 			}
 		}
 	}
+}
+
+func (s *Service) markEventSeen(id string) bool {
+	now := time.Now()
+	s.recentMu.Lock()
+	defer s.recentMu.Unlock()
+	if _, exists := s.recentEvents[id]; exists {
+		return false
+	}
+	s.recentEvents[id] = now
+	s.recentOrder = append(s.recentOrder, recentEvent{id: id, seen: now})
+	cutoff := now.Add(-10 * time.Minute)
+	for len(s.recentOrder) > 4096 || len(s.recentOrder) > 0 && s.recentOrder[0].seen.Before(cutoff) {
+		oldest := s.recentOrder[0]
+		s.recentOrder = s.recentOrder[1:]
+		if seen, exists := s.recentEvents[oldest.id]; exists && seen.Equal(oldest.seen) {
+			delete(s.recentEvents, oldest.id)
+		}
+	}
+	return true
 }
 
 func (s *Service) Start(ctx context.Context, request model.StartRequest, actor string) (output model.StartResult, err error) {

@@ -16,10 +16,10 @@ func TestFreshSchemaRecordsSealedBaseline(t *testing.T) {
 
 	var version int
 	var name, checksum string
-	if err := database.DB().QueryRowContext(t.Context(), `SELECT version,name,checksum FROM schema_migrations`).Scan(&version, &name, &checksum); err != nil {
+	if err := database.DB().QueryRowContext(t.Context(), `SELECT version,name,checksum FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&version, &name, &checksum); err != nil {
 		t.Fatal(err)
 	}
-	if version != latestSchemaVersion || name != "baseline" || len(checksum) != 64 {
+	if version != latestSchemaVersion || name != "postgres_event_notifications" || len(checksum) != 64 {
 		t.Fatalf("migration metadata = %d, %q, %q", version, name, checksum)
 	}
 }
@@ -38,7 +38,7 @@ func TestExistingVersionOneSchemaIsSealed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec(`UPDATE schema_migrations SET name='',checksum=''`); err != nil {
+	if _, err := raw.Exec(`UPDATE schema_migrations SET name='',checksum='' WHERE version=1`); err != nil {
 		t.Fatal(err)
 	}
 	if err := raw.Close(); err != nil {
@@ -69,7 +69,7 @@ func TestMigrationRejectsUnknownChecksum(t *testing.T) {
 
 func TestMigrationRejectsNewerSchema(t *testing.T) {
 	path := createMigratedSQLite(t)
-	mutateSQLite(t, path, `UPDATE schema_migrations SET version=2 WHERE version=1`)
+	mutateSQLite(t, path, `INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(3,'future','future','2026-01-01T00:00:00Z')`)
 	if _, err := Open(t.Context(), path); err == nil || !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("Open error = %v, want newer schema error", err)
 	}
