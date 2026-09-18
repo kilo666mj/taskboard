@@ -35,6 +35,10 @@ production.
 
 ## Kubernetes and EKS
 
+An optional hardened Helm chart is available in `charts/taskboard`; see the
+[Helm and EKS guide](helm.md) for External Secrets, ingress, NetworkPolicy,
+metrics, Cloudflare Access, and upgrade examples.
+
 Use an external PostgreSQL service such as RDS or Aurora PostgreSQL. Taskboard
 pods do not need a persistent volume when `TASKBOARD_DATABASE_URL` is set.
 Store the complete connection URL in a Kubernetes Secret and expose it to the

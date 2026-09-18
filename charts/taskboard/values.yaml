@@ -1,0 +1,163 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/kilo666mj/taskboard
+  pullPolicy: IfNotPresent
+  tag: ""
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  privileged: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+service:
+  type: ClusterIP
+  port: 8095
+  annotations: {}
+
+metrics:
+  enabled: false
+  port: 9090
+  service:
+    annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: taskboard.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+database:
+  existingSecret: taskboard-database
+  urlKey: url
+
+secrets:
+  existingSecret: taskboard-secrets
+  authTokenKey: auth-token
+  oidcClientSecretKey: oidc-client-secret
+  vapidPublicKeyKey: vapid-public-key
+  vapidPrivateKeyKey: vapid-private-key
+
+taskboard:
+  allowedHosts: ["taskboard.example.com"]
+  leaseSeconds: 120
+  mcpDefaultType: work
+  browserAuthMode: oidc
+  vapidContact: mailto:admin@example.com
+  oidc:
+    issuer: https://idp.example.com
+    clientID: taskboard
+    redirectURL: https://taskboard.example.com/api/v1/auth/oidc/callback
+    allowedSubjects: []
+    allowedEmails: []
+    allowedGroups: []
+  cloudflareAccess:
+    teamDomain: ""
+    audience: ""
+    allowedSubjects: []
+    allowedEmails: []
+    allowedGroups: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 2
+  timeoutSeconds: 2
+  failureThreshold: 30
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+  monitoring:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+  databaseCIDRs:
+    - 10.0.0.0/8
+  databasePort: 5432
+  httpsCIDRs:
+    - 0.0.0.0/0
+    - ::/0
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+terminationGracePeriodSeconds: 30
+extraEnv: []

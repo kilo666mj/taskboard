@@ -64,6 +64,8 @@ jobs:
           cp .env.example .env
           docker compose config --quiet
           POSTGRES_PASSWORD=taskboard-test docker compose -f compose.yaml -f compose.postgres.yaml config --quiet
+      - name: Validate Helm chart
+        run: ./scripts/test-helm.sh
       - name: Check diff hygiene
         run: git diff --check
 

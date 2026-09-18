@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "taskboard.fullname" . }}
+  labels:
+    {{- include "taskboard.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "taskboard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "taskboard.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "taskboard.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: taskboard
+          {{- if .Values.image.digest }}
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          {{- end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8095
+              protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: TASKBOARD_LISTEN_ADDRESS
+              value: "0.0.0.0:8095"
+            {{- if .Values.metrics.enabled }}
+            - name: TASKBOARD_METRICS_LISTEN_ADDRESS
+              value: "0.0.0.0:{{ .Values.metrics.port }}"
+            {{- end }}
+            - name: TASKBOARD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.existingSecret is required" .Values.database.existingSecret }}
+                  key: {{ required "database.urlKey is required" .Values.database.urlKey }}
+            - name: TASKBOARD_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+                  key: {{ required "secrets.authTokenKey is required" .Values.secrets.authTokenKey }}
+            - name: TASKBOARD_ALLOWED_HOSTS
+              value: {{ join "," .Values.taskboard.allowedHosts | quote }}
+            - name: TASKBOARD_LEASE_SECONDS
+              value: {{ .Values.taskboard.leaseSeconds | quote }}
+            - name: TASKBOARD_MCP_DEFAULT_TYPE
+              value: {{ .Values.taskboard.mcpDefaultType | quote }}
+            - name: TASKBOARD_BROWSER_AUTH_MODE
+              value: {{ .Values.taskboard.browserAuthMode | quote }}
+            - name: TASKBOARD_VAPID_CONTACT
+              value: {{ .Values.taskboard.vapidContact | quote }}
+            - name: TASKBOARD_VAPID_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.vapidPublicKeyKey }}
+                  optional: true
+            - name: TASKBOARD_VAPID_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.vapidPrivateKeyKey }}
+                  optional: true
+            {{- if eq .Values.taskboard.browserAuthMode "oidc" }}
+            - name: TASKBOARD_OIDC_ISSUER
+              value: {{ required "taskboard.oidc.issuer is required in oidc mode" .Values.taskboard.oidc.issuer | quote }}
+            - name: TASKBOARD_OIDC_CLIENT_ID
+              value: {{ required "taskboard.oidc.clientID is required in oidc mode" .Values.taskboard.oidc.clientID | quote }}
+            - name: TASKBOARD_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.oidcClientSecretKey }}
+                  optional: true
+            - name: TASKBOARD_OIDC_REDIRECT_URL
+              value: {{ required "taskboard.oidc.redirectURL is required in oidc mode" .Values.taskboard.oidc.redirectURL | quote }}
+            - name: TASKBOARD_OIDC_ALLOWED_SUBJECTS
+              value: {{ join "," .Values.taskboard.oidc.allowedSubjects | quote }}
+            - name: TASKBOARD_OIDC_ALLOWED_EMAILS
+              value: {{ join "," .Values.taskboard.oidc.allowedEmails | quote }}
+            - name: TASKBOARD_OIDC_ALLOWED_GROUPS
+              value: {{ join "," .Values.taskboard.oidc.allowedGroups | quote }}
+            {{- else if eq .Values.taskboard.browserAuthMode "cloudflare_access" }}
+            - name: TASKBOARD_CF_ACCESS_TEAM_DOMAIN
+              value: {{ required "taskboard.cloudflareAccess.teamDomain is required in cloudflare_access mode" .Values.taskboard.cloudflareAccess.teamDomain | quote }}
+            - name: TASKBOARD_CF_ACCESS_AUD
+              value: {{ required "taskboard.cloudflareAccess.audience is required in cloudflare_access mode" .Values.taskboard.cloudflareAccess.audience | quote }}
+            - name: TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS
+              value: {{ join "," .Values.taskboard.cloudflareAccess.allowedSubjects | quote }}
+            - name: TASKBOARD_CF_ACCESS_ALLOWED_EMAILS
+              value: {{ join "," .Values.taskboard.cloudflareAccess.allowedEmails | quote }}
+            - name: TASKBOARD_CF_ACCESS_ALLOWED_GROUPS
+              value: {{ join "," .Values.taskboard.cloudflareAccess.allowedGroups | quote }}
+            {{- else }}
+            {{- fail "taskboard.browserAuthMode must be oidc or cloudflare_access" }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 32Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
