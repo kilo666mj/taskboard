@@ -43,7 +43,18 @@
         "browserAuthMode": { "enum": ["oidc", "cloudflare_access"] },
         "leaseSeconds": { "type": "integer", "minimum": 30, "maximum": 3600 },
         "mcpDefaultType": { "enum": ["personal", "work"] },
-        "allowedHosts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+        "allowedHosts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "roles": {
+          "type": "object",
+          "required": ["default", "ownerGroups", "adminGroups", "memberGroups", "viewerGroups"],
+          "properties": {
+            "default": { "enum": ["owner", "admin", "member", "viewer"] },
+            "ownerGroups": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "adminGroups": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "memberGroups": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "viewerGroups": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        }
       }
     }
   },

@@ -12,6 +12,11 @@ taskboard_oidc_redirect_url: https://taskboard.example.com/api/v1/auth/oidc/call
 taskboard_oidc_allowed_subjects: []
 taskboard_oidc_allowed_emails: []
 taskboard_oidc_allowed_groups: []
+taskboard_default_role: admin
+taskboard_owner_groups: []
+taskboard_admin_groups: []
+taskboard_member_groups: []
+taskboard_viewer_groups: []
 taskboard_browser_auth_mode: oidc
 taskboard_cf_access_team_domain: ""
 taskboard_cf_access_aud: ""

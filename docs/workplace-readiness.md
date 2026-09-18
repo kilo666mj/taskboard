@@ -7,15 +7,16 @@ workspace. It must not be described or deployed as a tenant-isolated service.
 
 ## Current trust boundary
 
-- Every permitted browser identity can see and change team and agent-pickup
-  tasks. Private tasks are restricted to their immutable creator.
-- OIDC or Cloudflare Access identifies people and enforces private-task access,
-  but does not yet grant workspace roles or project permissions.
+- Every permitted browser identity can see team and agent-pickup tasks. The
+  owner, admin, and member roles can change visible tasks; viewers are
+  read-only. Private tasks are restricted to their immutable creator.
+- OIDC and Cloudflare Access groups can map to single-workspace owner, admin,
+  member, and viewer roles. Sections and projects remain organizational labels,
+  not separate authorization boundaries.
 - Agents using the deployment-scoped MCP bearer share the canonical
   `agent:shared` principal. Their self-reported MCP client name is diagnostic
   run metadata and cannot become an audit actor. Cloudflare Access workloads
   use their verified Access subject as a distinct service principal.
-- Sections and projects organize work; they are not authorization boundaries.
 
 This model is appropriate for a small trusted team or a dedicated deployment per
 team. Separate deployments are the safe isolation mechanism today.
@@ -47,15 +48,16 @@ an active agent run blocks that transition.
    Cloudflare Access identities now, then to first-class credentials when they
    are available. Human-driven agents acting through a person's authenticated
    session need not invent a second identity.
-2. **Workspace and project authorization.** Add workspace IDs to durable data,
-   memberships, roles such as owner/admin/member/viewer, project-level grants,
-   and server-side authorization on every REST, SSE, and MCP operation.
+2. **Workspace and project isolation.** Role-aware server authorization is
+   implemented for the trusted workspace. Add workspace IDs, durable
+   memberships, and project-level grants only if multi-workspace or project
+   isolation becomes a requirement.
 3. **Expanded assignment policy.** Add roles for assigning, reassigning,
    approving, and completing work, plus capability labels and concurrency
    limits without allowing an agent to broaden its own access.
 4. **Administrative lifecycle.** Add credential rotation and revocation,
-   membership offboarding, OIDC group-to-role mapping, export/deletion,
-   configurable retention, and an auditable administrative log.
+   membership offboarding, export/deletion, configurable retention, and an
+   auditable administrative log.
 5. **Operational controls.** Add quotas, rate limiting, metrics, audit export,
    webhook/integration delivery with retries, tested disaster recovery, and a
    documented availability model.

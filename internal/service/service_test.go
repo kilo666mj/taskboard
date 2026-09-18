@@ -25,6 +25,65 @@ func testService(t *testing.T, lease time.Duration) *Service {
 	return New(database, lease)
 }
 
+func TestPrincipalPermissionMatrix(t *testing.T) {
+	tests := []struct {
+		role            Role
+		writeTasks      bool
+		manageTemplates bool
+	}{
+		{RoleOwner, true, true},
+		{RoleAdmin, true, true},
+		{RoleMember, true, false},
+		{RoleViewer, false, false},
+	}
+	for _, test := range tests {
+		t.Run(string(test.role), func(t *testing.T) {
+			principal := HumanPrincipalWithRole("person", test.role)
+			for _, permission := range []Permission{PermissionTaskRead, PermissionTemplateRead, PermissionEventStream, PermissionPushManage} {
+				if !principal.Can(permission) {
+					t.Errorf("%s cannot %s", test.role, permission)
+				}
+			}
+			if got := principal.Can(PermissionTaskWrite); got != test.writeTasks {
+				t.Errorf("%s task write = %v, want %v", test.role, got, test.writeTasks)
+			}
+			if got := principal.Can(PermissionTemplateManage); got != test.manageTemplates {
+				t.Errorf("%s template manage = %v, want %v", test.role, got, test.manageTemplates)
+			}
+		})
+	}
+
+	agent := AgentPrincipal("agent:build")
+	if !agent.Can(PermissionTaskRead) || !agent.Can(PermissionTaskWrite) || agent.Can(PermissionPushManage) {
+		t.Fatalf("unexpected agent permissions: %+v", agent)
+	}
+}
+
+func TestViewerCannotMutateVisibleTaskOrTemplates(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	admin := HumanPrincipalWithRole("admin@example.com", RoleAdmin)
+	viewer := HumanPrincipalWithRole("viewer@example.com", RoleViewer)
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Team plan", Visibility: model.VisibilityTeam}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.GetFor(t.Context(), created.ID, viewer); err != nil {
+		t.Fatalf("viewer read: %v", err)
+	}
+	if _, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Viewer write"}, viewer); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer create error = %v, want forbidden", err)
+	}
+	if _, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version}, viewer); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer update error = %v, want forbidden", err)
+	}
+	if _, err := tasks.SaveTemplateFor(t.Context(), model.TemplateRequest{Name: "Viewer template", Title: "No"}, viewer); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer template save error = %v, want forbidden", err)
+	}
+	if _, err := tasks.ListTemplatesFor(t.Context(), viewer); err != nil {
+		t.Fatalf("viewer template list: %v", err)
+	}
+}
+
 func TestChecklistLifecycleAndCompletionGate(t *testing.T) {
 	service := testService(t, time.Minute)
 	started, err := service.Start(t.Context(), model.StartRequest{

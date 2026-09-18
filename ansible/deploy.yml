@@ -16,6 +16,11 @@
     taskboard_cf_access_allowed_subjects: []
     taskboard_cf_access_allowed_emails: []
     taskboard_cf_access_allowed_groups: []
+    taskboard_default_role: admin
+    taskboard_owner_groups: []
+    taskboard_admin_groups: []
+    taskboard_member_groups: []
+    taskboard_viewer_groups: []
 
   pre_tasks:
     - name: Validate deployment inputs
@@ -33,6 +38,7 @@
           - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_team_domain | length > 0
           - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_aud | length > 0
           - taskboard_mcp_default_type in ['personal', 'work']
+          - taskboard_default_role in ['owner', 'admin', 'member', 'viewer']
           - "'replace' not in (taskboard_auth_token | lower)"
         fail_msg: Run go run ./cmd/taskboard-init-config before deploying.
       no_log: true

@@ -77,6 +77,12 @@ taskboard:
   mcpDefaultType: work
   browserAuthMode: oidc
   vapidContact: mailto:admin@example.com
+  roles:
+    default: admin
+    ownerGroups: []
+    adminGroups: []
+    memberGroups: []
+    viewerGroups: []
   oidc:
     issuer: https://idp.example.com
     clientID: taskboard
