@@ -32,6 +32,9 @@ func TestAgentCredentialRotationRevocationAndOffboarding(t *testing.T) {
 	if _, valid, _ := database.AuthenticateAgentCredential(t.Context(), rotated); !valid {
 		t.Fatal("rotated token is not valid")
 	}
+	if err := database.SavePushSubscription(t.Context(), PushSubscription{Endpoint: "https://push.example.com/build", OwnerID: "agent:build"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := database.OffboardPrincipal(t.Context(), "agent:build", "owner@example.com", "service retired"); err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +43,9 @@ func TestAgentCredentialRotationRevocationAndOffboarding(t *testing.T) {
 	}
 	if _, valid, _ := database.AuthenticateAgentCredential(t.Context(), rotated); valid {
 		t.Fatal("offboarded credential remained valid")
+	}
+	if subscriptions, err := database.ListPushSubscriptions(t.Context()); err != nil || len(subscriptions) != 0 {
+		t.Fatalf("offboarded push subscriptions = %+v, %v", subscriptions, err)
 	}
 }
 

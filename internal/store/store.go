@@ -79,6 +79,7 @@ type BrowserIdentity struct {
 	Subject string
 	Email   string
 	Groups  []string
+	Service bool
 }
 
 func (s *Store) CreateBrowserSession(ctx context.Context, identity BrowserIdentity, lifetime time.Duration) (string, time.Time, error) {

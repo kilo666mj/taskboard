@@ -220,10 +220,132 @@ func TestSecurityHeadersIncludeContentPolicy(t *testing.T) {
 	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
 	}
+	if got := response.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("application emitted ingress-owned HSTS header %q", got)
+	}
 	apiResponse := httptest.NewRecorder()
 	securityHeaders(next).ServeHTTP(apiResponse, httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/admin/export", nil))
 	if got := apiResponse.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("API Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestDesktopConfirmationPageEscapesAllValues(t *testing.T) {
+	response := httptest.NewRecorder()
+	desktopConfirmationPage(response, http.StatusOK, `<script>alert("title")</script>`, `<img src=x onerror=alert("message")>`, `<svg onload=alert("code")>`)
+	body := response.Body.String()
+	for _, unsafe := range []string{"<script", "<img", "<svg"} {
+		if strings.Contains(body, unsafe) {
+			t.Fatalf("confirmation page contains unescaped value %q: %s", unsafe, body)
+		}
+	}
+	for _, escaped := range []string{"&lt;script", "&lt;img", "&lt;svg"} {
+		if !strings.Contains(body, escaped) {
+			t.Fatalf("confirmation page missing escaped value %q: %s", escaped, body)
+		}
+	}
+}
+
+func TestRequestRateLimiterRejectsBurst(t *testing.T) {
+	limiter := newRequestRateLimiter(2, time.Minute, 2)
+	now := time.Now()
+	if !limiter.allow("client", now) || !limiter.allow("client", now) || limiter.allow("client", now) {
+		t.Fatal("rate limiter did not enforce its fixed-window bound")
+	}
+	if !limiter.allow("client", now.Add(time.Minute)) {
+		t.Fatal("rate limiter did not reset after its window")
+	}
+	if !limiter.allow("second", now) || !limiter.allow("third", now) {
+		t.Fatal("rate limiter did not retain bounded overflow capacity")
+	}
+	if len(limiter.entries) > limiter.maxEntries {
+		t.Fatalf("rate limiter retained %d entries, want at most %d", len(limiter.entries), limiter.maxEntries)
+	}
+}
+
+func TestAuthenticationFailuresAreRateLimited(t *testing.T) {
+	_, database, _ := serverFixture(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sessions := newBrowserSessions(database, true, logger)
+	handler := auth(config.Config{AuthToken: strings.Repeat("token", 8)}, sessions, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for attempt := 1; attempt <= 31; attempt++ {
+		request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/tasks", nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		want := http.StatusUnauthorized
+		if attempt == 31 {
+			want = http.StatusTooManyRequests
+		}
+		if response.Code != want {
+			t.Fatalf("attempt %d status = %d, want %d", attempt, response.Code, want)
+		}
+	}
+}
+
+func TestAuthenticatedMutationsAreRateLimited(t *testing.T) {
+	_, database, _ := serverFixture(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sessions := newBrowserSessions(database, true, logger)
+	token := strings.Repeat("token", 8)
+	handler := auth(config.Config{AuthToken: token}, sessions, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for attempt := 1; attempt <= 301; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/mcp", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		want := http.StatusNoContent
+		if attempt == 301 {
+			want = http.StatusTooManyRequests
+		}
+		if response.Code != want {
+			t.Fatalf("attempt %d status = %d, want %d", attempt, response.Code, want)
+		}
+	}
+}
+
+func TestDesktopSessionExchangeIsRateLimited(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	notifications := push.New(database, tasks, "", "", "", logger)
+	handler, err := New(config.Config{AllowInsecure: true, DefaultRole: "member", LeaseDuration: time.Minute}, database, tasks, notifications, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 1; attempt <= 11; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "http://taskboard/api/v1/auth/desktop/session", strings.NewReader(`{"code":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`))
+		request.Header.Set("Origin", "http://taskboard")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		want := http.StatusUnauthorized
+		if attempt == 11 {
+			want = http.StatusTooManyRequests
+		}
+		if response.Code != want {
+			t.Fatalf("attempt %d status = %d, want %d", attempt, response.Code, want)
+		}
+	}
+}
+
+func TestAllowedHostExemptsOnlyHealthProbes(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler := requireAllowedHost([]string{"taskboard.example.com"}, next)
+	for _, path := range []string{"/healthz", "/readyz"} {
+		request := httptest.NewRequest(http.MethodGet, "http://10.0.0.8"+path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("probe %s status = %d, want 204", path, response.Code)
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://10.0.0.8/api/v1/tasks", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("application status = %d, want 421", response.Code)
 	}
 }
 
@@ -321,7 +443,7 @@ func TestPushSubscriptionEndpointCannotBeTakenOver(t *testing.T) {
 func TestRESTCreatesAndListsMultipleTasks(t *testing.T) {
 	tasks, database, logger := serverFixture(t)
 	notifications := push.New(database, tasks, "", "", "", logger)
-	handler, err := New(config.Config{AllowInsecure: true, LeaseDuration: time.Minute}, database, tasks, notifications, logger)
+	handler, err := New(config.Config{AllowInsecure: true, DefaultRole: "member", LeaseDuration: time.Minute}, database, tasks, notifications, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +475,7 @@ func TestRESTCreatesAndListsMultipleTasks(t *testing.T) {
 func TestRESTCapturesTitleOnlyTask(t *testing.T) {
 	tasks, database, logger := serverFixture(t)
 	notifications := push.New(database, tasks, "", "", "", logger)
-	handler, err := New(config.Config{AllowInsecure: true, LeaseDuration: time.Minute}, database, tasks, notifications, logger)
+	handler, err := New(config.Config{AllowInsecure: true, DefaultRole: "member", LeaseDuration: time.Minute}, database, tasks, notifications, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,13 +497,13 @@ func TestRESTCapturesTitleOnlyTask(t *testing.T) {
 }
 
 func TestEventsExposeReadyAndKeepaliveSignals(t *testing.T) {
-	tasks, _, _ := serverFixture(t)
+	tasks, database, _ := serverFixture(t)
 	response := newFlushingRecorder()
 	ctx, cancel := context.WithCancel(t.Context())
 	request := httptest.NewRequest(http.MethodGet, "http://taskboard/api/v1/events", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
-		eventsWithKeepalive(tasks, time.Millisecond, newEventStreamLimiter(10, 10)).ServeHTTP(response, request)
+		eventsWithKeepalive(tasks, database, time.Millisecond, newEventStreamLimiter(10, 10)).ServeHTTP(response, request)
 		close(done)
 	}()
 
@@ -405,9 +527,9 @@ func TestEventsExposeReadyAndKeepaliveSignals(t *testing.T) {
 }
 
 func TestEventStreamLimitsPerPrincipalAndGlobally(t *testing.T) {
-	tasks, _, _ := serverFixture(t)
+	tasks, database, _ := serverFixture(t)
 	limiter := newEventStreamLimiter(2, 1)
-	handler := eventsWithKeepalive(tasks, time.Hour, limiter)
+	handler := eventsWithKeepalive(tasks, database, time.Hour, limiter)
 	type stream struct {
 		cancel   context.CancelFunc
 		done     chan struct{}
@@ -457,10 +579,52 @@ func TestEventStreamLimitsPerPrincipalAndGlobally(t *testing.T) {
 	<-charlie.done
 }
 
+func TestEventStreamDisconnectsOffboardedPrincipal(t *testing.T) {
+	tasks, database, _ := serverFixture(t)
+	response := newFlushingRecorder()
+	ctx := context.WithValue(t.Context(), principalKey{}, service.HumanPrincipal("departed@example.com"))
+	request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/events", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		eventsWithKeepalive(tasks, database, time.Millisecond, newEventStreamLimiter(10, 10)).ServeHTTP(response, request)
+		close(done)
+	}()
+	select {
+	case <-response.flushed:
+	case <-time.After(time.Second):
+		t.Fatal("timed out opening event stream")
+	}
+	if err := database.OffboardPrincipal(t.Context(), "departed@example.com", "owner@example.com", "left workspace"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("offboarded principal's event stream remained connected")
+	}
+}
+
+type failingRevocationChecker struct{}
+
+func (failingRevocationChecker) PrincipalRevoked(context.Context, string) (bool, error) {
+	return false, store.ErrNotFound
+}
+
+func TestEventStreamFailsClosedWhenRevocationCannotBeChecked(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	ctx := context.WithValue(t.Context(), principalKey{}, service.HumanPrincipal("person@example.com"))
+	request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/events", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	eventsWithKeepalive(tasks, failingRevocationChecker{}, time.Hour, newEventStreamLimiter(10, 10)).ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("revocation lookup failure status = %d, want 401", response.Code)
+	}
+}
+
 func TestBrowserMutationsRequireSameOriginAndJSON(t *testing.T) {
 	tasks, database, logger := serverFixture(t)
 	notifications := push.New(database, tasks, "", "", "", logger)
-	handler, err := New(config.Config{AllowInsecure: true, LeaseDuration: time.Minute}, database, tasks, notifications, logger)
+	handler, err := New(config.Config{AllowInsecure: true, DefaultRole: "member", LeaseDuration: time.Minute}, database, tasks, notifications, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +761,7 @@ func TestIdentityBoundBrowserSession(t *testing.T) {
 func TestRESTEnforcesPrivateAndTeamVisibility(t *testing.T) {
 	tasks, database, logger := serverFixture(t)
 	notifications := push.New(database, tasks, "", "", "", logger)
-	cfg := config.Config{AuthToken: strings.Repeat("test-token-", 4), LeaseDuration: time.Minute, OIDCIssuer: "https://idp.example.com", OIDCClientID: "taskboard", OIDCRedirectURL: "https://taskboard.example.com/api/v1/auth/oidc/callback"}
+	cfg := config.Config{AuthToken: strings.Repeat("test-token-", 4), DefaultRole: "member", LeaseDuration: time.Minute, OIDCIssuer: "https://idp.example.com", OIDCClientID: "taskboard", OIDCRedirectURL: "https://taskboard.example.com/api/v1/auth/oidc/callback"}
 	handler, err := New(cfg, database, tasks, notifications, logger)
 	if err != nil {
 		t.Fatal(err)

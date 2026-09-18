@@ -21,7 +21,10 @@ customize NetworkPolicy selectors and CIDRs for the cluster.
 
 Map OIDC or Cloudflare Access groups with `taskboard.roles.*Groups`. Set
 `taskboard.roles.default` to `viewer` to require an explicit mapped group for
-write access; the default `admin` value preserves existing installations.
+write access; the default is `member`. At least one identity-provider allowlist
+must be configured unless `taskboard.oidc.trustProviderPolicy` or
+`taskboard.cloudflareAccess.trustPolicy` explicitly delegates that gate to the
+upstream application policy.
 Configure service-principal capabilities and limits under
 `taskboard.agentPolicy`; keep `task:sensitive` out of the default capability
 set unless an operator has explicitly approved agent cancellation and skipping.

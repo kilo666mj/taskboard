@@ -146,6 +146,77 @@ func TestAgentIdempotencyReplaysMutationAndRejectsKeyReuse(t *testing.T) {
 	}
 }
 
+func TestAgentIdempotencyReplayRechecksCurrentVisibility(t *testing.T) {
+	t.Run("create reassigned to another agent", func(t *testing.T) {
+		tasks := testService(t, time.Minute)
+		agent := AgentPrincipal("agent:worker")
+		request := model.CreateRequest{Title: "Idempotent create", IdempotencyKey: "create-private-1234"}
+		created, err := tasks.CreateFor(t.Context(), request, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		team, other := model.VisibilityTeam, "agent:other"
+		if _, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Visibility: &team, Owner: &other}, HumanPrincipal("operator@example.com")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tasks.CreateFor(t.Context(), request, agent); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("create replay error = %v, want not found", err)
+		}
+	})
+
+	t.Run("start reassigned after completion", func(t *testing.T) {
+		tasks := testService(t, time.Minute)
+		agent := AgentPrincipal("agent:worker")
+		request := model.StartRequest{Title: "Idempotent start", Visibility: model.VisibilityTeam, Checklist: []string{"Work"}, IdempotencyKey: "start-private-1234"}
+		started, err := tasks.StartFor(t.Context(), request, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		completed, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: started.Task.Version, RunID: started.Run.ID, Status: model.TaskDone, CompleteItemIDs: []string{started.Task.Items[0].ID}}, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := "agent:other"
+		if _, err := tasks.UpdateFor(t.Context(), completed.ID, model.UpdateRequest{ExpectedVersion: completed.Version, Owner: &other}, HumanPrincipal("operator@example.com")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tasks.StartFor(t.Context(), request, agent); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("start replay error = %v, want not found", err)
+		}
+	})
+
+	t.Run("claim made private after completion", func(t *testing.T) {
+		tasks := testService(t, time.Minute)
+		owner := HumanPrincipal("owner@example.com")
+		agent := AgentPrincipal("agent:worker")
+		created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Human task"}, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		agentVisibility := model.VisibilityAgent
+		published, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Visibility: &agentVisibility}, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := model.ClaimRequest{ExpectedVersion: published.Version, IdempotencyKey: "claim-private-1234"}
+		claimed, err := tasks.ClaimFor(t.Context(), published.ID, request, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		completed, err := tasks.UpdateFor(t.Context(), claimed.Task.ID, model.UpdateRequest{ExpectedVersion: claimed.Task.Version, RunID: claimed.Run.ID, Status: model.TaskDone}, agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		privateVisibility := model.VisibilityPrivate
+		if _, err := tasks.UpdateFor(t.Context(), completed.ID, model.UpdateRequest{ExpectedVersion: completed.Version, Visibility: &privateVisibility, CurrentNote: stringPointer("private follow-up")}, owner); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tasks.ClaimFor(t.Context(), published.ID, request, agent); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("claim replay error = %v, want not found", err)
+		}
+	})
+}
+
 func TestConcurrentAgentRetriesCreateOnlyOneTask(t *testing.T) {
 	tasks := testService(t, time.Minute)
 	agent := AgentPrincipal("agent:worker")

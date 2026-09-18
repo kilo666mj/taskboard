@@ -32,4 +32,13 @@ func TestPostgresAdministrativeMutationAndAuditAreAtomic(t *testing.T) {
 	if err != nil || len(audit) != 1 || audit[0].Action != "credential.created" {
 		t.Fatalf("audit = %+v, %v", audit, err)
 	}
+	if err := database.SavePushSubscription(t.Context(), PushSubscription{Endpoint: "https://push.example.com/build", OwnerID: "agent:build"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.OffboardPrincipal(t.Context(), "agent:build", "owner@example.com", "service retired"); err != nil {
+		t.Fatal(err)
+	}
+	if subscriptions, err := database.ListPushSubscriptions(t.Context()); err != nil || len(subscriptions) != 0 {
+		t.Fatalf("offboarded push subscriptions = %+v, %v", subscriptions, err)
+	}
 }

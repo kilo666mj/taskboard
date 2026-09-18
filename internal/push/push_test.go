@@ -93,6 +93,39 @@ func TestDeliveryVAPIDSubject(t *testing.T) {
 	}
 }
 
+func TestDeliverySkipsRevokedSubscriptionOwner(t *testing.T) {
+	database, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "taskboard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	tasks := service.New(database, time.Minute)
+	created, err := tasks.Create(t.Context(), model.CreateRequest{Title: "Sensitive update", Visibility: model.VisibilityTeam}, "owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.OffboardPrincipal(t.Context(), "departed@example.com", "owner@example.com", "left workspace"); err != nil {
+		t.Fatal(err)
+	}
+	// Reinsert after offboarding to model a delivery worker that observed stale
+	// subscription state or a concurrent write racing the offboarding commit.
+	if err := database.SavePushSubscription(t.Context(), store.PushSubscription{
+		Endpoint: "https://web.push.apple.com/revoked", OwnerID: "departed@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	notifications := New(database, tasks, "public", "private", "mailto:test@example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	called := false
+	notifications.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	notifications.deliver(t.Context(), model.Event{Kind: "task.updated", TaskID: created.ID, Payload: map[string]any{"status": model.TaskDone}})
+	if called {
+		t.Fatal("push delivery was attempted for a revoked principal")
+	}
+}
+
 func TestNotificationsForCompletedItems(t *testing.T) {
 	task := model.Task{
 		ID:     "task-1",

@@ -234,6 +234,9 @@ func (s *Store) OffboardPrincipal(ctx context.Context, principal, actor, reason 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM browser_sessions WHERE subject=?`, principal); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE owner_id=?`, principal); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_credentials SET revoked_at=? WHERE principal_id=? AND revoked_at IS NULL`, now, principal); err != nil {
 		return err
 	}

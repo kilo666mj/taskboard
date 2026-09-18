@@ -14,9 +14,11 @@ so treat the database, backups, and operator access as sensitive.
 
 Set `TASKBOARD_METRICS_LISTEN_ADDRESS` to enable a separate listener that serves
 only `GET /metrics`. It is disabled by default and is intentionally absent from
-the public application listener. Bind it to loopback for a local collector, or
-to a private pod interface protected by a Kubernetes NetworkPolicy. Do not put
-the metrics port behind the public ingress.
+the public application listener. The metrics endpoint has no authentication.
+Bind it to loopback for a local collector, or to a private pod interface exposed
+only through the metrics Service and protected by a Kubernetes NetworkPolicy
+that admits the monitoring namespace. Do not put the metrics port behind the
+public ingress.
 
 ```dotenv
 TASKBOARD_METRICS_LISTEN_ADDRESS=127.0.0.1:9090
@@ -85,7 +87,20 @@ the service is stopped, then start Taskboard and check `/readyz`.
 Periodically perform a restore drill. A backup that has never been restored is
 not a verified recovery path.
 
+The administrative full export materializes all tasks, templates, events, and
+audit entries in memory before sending JSON. Run large exports during a quiet
+period, monitor process memory, and prefer a database-native backup for routine
+disaster recovery. Treat exported JSON as sensitive workspace data, encrypt it
+at rest and in transit, and remove temporary copies after verification.
+
 ## Upgrades and rollback
+
+Before upgrading from v0.4.2 or earlier, configure at least one OIDC or
+Cloudflare Access subject, email, or group allowlist. Deployments that
+deliberately rely only on the upstream application policy must instead set the
+matching explicit trust flag. The unmatched human role now defaults to
+`member`; configure `TASKBOARD_ADMIN_GROUPS` or `TASKBOARD_OWNER_GROUPS` before
+the upgrade when administrative API access is required.
 
 1. Read the release notes and verify the downloaded checksum or image digest.
 2. Back up the database and preserve the current binary or image digest.

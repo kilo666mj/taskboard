@@ -23,6 +23,7 @@ type cloudflareAccessIdentity struct {
 	Subject string
 	Email   string
 	Groups  []string
+	Service bool
 }
 
 type cloudflareAccessVerifier interface {
@@ -56,11 +57,11 @@ func (v remoteCloudflareAccessVerifier) Verify(ctx context.Context, raw string) 
 			groups = append(groups, group)
 		}
 	}
-	principal, err := cloudflareAccessPrincipal(token.Subject, claims.Email, claims.CommonName)
+	principal, serviceIdentity, err := cloudflareAccessPrincipal(token.Subject, claims.Email, claims.CommonName)
 	if err != nil {
 		return cloudflareAccessIdentity{}, errInvalidCloudflareAccess
 	}
-	return cloudflareAccessIdentity{Subject: principal, Email: claims.Email, Groups: groups}, nil
+	return cloudflareAccessIdentity{Subject: principal, Email: claims.Email, Groups: groups, Service: serviceIdentity}, nil
 }
 
 type cloudflareAccess struct {
@@ -97,6 +98,7 @@ func (a *cloudflareAccess) identity(r *http.Request) (store.BrowserIdentity, err
 		Subject: "cloudflare_access:" + identity.Subject,
 		Email:   identity.Email,
 		Groups:  append([]string(nil), identity.Groups...),
+		Service: identity.Service,
 	}, nil
 }
 
@@ -119,15 +121,15 @@ func safeAccessClaim(value string) bool {
 	return value != "" && len(value) <= 1024 && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\x00\r\n")
 }
 
-func cloudflareAccessPrincipal(subject, email, commonName string) (string, error) {
+func cloudflareAccessPrincipal(subject, email, commonName string) (string, bool, error) {
 	if subject != "" {
 		if safeAccessClaim(subject) && safeAccessClaim(email) {
-			return subject, nil
+			return subject, false, nil
 		}
-		return "", errInvalidCloudflareAccess
+		return "", false, errInvalidCloudflareAccess
 	}
 	if email == "" && safeAccessClaim(commonName) {
-		return "service_token:" + commonName, nil
+		return "service_token:" + commonName, true, nil
 	}
-	return "", errInvalidCloudflareAccess
+	return "", false, errInvalidCloudflareAccess
 }

@@ -102,13 +102,13 @@ func TestCloudflareAccessRejectsUnsafeClaims(t *testing.T) {
 }
 
 func TestCloudflareAccessPrincipalSupportsPeopleAndServiceTokens(t *testing.T) {
-	person, err := cloudflareAccessPrincipal("person-subject", "person@example.com", "")
-	if err != nil || person != "person-subject" {
-		t.Fatalf("person principal = %q, %v", person, err)
+	person, serviceIdentity, err := cloudflareAccessPrincipal("person-subject", "person@example.com", "")
+	if err != nil || person != "person-subject" || serviceIdentity {
+		t.Fatalf("person principal = %q/%v, %v", person, serviceIdentity, err)
 	}
-	service, err := cloudflareAccessPrincipal("", "", "service-client.access")
-	if err != nil || service != "service_token:service-client.access" {
-		t.Fatalf("service principal = %q, %v", service, err)
+	service, serviceIdentity, err := cloudflareAccessPrincipal("", "", "service-client.access")
+	if err != nil || service != "service_token:service-client.access" || !serviceIdentity {
+		t.Fatalf("service principal = %q/%v, %v", service, serviceIdentity, err)
 	}
 	for _, claims := range [][3]string{
 		{"", "", ""},
@@ -116,9 +116,41 @@ func TestCloudflareAccessPrincipalSupportsPeopleAndServiceTokens(t *testing.T) {
 		{"person-subject", "", ""},
 		{"person-subject", "person@example.com\nspoof", ""},
 	} {
-		if principal, err := cloudflareAccessPrincipal(claims[0], claims[1], claims[2]); err == nil {
+		if principal, _, err := cloudflareAccessPrincipal(claims[0], claims[1], claims[2]); err == nil {
 			t.Fatalf("unsafe claims accepted as %q: %#v", principal, claims)
 		}
+	}
+}
+
+func TestCloudflareServiceTokenCannotAuthenticateHumanEndpoint(t *testing.T) {
+	_, database, _ := serverFixture(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sessions := newBrowserSessions(database, true, logger)
+	access := &cloudflareAccess{verifier: fakeCloudflareAccessVerifier{identity: cloudflareAccessIdentity{
+		Subject: "service_token:build.access", Service: true,
+	}}}
+	cfg := config.Config{AuthToken: strings.Repeat("test-token-", 4), DefaultRole: "admin", LeaseDuration: time.Minute}
+	handler := auth(cfg, sessions, access, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if principal(r.Context()).Agent {
+			w.Header().Set("X-Test-Agent", "true")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	browserRequest := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/admin/export", nil)
+	browserRequest.Header.Set(cloudflareAccessJWTHeader, "service-assertion")
+	browserResponse := httptest.NewRecorder()
+	handler.ServeHTTP(browserResponse, browserRequest)
+	if browserResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("service token browser status = %d, want 401", browserResponse.Code)
+	}
+
+	mcpRequest := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/mcp", nil)
+	mcpRequest.Header.Set(cloudflareAccessJWTHeader, "service-assertion")
+	mcpResponse := httptest.NewRecorder()
+	handler.ServeHTTP(mcpResponse, mcpRequest)
+	if mcpResponse.Code != http.StatusNoContent || mcpResponse.Header().Get("X-Test-Agent") != "true" {
+		t.Fatalf("service token MCP status/agent = %d/%q", mcpResponse.Code, mcpResponse.Header().Get("X-Test-Agent"))
 	}
 }
 

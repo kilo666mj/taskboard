@@ -148,6 +148,8 @@ spec:
               value: {{ join "," .Values.taskboard.oidc.allowedEmails | quote }}
             - name: TASKBOARD_OIDC_ALLOWED_GROUPS
               value: {{ join "," .Values.taskboard.oidc.allowedGroups | quote }}
+            - name: TASKBOARD_OIDC_TRUST_PROVIDER_POLICY
+              value: {{ .Values.taskboard.oidc.trustProviderPolicy | quote }}
             {{- else if eq .Values.taskboard.browserAuthMode "cloudflare_access" }}
             - name: TASKBOARD_CF_ACCESS_TEAM_DOMAIN
               value: {{ required "taskboard.cloudflareAccess.teamDomain is required in cloudflare_access mode" .Values.taskboard.cloudflareAccess.teamDomain | quote }}
@@ -159,6 +161,8 @@ spec:
               value: {{ join "," .Values.taskboard.cloudflareAccess.allowedEmails | quote }}
             - name: TASKBOARD_CF_ACCESS_ALLOWED_GROUPS
               value: {{ join "," .Values.taskboard.cloudflareAccess.allowedGroups | quote }}
+            - name: TASKBOARD_CF_ACCESS_TRUST_POLICY
+              value: {{ .Values.taskboard.cloudflareAccess.trustPolicy | quote }}
             {{- else }}
             {{- fail "taskboard.browserAuthMode must be oidc or cloudflare_access" }}
             {{- end }}

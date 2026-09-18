@@ -62,7 +62,9 @@ func main() {
 		Addr:              cfg.ListenAddress,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
 		BaseContext: func(net.Listener) context.Context {
 			return httpContext
 		},
@@ -75,7 +77,9 @@ func main() {
 			Addr:              cfg.MetricsListenAddress,
 			Handler:           metricsMux,
 			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Second,
 			IdleTimeout:       30 * time.Second,
+			MaxHeaderBytes:    1 << 20,
 		}
 		go func() {
 			logger.Info("taskboard metrics listening", "address", cfg.MetricsListenAddress)

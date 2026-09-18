@@ -39,6 +39,18 @@ func TestInsecureModeIsLoopbackOnlyWithSafeHostDefaults(t *testing.T) {
 	}
 }
 
+func TestNonLoopbackListenerRequiresAllowedHosts(t *testing.T) {
+	t.Setenv("TASKBOARD_LISTEN_ADDRESS", "0.0.0.0:8095")
+	t.Setenv("TASKBOARD_AUTH_TOKEN", "0123456789abcdef0123456789abcdef")
+	if _, err := Load(); err == nil {
+		t.Fatal("non-loopback listener without allowed hosts was accepted")
+	}
+	t.Setenv("TASKBOARD_ALLOWED_HOSTS", "taskboard.example.com")
+	if _, err := Load(); err != nil {
+		t.Fatalf("non-loopback listener with allowed hosts: %v", err)
+	}
+}
+
 func TestMCPDefaultTaskType(t *testing.T) {
 	t.Setenv("TASKBOARD_MCP_DEFAULT_TYPE", "personal")
 	cfg, err := Load()
@@ -87,6 +99,44 @@ func TestWorkplaceRoleConfiguration(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("invalid default role was accepted")
 	}
+}
+
+func TestWorkplaceRoleDefaultsToMember(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultRole != "member" {
+		t.Fatalf("default role = %q, want member", cfg.DefaultRole)
+	}
+}
+
+func TestIdentityProviderRequiresAllowlistOrExplicitPolicyTrust(t *testing.T) {
+	t.Run("OIDC", func(t *testing.T) {
+		t.Setenv("TASKBOARD_OIDC_ISSUER", "https://idp.example.com")
+		t.Setenv("TASKBOARD_OIDC_CLIENT_ID", "taskboard")
+		t.Setenv("TASKBOARD_OIDC_REDIRECT_URL", "https://taskboard.example.com/api/v1/auth/oidc/callback")
+		if _, err := Load(); err == nil {
+			t.Fatal("OIDC without an application allow-list or explicit policy trust was accepted")
+		}
+		t.Setenv("TASKBOARD_OIDC_TRUST_PROVIDER_POLICY", "true")
+		if _, err := Load(); err != nil {
+			t.Fatalf("OIDC with explicit provider-policy trust: %v", err)
+		}
+	})
+
+	t.Run("Cloudflare Access", func(t *testing.T) {
+		t.Setenv("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthCloudflareAccess)
+		t.Setenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN", "https://team.cloudflareaccess.com")
+		t.Setenv("TASKBOARD_CF_ACCESS_AUD", "access-audience")
+		if _, err := Load(); err == nil {
+			t.Fatal("Cloudflare Access without an application allow-list or explicit policy trust was accepted")
+		}
+		t.Setenv("TASKBOARD_CF_ACCESS_TRUST_POLICY", "true")
+		if _, err := Load(); err != nil {
+			t.Fatalf("Cloudflare Access with explicit policy trust: %v", err)
+		}
+	})
 }
 
 func TestAgentSafetyPolicyConfiguration(t *testing.T) {

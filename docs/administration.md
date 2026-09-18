@@ -56,3 +56,9 @@ Use `GET /api/v1/admin/webhooks/dead-letters` to inspect dead letters and
 receiver. Enabling delivery on an existing installation backfills its durable
 event history. The worker follows Taskboard's supported single-replica model;
 receivers must still be idempotent.
+
+Webhook payloads contain the task title, current note, actor, status, and
+visibility. Configure only a trusted HTTPS recipient, protect its logs and
+storage as workspace data, and use network egress controls where practical.
+Taskboard never follows webhook redirects, so a configured receiver cannot
+redirect signed content or the delivery headers to another origin.
