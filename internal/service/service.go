@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kilo666mj/taskboard/internal/agentidentity"
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/store"
@@ -268,6 +269,22 @@ func mergePayload(base, extra map[string]any) map[string]any {
 	return base
 }
 
+func insertAgentRun(ctx context.Context, tx *store.Tx, run model.AgentRun) (model.AgentRun, error) {
+	for _, callsign := range agentidentity.Candidates(run.ID) {
+		result, err := tx.ExecContext(ctx, `INSERT INTO agent_runs(id,task_id,agent,client,callsign,status,lease_expires_at,last_heartbeat_at,started_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+			run.ID, run.TaskID, run.Agent, run.Client, callsign, run.Status, stamp(run.LeaseExpires), stamp(run.LastHeartbeat), stamp(run.StartedAt))
+		if err != nil {
+			return model.AgentRun{}, err
+		}
+		if count, _ := result.RowsAffected(); count == 1 {
+			run.Callsign = callsign
+			run.Tone = agentidentity.Tone(run.ID)
+			return run, nil
+		}
+	}
+	return model.AgentRun{}, errors.New("no friendly callsign is available for this agent run")
+}
+
 type Service struct {
 	store         *store.Store
 	leaseDuration time.Duration
@@ -479,8 +496,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 		}
 	}
 	lease := now.Add(s.leaseDuration)
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_runs(id,task_id,agent,client,status,lease_expires_at,last_heartbeat_at,started_at) VALUES(?,?,?,?,?,?,?,?)`, runID, taskID, request.Agent, request.Client, model.TaskActive, stamp(lease), stamp(now), stamp(now))
-	if err != nil {
+	if _, err = insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}); err != nil {
 		return model.StartResult{}, err
 	}
 	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.started", Actor: request.Agent, Message: request.Title, Payload: idempotencyPayload("task_start", request.IdempotencyKey, request.IdempotencyHash), CreatedAt: now}
@@ -907,7 +923,7 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	}
 	runID := newID(now)
 	lease := now.Add(s.leaseDuration)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_runs(id,task_id,agent,client,status,lease_expires_at,last_heartbeat_at,started_at) VALUES(?,?,?,?,?,?,?,?)`, runID, taskID, request.Agent, request.Client, model.TaskActive, stamp(lease), stamp(now), stamp(now)); err != nil {
+	if _, err := insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}); err != nil {
 		return model.StartResult{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE tasks SET status=?,owner=?,version=version+1,updated_at=?,completed_at=NULL WHERE id=? AND version=?`, model.TaskActive, request.Agent, stamp(now), taskID, request.ExpectedVersion)
@@ -1439,23 +1455,136 @@ func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (o
 	return model.AgentRun{}, store.ErrNotFound
 }
 
-func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, principal Principal) (model.AgentRun, error) {
+func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, principal Principal) (model.HeartbeatResult, error) {
 	if !principal.Agent || !principal.HasCapability(CapabilityTaskUpdate) {
-		return model.AgentRun{}, ErrForbidden
+		return model.HeartbeatResult{}, ErrForbidden
 	}
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
-		return model.AgentRun{}, err
+		return model.HeartbeatResult{}, err
 	}
 	for _, run := range task.Runs {
 		if run.ID == strings.TrimSpace(runID) && run.Agent == principal.ID {
 			if principal.Policy.MaxRunDuration > 0 && time.Since(run.StartedAt) >= principal.Policy.MaxRunDuration {
-				return model.AgentRun{}, fmt.Errorf("%w: maximum run duration is %s", ErrRateLimit, principal.Policy.MaxRunDuration)
+				return model.HeartbeatResult{}, fmt.Errorf("%w: maximum run duration is %s", ErrRateLimit, principal.Policy.MaxRunDuration)
 			}
-			return s.Heartbeat(ctx, taskID, runID, principal.ID)
+			updated, err := s.Heartbeat(ctx, taskID, runID, principal.ID)
+			if err != nil {
+				return model.HeartbeatResult{}, err
+			}
+			return model.HeartbeatResult{Run: updated, Progress: s.runProgress(task, updated)}, nil
 		}
 	}
-	return model.AgentRun{}, store.ErrNotFound
+	return model.HeartbeatResult{}, store.ErrNotFound
+}
+
+func (s *Service) runProgress(task model.Task, run model.AgentRun) model.RunProgress {
+	lastChanged := run.StartedAt
+	progress := model.RunProgress{TotalItems: len(task.Items)}
+	for _, item := range task.Items {
+		if item.UpdatedAt.After(lastChanged) {
+			lastChanged = item.UpdatedAt
+		}
+		if item.Status == model.ItemActive {
+			progress.CurrentItemID = item.ID
+		}
+		if item.Status == model.ItemDone || item.Status == model.ItemSkipped {
+			progress.CompletedItems++
+		}
+	}
+	staleAfter := 3 * s.leaseDuration
+	if staleAfter < 10*time.Minute {
+		staleAfter = 10 * time.Minute
+	}
+	age := time.Since(lastChanged)
+	if age < 0 {
+		age = 0
+	}
+	progress.LastChangedAt = lastChanged
+	progress.AgeSeconds = int64(age / time.Second)
+	progress.StaleAfterSeconds = int64(staleAfter / time.Second)
+	progress.Stale = len(task.Items) > 0 && age >= staleAfter
+	if progress.Stale {
+		progress.Hint = "Checklist progress is stale. Record each completed item now; heartbeat renewal never changes checklist state."
+	}
+	return progress
+}
+
+func (s *Service) RenameRunFor(ctx context.Context, taskID, runID string, request model.RenameRunRequest, principal Principal) (model.Task, error) {
+	if principal.Agent || !principal.Can(PermissionTaskWrite) {
+		return model.Task{}, ErrForbidden
+	}
+	current, err := s.GetFor(ctx, taskID, principal)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if !canMutate(current, principal) {
+		return model.Task{}, ErrForbidden
+	}
+	return s.renameRun(ctx, taskID, runID, request, principal.ID)
+}
+
+func (s *Service) renameRun(ctx context.Context, taskID, runID string, request model.RenameRunRequest, actor string) (model.Task, error) {
+	taskID, runID = strings.TrimSpace(taskID), strings.TrimSpace(runID)
+	callsign, valid := agentidentity.Normalize(request.Callsign)
+	if taskID == "" || runID == "" || request.ExpectedVersion < 1 || !valid {
+		return model.Task{}, fmt.Errorf("%w: task_id, run_id, expected_version, and a 1-32 character callsign are required", ErrValidation)
+	}
+	now := time.Now().UTC()
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return model.Task{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := store.LoadTask(ctx, tx, taskID)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if current.Version != request.ExpectedVersion {
+		return model.Task{}, ErrConflict
+	}
+	var previous string
+	var status model.TaskStatus
+	var ended sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT callsign,status,ended_at FROM agent_runs WHERE id=? AND task_id=?`, runID, taskID).Scan(&previous, &status, &ended); errors.Is(err, sql.ErrNoRows) {
+		return model.Task{}, store.ErrNotFound
+	} else if err != nil {
+		return model.Task{}, err
+	}
+	if status == model.TaskActive && !ended.Valid {
+		var collision int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE lower(callsign)=lower(?) AND id<>? AND status=? AND ended_at IS NULL`, callsign, runID, model.TaskActive).Scan(&collision); err != nil {
+			return model.Task{}, err
+		}
+		if collision > 0 {
+			return model.Task{}, fmt.Errorf("%w: callsign is already used by an active agent", ErrConflict)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_runs SET callsign=? WHERE id=? AND task_id=?`, callsign, runID, taskID); err != nil {
+		if message := strings.ToLower(err.Error()); strings.Contains(message, "unique") || strings.Contains(message, "duplicate") {
+			return model.Task{}, fmt.Errorf("%w: callsign is already used by an active agent", ErrConflict)
+		}
+		return model.Task{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, request.ExpectedVersion)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return model.Task{}, ErrConflict
+	}
+	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "run.callsign_updated", Actor: actor, Message: "Agent callsign renamed", Payload: map[string]any{"previous_callsign": previous, "callsign": callsign, "version": request.ExpectedVersion + 1}, CreatedAt: now}
+	if err := store.InsertEvent(ctx, tx, event); err != nil {
+		return model.Task{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Task{}, err
+	}
+	task, err := s.store.GetTask(ctx, taskID)
+	if err == nil {
+		s.publish(event)
+	}
+	return task, err
 }
 
 func (s *Service) Move(ctx context.Context, taskID string, request model.MoveRequest, actor string) (model.Task, error) {

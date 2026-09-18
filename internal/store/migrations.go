@@ -10,9 +10,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 3
+const latestSchemaVersion = 4
 
 type schemaMigration struct {
 	Version  int
@@ -74,6 +76,18 @@ var schemaMigrations = []schemaMigration{
 			`CREATE TRIGGER admin_audit_no_delete BEFORE DELETE ON admin_audit FOR EACH ROW EXECUTE FUNCTION taskboard_protect_admin_audit()`,
 			`CREATE TABLE webhook_deliveries (id TEXT PRIMARY KEY,event_id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL,last_error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
 			`CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries(status,next_attempt_at)`,
+		},
+	},
+	{
+		Version: 4,
+		Name:    "agent_run_callsigns",
+		SQLite: []string{
+			`ALTER TABLE agent_runs ADD COLUMN callsign TEXT NOT NULL DEFAULT ''`,
+			`CREATE UNIQUE INDEX idx_runs_active_callsign ON agent_runs(lower(callsign)) WHERE ended_at IS NULL AND status='active' AND callsign<>''`,
+		},
+		Postgres: []string{
+			`ALTER TABLE agent_runs ADD COLUMN callsign TEXT NOT NULL DEFAULT ''`,
+			`CREATE UNIQUE INDEX idx_runs_active_callsign ON agent_runs(lower(callsign)) WHERE ended_at IS NULL AND status='active' AND callsign<>''`,
 		},
 	},
 }
@@ -199,6 +213,9 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := backfillRunCallsigns(ctx, tx); err != nil {
+		return err
+	}
 	if err := validateCurrentSchema(ctx, tx, s.db.dialect); err != nil {
 		return err
 	}
@@ -206,6 +223,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := validateAdministrativeAuditProtection(ctx, tx, s.db.dialect); err != nil {
+		return err
+	}
+	if err := validateAgentRunIdentitySchema(ctx, tx, s.db.dialect); err != nil {
 		return err
 	}
 	if s.db.dialect == DialectPostgres {
@@ -230,6 +250,79 @@ func (s *Store) migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, "PRAGMA optimize"); err != nil {
 			return fmt.Errorf("optimize SQLite schema: %w", err)
 		}
+	}
+	return nil
+}
+
+func backfillRunCallsigns(ctx context.Context, tx *Tx) error {
+	columns, err := tableColumns(ctx, tx, tx.dialect, "agent_runs")
+	if err != nil || !columns["callsign"] {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,status,ended_at,callsign FROM agent_runs ORDER BY started_at,id`)
+	if err != nil {
+		return fmt.Errorf("load agent runs for callsign backfill: %w", err)
+	}
+	type run struct {
+		id, status, callsign string
+		ended                sql.NullString
+	}
+	var runs []run
+	for rows.Next() {
+		var item run
+		if err := rows.Scan(&item.id, &item.status, &item.ended, &item.callsign); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		runs = append(runs, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	used := map[string]bool{}
+	for _, item := range runs {
+		if item.status == "active" && !item.ended.Valid && item.callsign != "" {
+			used[strings.ToLower(item.callsign)] = true
+		}
+	}
+	for _, item := range runs {
+		if item.callsign != "" {
+			continue
+		}
+		var selected string
+		for _, candidate := range agentidentity.Candidates(item.id) {
+			if item.status != "active" || item.ended.Valid || !used[strings.ToLower(candidate)] {
+				selected = candidate
+				break
+			}
+		}
+		if selected == "" {
+			return errors.New("no available friendly callsign for active agent run")
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_runs SET callsign=? WHERE id=? AND callsign=''`, selected, item.id); err != nil {
+			return fmt.Errorf("backfill callsign for run %s: %w", item.id, err)
+		}
+		if item.status == "active" && !item.ended.Valid {
+			used[strings.ToLower(selected)] = true
+		}
+	}
+	return nil
+}
+
+func validateAgentRunIdentitySchema(ctx context.Context, tx *Tx, dialect Dialect) error {
+	columns, err := tableColumns(ctx, tx, dialect, "agent_runs")
+	if err != nil {
+		return err
+	}
+	if !columns["callsign"] {
+		return fmt.Errorf("schema version %d is partial: required column agent_runs.callsign is missing", latestSchemaVersion)
+	}
+	exists, err := indexExists(ctx, tx, dialect, "idx_runs_active_callsign")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("schema version %d is partial: required index idx_runs_active_callsign is missing", latestSchemaVersion)
 	}
 	return nil
 }

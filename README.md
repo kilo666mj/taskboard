@@ -31,6 +31,10 @@ agents -> Switchboard -> Taskboard MCP -> SQLite or PostgreSQL
 - Blocked and waiting states require an explanation.
 - Optimistic versions prevent agents from overwriting one another.
 - Agent runs have renewable leases; missed heartbeats become stale.
+- Every run receives a friendly, collision-free callsign while the authenticated
+  principal and run ID remain authoritative audit identity.
+- Agents report each completed checklist item immediately; heartbeat responses
+  warn when checklist progress is stale but never infer completion.
 - An append-only event history records user-visible transitions without storing
   prompts, reasoning, credentials, or tool output.
 
@@ -38,6 +42,9 @@ The MCP server exposes `task_create`, `task_start`, `task_claim`, `task_update`,
 `task_complete`, `task_heartbeat`, `task_get`, `task_list`, `task_move`,
 `task_template_list`, and `task_template_save`. The example Switchboard
 capability is in `capabilities/taskboard.example.json`.
+
+See [Agent integrations](docs/agent-integrations.md) for the incremental
+checklist, callsign, and heartbeat contracts.
 
 Audit actors always come from authenticated server context. The deployment
 bearer token maps to the stable `agent:shared` actor, while an MCP client's

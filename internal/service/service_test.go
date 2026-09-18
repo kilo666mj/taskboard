@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -313,6 +314,85 @@ func TestChecklistLifecycleAndCompletionGate(t *testing.T) {
 	}
 	if completed.Status != model.TaskDone || completed.CompletedAt == nil {
 		t.Fatalf("completed task = %+v", completed)
+	}
+}
+
+func TestHeartbeatReportsProgressWithoutInferringCompletion(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Long checklist", Checklist: []string{"First", "Second"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-11 * time.Minute)
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE agent_runs SET started_at=? WHERE id=?`, stamp(old), started.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE checklist_items SET updated_at=? WHERE task_id=?`, stamp(old), started.Task.ID); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat, err := tasks.HeartbeatFor(t.Context(), started.Task.ID, started.Run.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !heartbeat.Progress.Stale || heartbeat.Progress.AgeSeconds < 10*60 || heartbeat.Progress.Hint == "" {
+		t.Fatalf("stale progress = %+v", heartbeat.Progress)
+	}
+	unchanged, err := tasks.Get(t.Context(), started.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Items[0].Status != model.ItemActive || unchanged.Items[1].Status != model.ItemTodo {
+		t.Fatalf("heartbeat inferred checklist state: %+v", unchanged.Items)
+	}
+
+	updated, err := tasks.UpdateFor(t.Context(), unchanged.ID, model.UpdateRequest{
+		ExpectedVersion: unchanged.Version,
+		RunID:           started.Run.ID,
+		CompleteItemIDs: []string{unchanged.Items[0].ID},
+		CurrentItemID:   unchanged.Items[1].ID,
+	}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	heartbeat, err = tasks.HeartbeatFor(t.Context(), updated.ID, started.Run.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if heartbeat.Progress.Stale || heartbeat.Progress.CompletedItems != 1 || heartbeat.Progress.CurrentItemID != updated.Items[1].ID {
+		t.Fatalf("fresh progress = %+v", heartbeat.Progress)
+	}
+}
+
+func TestAgentRunCallsignsAreFriendlyUniqueAndOperatorRenameIsDisplayOnly(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	first, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "First run", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Second run", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Run.Callsign == "" || second.Run.Callsign == "" || strings.EqualFold(first.Run.Callsign, second.Run.Callsign) {
+		t.Fatalf("run callsigns = %q / %q", first.Run.Callsign, second.Run.Callsign)
+	}
+	if _, err := tasks.RenameRunFor(t.Context(), second.Task.ID, second.Run.ID, model.RenameRunRequest{ExpectedVersion: second.Task.Version, Callsign: strings.ToLower(first.Run.Callsign)}, HumanPrincipal("operator@example.com")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate rename error = %v, want conflict", err)
+	}
+	if _, err := tasks.RenameRunFor(t.Context(), first.Task.ID, first.Run.ID, model.RenameRunRequest{ExpectedVersion: first.Task.Version, Callsign: "North Star"}, agent); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("agent rename error = %v, want forbidden", err)
+	}
+	renamed, err := tasks.RenameRunFor(t.Context(), first.Task.ID, first.Run.ID, model.RenameRunRequest{ExpectedVersion: first.Task.Version, Callsign: "North Star"}, HumanPrincipal("operator@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Runs[0].Callsign != "North Star" || renamed.Runs[0].Agent != first.Run.Agent || renamed.Runs[0].Client != first.Run.Client || renamed.Runs[0].ID != first.Run.ID || renamed.Runs[0].Tone != first.Run.Tone {
+		t.Fatalf("renamed run changed trusted identity: before=%+v after=%+v", first.Run, renamed.Runs[0])
+	}
+	if renamed.Version != first.Task.Version+1 {
+		t.Fatalf("renamed task version = %d, want %d", renamed.Version, first.Task.Version+1)
 	}
 }
 
