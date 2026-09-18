@@ -128,8 +128,12 @@ networkPolicy:
 NetworkPolicy defaults are deliberately restrictive. Match the actual ingress
 controller, monitoring namespace, cluster DNS labels, database CIDRs, and
 database port before installing. HTTPS egress is allowed because OIDC,
-Cloudflare Access JWKS, and Web Push use external HTTPS services. Narrow
-`httpsCIDRs` if those destinations have stable network ranges.
+Cloudflare Access JWKS, Web Push, and optional signed webhooks use external
+HTTPS services. A webhook recipient receives task titles, notes, actors,
+status, and visibility, so configure only trusted endpoints. Narrow
+`httpsCIDRs` when those destinations have stable network ranges; otherwise
+combine the NetworkPolicy with an egress proxy or firewall policy that controls
+destination names.
 
 Install and verify:
 

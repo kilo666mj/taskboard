@@ -16,7 +16,9 @@
     taskboard_cf_access_allowed_subjects: []
     taskboard_cf_access_allowed_emails: []
     taskboard_cf_access_allowed_groups: []
-    taskboard_default_role: admin
+    taskboard_cf_access_trust_policy: false
+    taskboard_oidc_trust_provider_policy: false
+    taskboard_default_role: member
     taskboard_owner_groups: []
     taskboard_admin_groups: []
     taskboard_member_groups: []
@@ -53,6 +55,8 @@
           - taskboard_browser_auth_mode != 'oidc' or taskboard_oidc_redirect_url | length > 0
           - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_team_domain | length > 0
           - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_aud | length > 0
+          - taskboard_browser_auth_mode != 'oidc' or taskboard_oidc_trust_provider_policy | bool or (taskboard_oidc_allowed_subjects | length + taskboard_oidc_allowed_emails | length + taskboard_oidc_allowed_groups | length) > 0
+          - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_trust_policy | bool or (taskboard_cf_access_allowed_subjects | length + taskboard_cf_access_allowed_emails | length + taskboard_cf_access_allowed_groups | length) > 0
           - taskboard_mcp_default_type in ['personal', 'work']
           - taskboard_default_role in ['owner', 'admin', 'member', 'viewer']
           - taskboard_agent_max_concurrent_runs | int >= 1

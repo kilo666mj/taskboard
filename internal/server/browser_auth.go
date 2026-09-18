@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -223,14 +223,14 @@ func desktopConfirmationPage(w http.ResponseWriter, status int, title, message, 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	code := ""
-	actions := ""
-	if verificationCode != "" {
-		code = fmt.Sprintf(`<p><strong><code>%s</code></strong></p>`, verificationCode)
-		actions = `<form method="post" action="/api/v1/auth/desktop/confirm"><button type="submit">Confirm sign-in</button></form><form method="post" action="/api/v1/auth/desktop/cancel"><button type="submit">Cancel</button></form>`
-	}
-	_, _ = fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>%s</title></head><body><main><h1>%s</h1><p>%s</p>%s%s</main></body></html>`, title, title, message, code, actions)
+	_ = desktopConfirmationTemplate.Execute(w, struct {
+		Title            string
+		Message          string
+		VerificationCode string
+	}{title, message, verificationCode})
 }
+
+var desktopConfirmationTemplate = template.Must(template.New("desktop-confirmation").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{.Title}}</title></head><body><main><h1>{{.Title}}</h1><p>{{.Message}}</p>{{if .VerificationCode}}<p><strong><code>{{.VerificationCode}}</code></strong></p><form method="post" action="/api/v1/auth/desktop/confirm"><button type="submit">Confirm sign-in</button></form><form method="post" action="/api/v1/auth/desktop/cancel"><button type="submit">Cancel</button></form>{{end}}</main></body></html>`))
 
 func logout(cfg config.Config, sessions *browserSessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

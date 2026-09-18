@@ -11,7 +11,7 @@ disable their feature.
 | `TASKBOARD_DATABASE_URL` | none | PostgreSQL connection URL. When set, PostgreSQL is used and `TASKBOARD_DATABASE_PATH` is ignored. |
 | `TASKBOARD_AUTH_TOKEN` | none | Deployment-scoped MCP bearer credential; at least 32 characters. Required on non-loopback listeners. Calls using it are attributed to `agent:shared`. |
 | `TASKBOARD_ALLOW_INSECURE` | `false` | Allow unauthenticated use only for explicit local development. Without a token, startup refuses non-loopback listeners. |
-| `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. In unauthenticated local mode this safely defaults to `localhost`, `127.0.0.1`, and `::1`. |
+| `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. It is required for non-loopback listeners. Loopback listeners safely default to `localhost`, `127.0.0.1`, and `::1`. Health and readiness probes are exempt. |
 | `TASKBOARD_LEASE_SECONDS` | `120` | Agent lease duration, from 30 through 3600 seconds. |
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Default type for agent-created tasks: `personal` or `work`. |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
@@ -22,15 +22,17 @@ disable their feature.
 | `TASKBOARD_OIDC_CLIENT_ID` | none | OIDC client ID. Public PKCE clients do not require a secret. |
 | `TASKBOARD_OIDC_CLIENT_SECRET` | none | Optional confidential-client secret. |
 | `TASKBOARD_OIDC_REDIRECT_URL` | none | Exact OIDC callback URL ending in `/api/v1/auth/oidc/callback`. |
-| `TASKBOARD_OIDC_ALLOWED_SUBJECTS` | none | Optional comma-separated subject allowlist. |
-| `TASKBOARD_OIDC_ALLOWED_EMAILS` | none | Optional comma-separated email allowlist. |
-| `TASKBOARD_OIDC_ALLOWED_GROUPS` | none | Optional comma-separated group allowlist. |
+| `TASKBOARD_OIDC_ALLOWED_SUBJECTS` | none | Comma-separated subject allowlist. At least one OIDC allowlist is required unless provider-policy trust is explicitly enabled. |
+| `TASKBOARD_OIDC_ALLOWED_EMAILS` | none | Comma-separated email allowlist. |
+| `TASKBOARD_OIDC_ALLOWED_GROUPS` | none | Comma-separated group allowlist. |
+| `TASKBOARD_OIDC_TRUST_PROVIDER_POLICY` | `false` | Explicitly rely on the OIDC provider's application-assignment policy when all application allowlists are empty. |
 | `TASKBOARD_CF_ACCESS_TEAM_DOMAIN` | none | Cloudflare Access HTTPS team origin. |
 | `TASKBOARD_CF_ACCESS_AUD` | none | Exact Access application audience tag. |
-| `TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS` | none | Optional comma-separated Access subject allowlist. |
-| `TASKBOARD_CF_ACCESS_ALLOWED_EMAILS` | none | Optional comma-separated Access email allowlist. |
-| `TASKBOARD_CF_ACCESS_ALLOWED_GROUPS` | none | Optional comma-separated Access group allowlist. |
-| `TASKBOARD_DEFAULT_ROLE` | `admin` | Role assigned when no configured role group matches: `owner`, `admin`, `member`, or `viewer`. The `admin` default preserves existing deployments. |
+| `TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS` | none | Comma-separated Access subject allowlist. At least one Access allowlist is required unless edge-policy trust is explicitly enabled. |
+| `TASKBOARD_CF_ACCESS_ALLOWED_EMAILS` | none | Comma-separated Access email allowlist. |
+| `TASKBOARD_CF_ACCESS_ALLOWED_GROUPS` | none | Comma-separated Access group allowlist. |
+| `TASKBOARD_CF_ACCESS_TRUST_POLICY` | `false` | Explicitly rely on the Cloudflare Access application policy when all application allowlists are empty. |
+| `TASKBOARD_DEFAULT_ROLE` | `member` | Role assigned when no configured role group matches: `owner`, `admin`, `member`, or `viewer`. Grant privileged roles with explicit group mappings. |
 | `TASKBOARD_OWNER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `owner`. |
 | `TASKBOARD_ADMIN_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `admin`. |
 | `TASKBOARD_MEMBER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `member`. |
@@ -42,19 +44,23 @@ disable their feature.
 | `TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY` | `false` | Require `idempotency_key` on mutating task operations for service principals. |
 | `TASKBOARD_AGENT_POLICIES_JSON` | none | JSON object containing per-principal capability and limit overrides. |
 | `TASKBOARD_RETENTION_DAYS` | `0` | Age in days for explicit administrative pruning of completed/cancelled tasks. `0` disables retention deletion. |
-| `TASKBOARD_WEBHOOK_URL` | none | HTTPS endpoint for durable signed event delivery. Requires `TASKBOARD_WEBHOOK_SECRET`. |
+| `TASKBOARD_WEBHOOK_URL` | none | Trusted HTTPS endpoint for durable signed event delivery. It receives task titles, notes, actors, status, and visibility. Requires `TASKBOARD_WEBHOOK_SECRET`. |
 | `TASKBOARD_WEBHOOK_SECRET` | none | HMAC-SHA256 webhook signing secret of at least 32 characters. |
 | `TASKBOARD_WEBHOOK_MAX_ATTEMPTS` | `8` | Delivery attempts before a webhook enters the administrative dead-letter queue (1-100). |
 
-OIDC requires issuer, client ID, and redirect URL together. At least one OIDC
-allowlist is recommended for a workplace deployment unless the identity
-provider application assignment already restricts access.
+OIDC requires issuer, client ID, and redirect URL together. Taskboard fails
+startup when all OIDC allowlists are empty unless
+`TASKBOARD_OIDC_TRUST_PROVIDER_POLICY=true` explicitly records that the
+provider's application-assignment policy is the authorization boundary. The
+equivalent Cloudflare Access acknowledgement is
+`TASKBOARD_CF_ACCESS_TRUST_POLICY=true`.
 
 Role mappings are evaluated in descending authority order: owner, admin,
 member, then viewer. If an identity belongs to several mapped groups, the
 highest role wins. Set `TASKBOARD_DEFAULT_ROLE=viewer` when every identity that
 may change data should be explicitly placed in a member, admin, or owner group.
 The same mappings apply to group claims from OIDC and Cloudflare Access.
+Invalid or missing in-process role values fail safely to `viewer`.
 
 | Action | Owner | Admin | Member | Viewer |
 | --- | --- | --- | --- | --- |
@@ -91,6 +97,12 @@ request returns the original task/run identity (with its current task state);
 reusing a key with different input is a conflict. Heartbeats are naturally
 idempotent. In-process serialization closes concurrent duplicate races for the
 supported single-replica deployment model.
+
+Taskboard applies bounded in-process limits to desktop session exchanges,
+failed authentication attempts, and authenticated mutations. A rejected burst
+receives `429 Too Many Requests` with `Retry-After`. These safeguards protect a
+single process; keep ingress-level limits as an additional deployment control,
+especially when several replicas share a public endpoint.
 
 Administrative credential, offboarding, retention, export/deletion, audit, and
 webhook procedures are documented in [Administration](administration.md).

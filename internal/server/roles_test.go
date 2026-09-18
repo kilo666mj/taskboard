@@ -37,8 +37,8 @@ func TestRoleForGroupsUsesHighestMappedRoleAndSafeDefault(t *testing.T) {
 			}
 		})
 	}
-	if got := roleForGroups(config.Config{}, nil); got != service.RoleAdmin {
-		t.Fatalf("zero-config role = %q, want backwards-compatible admin", got)
+	if got := roleForGroups(config.Config{}, nil); got != service.RoleViewer {
+		t.Fatalf("zero-config role = %q, want fail-safe viewer", got)
 	}
 }
 

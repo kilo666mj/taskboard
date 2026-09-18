@@ -37,17 +37,23 @@ notifications.
 ## Residual deployment considerations
 
 These are operational tradeoffs rather than currently exploitable application
-vulnerabilities:
+vulnerabilities. The follow-up hardening change reduced several of them:
 
 - Taskboard is a shared workspace, not a tenant-isolation boundary. Use a
   dedicated deployment when mutually untrusted groups require isolation.
-- The backwards-compatible default human role is `admin`; workplace deployments
-  should configure group-to-role mappings and a less-privileged default.
-- TLS and HSTS are expected at the ingress or reverse proxy.
+- The default human role is now `member`; privileged access requires an
+  explicit role mapping or an intentional configuration override.
+- Empty application identity allowlists require an explicit provider-policy
+  trust acknowledgement, and non-loopback listeners require a Host allowlist.
+- TLS and HSTS remain the responsibility of the ingress or reverse proxy.
 - The administrative full export is intentionally unbounded and can consume
-  memory proportional to workspace size.
-- The Helm network policy permits general HTTPS egress for OIDC, push, and
-  webhook integrations. Restrict it further when endpoint requirements are
-  known.
-- Larger installations still need deployment-specific quotas, rate limiting,
-  and regularly exercised disaster recovery.
+  memory proportional to workspace size; database-native backups are preferred
+  for routine disaster recovery.
+- The Helm network policy permits HTTPS egress for OIDC, push, and webhook
+  integrations. Restrict it further when endpoint requirements are known.
+- In-process authentication and mutation limits bound bursts to one process;
+  larger installations still need deployment-specific ingress quotas and
+  regularly exercised disaster recovery.
+- `golang.org/x/crypto` is pinned to v0.56.0. `govulncheck` reports only
+  GO-2026-5932 at module level; Taskboard does not import the affected,
+  unmaintained `openpgp` package and the advisory has no upstream fixed version.

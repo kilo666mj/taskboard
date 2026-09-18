@@ -10,9 +10,11 @@ taskboard_oidc_client_id: taskboard
 taskboard_oidc_client_secret: ""
 taskboard_oidc_redirect_url: https://taskboard.example.com/api/v1/auth/oidc/callback
 taskboard_oidc_allowed_subjects: []
-taskboard_oidc_allowed_emails: []
+taskboard_oidc_allowed_emails:
+  - user@example.com
 taskboard_oidc_allowed_groups: []
-taskboard_default_role: admin
+taskboard_oidc_trust_provider_policy: false
+taskboard_default_role: member
 taskboard_owner_groups: []
 taskboard_admin_groups: []
 taskboard_member_groups: []
@@ -25,3 +27,4 @@ taskboard_cf_access_aud: ""
 taskboard_cf_access_allowed_subjects: []
 taskboard_cf_access_allowed_emails: []
 taskboard_cf_access_allowed_groups: []
+taskboard_cf_access_trust_policy: false

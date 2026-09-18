@@ -98,6 +98,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	}, sessions)
 	oidcAuth.Register(mux)
 	authenticated := auth(cfg, sessions, cloudflare, logger, metrics)
+	desktopExchangeLimiter := newRequestRateLimiter(10, time.Minute, 4096)
 	mux.Handle("/mcp", authenticated(mcpHandler))
 	mux.Handle("/mcp/", authenticated(mcpHandler))
 	mux.Handle("GET /api/v1/tasks", authenticated(http.HandlerFunc(listTasks(service))))
@@ -108,7 +109,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("POST /api/v1/tasks/{id}/runs", authenticated(http.HandlerFunc(claimTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/move", authenticated(http.HandlerFunc(moveTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs/{run}/heartbeat", authenticated(http.HandlerFunc(heartbeat(service))))
-	mux.Handle("GET /api/v1/events", authenticated(http.HandlerFunc(events(service, newEventStreamLimiter(128, 4)))))
+	mux.Handle("GET /api/v1/events", authenticated(http.HandlerFunc(events(service, database, newEventStreamLimiter(128, 4)))))
 	mux.Handle("GET /api/v1/templates", authenticated(http.HandlerFunc(listTemplates(service))))
 	mux.Handle("POST /api/v1/templates", authenticated(http.HandlerFunc(saveTemplate(service))))
 	mux.Handle("DELETE /api/v1/templates/{id}", authenticated(http.HandlerFunc(deleteTemplate(service))))
@@ -131,7 +132,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("DELETE /api/v1/push/subscriptions", authenticated(http.HandlerFunc(deletePushSubscription(notifications))))
 	mux.HandleFunc("GET /api/v1/session", sessionState(cfg, sessions, cloudflare))
 	mux.HandleFunc("DELETE /api/v1/session", logout(cfg, sessions))
-	mux.HandleFunc("POST /api/v1/auth/desktop/session", desktopSessionExchange(sessions))
+	mux.Handle("POST /api/v1/auth/desktop/session", rateLimited(desktopExchangeLimiter, desktopSessionExchange(sessions)))
 	mux.HandleFunc("GET /api/v1/auth/desktop/complete", desktopLoginComplete(sessions))
 	mux.HandleFunc("POST /api/v1/auth/desktop/confirm", desktopConfirm(sessions))
 	mux.HandleFunc("POST /api/v1/auth/desktop/cancel", desktopCancel(sessions))
@@ -462,6 +463,83 @@ type eventStreamLimiter struct {
 	maxPerPrincipal int
 }
 
+type rateWindow struct {
+	count int
+	reset time.Time
+}
+
+type requestRateLimiter struct {
+	mu         sync.Mutex
+	entries    map[string]rateWindow
+	overflow   rateWindow
+	limit      int
+	window     time.Duration
+	maxEntries int
+}
+
+func newRequestRateLimiter(limit int, window time.Duration, maxEntries int) *requestRateLimiter {
+	return &requestRateLimiter{entries: make(map[string]rateWindow), limit: limit, window: window, maxEntries: maxEntries}
+}
+
+func (l *requestRateLimiter) allow(key string, now time.Time) bool {
+	if key == "" {
+		key = "unknown"
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entry, exists := l.entries[key]
+	overflow := false
+	if !exists && len(l.entries) >= l.maxEntries {
+		for candidate, current := range l.entries {
+			if !now.Before(current.reset) {
+				delete(l.entries, candidate)
+			}
+		}
+		if len(l.entries) >= l.maxEntries {
+			entry = l.overflow
+			exists = !entry.reset.IsZero()
+			overflow = true
+		}
+	}
+	if !exists || !now.Before(entry.reset) {
+		entry = rateWindow{reset: now.Add(l.window)}
+	}
+	if entry.count >= l.limit {
+		if overflow {
+			l.overflow = entry
+		} else {
+			l.entries[key] = entry
+		}
+		return false
+	}
+	entry.count++
+	if overflow {
+		l.overflow = entry
+	} else {
+		l.entries[key] = entry
+	}
+	return true
+}
+
+func requestRateKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func rateLimited(limiter *requestRateLimiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.allow(requestRateKey(r), time.Now()) {
+			w.Header().Set("Retry-After", "60")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func newEventStreamLimiter(maxGlobal, maxPerPrincipal int) *eventStreamLimiter {
 	return &eventStreamLimiter{byPrincipal: make(map[string]int), maxGlobal: maxGlobal, maxPerPrincipal: maxPerPrincipal}
 }
@@ -487,11 +565,15 @@ func (l *eventStreamLimiter) release(principalID string) {
 	}
 }
 
-func events(tasks *service.Service, limiter *eventStreamLimiter) http.HandlerFunc {
-	return eventsWithKeepalive(tasks, eventKeepaliveInterval, limiter)
+type principalRevocationChecker interface {
+	PrincipalRevoked(context.Context, string) (bool, error)
 }
 
-func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration, limiter *eventStreamLimiter) http.HandlerFunc {
+func events(tasks *service.Service, revocations principalRevocationChecker, limiter *eventStreamLimiter) http.HandlerFunc {
+	return eventsWithKeepalive(tasks, revocations, eventKeepaliveInterval, limiter)
+}
+
+func eventsWithKeepalive(tasks *service.Service, revocations principalRevocationChecker, keepaliveInterval time.Duration, limiter *eventStreamLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authenticatedPrincipal := principal(r.Context())
 		if !authenticatedPrincipal.Can(service.PermissionEventStream) {
@@ -499,6 +581,10 @@ func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration
 			return
 		}
 		principalID := authenticatedPrincipal.ID
+		if revoked, err := revocations.PrincipalRevoked(r.Context(), principalID); err != nil || revoked {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
 		if !limiter.acquire(principalID) {
 			w.Header().Set("Retry-After", "5")
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many live event streams"})
@@ -527,6 +613,9 @@ func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration
 				if !ok {
 					return
 				}
+				if revoked, err := revocations.PrincipalRevoked(r.Context(), principalID); err != nil || revoked {
+					return
+				}
 				if _, err := tasks.GetFor(r.Context(), event.TaskID, principal(r.Context())); err != nil {
 					if _, changed := event.Payload["visibility"]; !changed {
 						continue
@@ -539,6 +628,9 @@ func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration
 				}
 				flusher.Flush()
 			case <-keepalive.C:
+				if revoked, err := revocations.PrincipalRevoked(r.Context(), principalID); err != nil || revoked {
+					return
+				}
 				if _, err := fmt.Fprint(w, "event: ping\ndata: {}\n\n"); err != nil {
 					return
 				}
@@ -555,6 +647,8 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 	if len(metricSets) > 0 {
 		metrics = metricSets[0]
 	}
+	authFailures := newRequestRateLimiter(30, time.Minute, 4096)
+	mutations := newRequestRateLimiter(300, time.Minute, 4096)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mcpRequest := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
@@ -609,7 +703,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				}
 			} else if cloudflare != nil {
 				mechanism = "cloudflare_access"
-				if identity, err := cloudflare.identity(r); err == nil {
+				if identity, err := cloudflare.identity(r); err == nil && !identity.Service {
 					valid = true
 					authenticatedPrincipal = service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups))
 				}
@@ -618,6 +712,14 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				authenticatedPrincipal = browserPrincipal(cfg, identity)
 			}
 			if !valid {
+				if !authFailures.allow(requestRateKey(r), time.Now()) {
+					if metrics != nil {
+						metrics.ObserveAuth(mechanism, "rate_limited")
+					}
+					w.Header().Set("Retry-After", "60")
+					writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication failures"})
+					return
+				}
 				if metrics != nil {
 					metrics.ObserveAuth(mechanism, "failure")
 				}
@@ -635,6 +737,11 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			if metrics != nil {
 				metrics.ObserveAuth(mechanism, "success")
 			}
+			if !safeMethod(r.Method) && !mutations.allow(authenticatedPrincipal.ID, time.Now()) {
+				w.Header().Set("Retry-After", "60")
+				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many mutations"})
+				return
+			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)))
 		})
 	}
@@ -648,6 +755,9 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 		}
 		if cloudflare != nil {
 			identity, err := cloudflare.identity(r)
+			if err == nil && identity.Service {
+				err = errInvalidCloudflareAccess
+			}
 			if err == nil {
 				if revoked, checkErr := sessions.store.PrincipalRevoked(r.Context(), identity.Subject); checkErr != nil || revoked {
 					err = store.ErrNotFound
@@ -804,6 +914,10 @@ func safeBrowserMutation(r *http.Request) bool {
 }
 func requireAllowedHost(allowed []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if len(allowed) > 0 && !hostAllowed(r.Host, allowed) {
 			writeJSON(w, http.StatusMisdirectedRequest, map[string]string{"error": "request host is not allowed"})
 			return

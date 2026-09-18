@@ -56,6 +56,20 @@
             "viewerGroups": { "type": "array", "items": { "type": "string", "minLength": 1 } }
           }
         },
+        "oidc": {
+          "type": "object",
+          "required": ["trustProviderPolicy"],
+          "properties": {
+            "trustProviderPolicy": { "type": "boolean" }
+          }
+        },
+        "cloudflareAccess": {
+          "type": "object",
+          "required": ["trustPolicy"],
+          "properties": {
+            "trustPolicy": { "type": "boolean" }
+          }
+        },
         "agentPolicy": {
           "type": "object",
           "required": ["capabilities", "maxConcurrentRuns", "maxPickupsPerMinute", "maxRunSeconds", "requireIdempotency", "policiesJSON"],

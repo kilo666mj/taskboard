@@ -28,7 +28,7 @@ func roleForGroups(cfg config.Config, groups []string) service.Role {
 	}
 	role := service.Role(cfg.DefaultRole)
 	if !service.IsHumanRole(role) {
-		return service.RoleAdmin
+		return service.RoleViewer
 	}
 	return role
 }

@@ -89,7 +89,7 @@ const (
 )
 
 func HumanPrincipal(id string) Principal {
-	return Principal{ID: strings.TrimSpace(id), Role: RoleAdmin}
+	return Principal{ID: strings.TrimSpace(id), Role: RoleMember}
 }
 
 func HumanPrincipalWithRole(id string, role Role) Principal {
@@ -135,7 +135,7 @@ func (principal Principal) Can(permission Permission) bool {
 	}
 	role := principal.Role
 	if role == "" {
-		role = RoleAdmin
+		role = RoleViewer
 	}
 	switch permission {
 	case PermissionTaskRead, PermissionTemplateRead, PermissionEventStream, PermissionPushManage:
@@ -533,7 +533,7 @@ func (s *Service) StartFor(ctx context.Context, request model.StartRequest, prin
 			return model.StartResult{}, err
 		}
 		if replay {
-			task, err := s.store.GetTask(ctx, event.TaskID)
+			task, err := s.GetFor(ctx, event.TaskID, principal)
 			if err != nil {
 				return model.StartResult{}, err
 			}
@@ -658,7 +658,7 @@ func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, pr
 			return model.Task{}, err
 		}
 		if replay {
-			return s.store.GetTask(ctx, event.TaskID)
+			return s.GetFor(ctx, event.TaskID, principal)
 		}
 	}
 	return s.Create(ctx, request, principal.ID)
@@ -843,7 +843,7 @@ func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.Cla
 		return model.StartResult{}, err
 	}
 	if replay {
-		task, err := s.store.GetTask(ctx, event.TaskID)
+		task, err := s.GetFor(ctx, event.TaskID, principal)
 		if err != nil {
 			return model.StartResult{}, err
 		}

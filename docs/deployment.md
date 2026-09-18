@@ -119,6 +119,18 @@ credentials back into tracked examples.
 - Restrict access through the OIDC application and Taskboard allowlists.
 - Do not forward an instance running with `TASKBOARD_ALLOW_INSECURE=true`.
 
+Taskboard deliberately does not emit `Strict-Transport-Security`: its normal
+upstream connection is loopback or private-cluster HTTP and it cannot determine
+whether the public request arrived over correctly configured HTTPS. The public
+ingress or reverse proxy owns HSTS for the externally visible hostname.
+
+The MCP handler disables mcpkit's localhost-only transport check because
+Taskboard is designed to run behind a trusted reverse proxy. Taskboard still
+enforces its own authentication, Host allowlist, browser-origin checks, body
+validation, and request limits. Do not expose a loopback Taskboard listener
+through an untrusted generic proxy, and do not treat the mcpkit setting as a
+replacement for origin network controls.
+
 ## Cloudflare Access
 
 To use Cloudflare Access instead of the built-in OIDC browser flow, protect the
@@ -128,11 +140,14 @@ entire Taskboard hostname with an Access application and configure:
 TASKBOARD_BROWSER_AUTH_MODE=cloudflare_access
 TASKBOARD_CF_ACCESS_TEAM_DOMAIN=https://your-team.cloudflareaccess.com
 TASKBOARD_CF_ACCESS_AUD=your-access-application-aud-tag
+TASKBOARD_CF_ACCESS_ALLOWED_EMAILS=operator@example.com
 ```
 
 Taskboard validates the `Cf-Access-Jwt-Assertion` signature, issuer, expiry, and
 audience at the origin; it does not trust an email-only proxy header. Optional
-subject, email, and group allowlists provide an additional origin-side gate.
+subject, email, and group allowlists provide an origin-side gate. If the Access
+application policy is intentionally the only identity allowlist, set
+`TASKBOARD_CF_ACCESS_TRUST_POLICY=true` to acknowledge that design explicitly.
 
 Cloudflare Access can also authenticate MCP workloads through an Access service
 token or OAuth flow. After Cloudflare validates the client it injects the same
@@ -144,6 +159,9 @@ route, but the public Access route should use one credential source per request.
 For service tokens, the audit actor is
 `cloudflare_access:service_token:<common_name>` because Cloudflare intentionally
 leaves the assertion's `sub` and `email` claims empty.
+Service-token identities are accepted as agents only on `/mcp`; they are
+rejected from browser and human REST endpoints even when their name appears in
+an application allowlist.
 
 The desktop shell follows the normal Cloudflare Access flow in its webview in
 this mode. The external-browser, single-use handoff remains specific to OIDC.

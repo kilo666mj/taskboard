@@ -99,12 +99,21 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 		s.logger.Error("list push subscriptions", "error", err)
 		return
 	}
+	eligible := subscriptions[:0]
+	for _, subscription := range subscriptions {
+		revoked, err := s.database.PrincipalRevoked(ctx, subscription.OwnerID)
+		if err != nil {
+			s.logger.Error("check push subscription owner", "error", err)
+			continue
+		}
+		if revoked || !subscription.NotifyProgress || !service.CanView(task, service.HumanPrincipalWithRole(subscription.OwnerID, service.RoleViewer)) {
+			continue
+		}
+		eligible = append(eligible, subscription)
+	}
 	for _, message := range notifications {
 		payload, _ := json.Marshal(map[string]any{"title": message.title, "body": message.body, "tag": message.tag, "url": "/?task=" + task.ID, "urgent": message.urgent})
-		for _, subscription := range subscriptions {
-			if !subscription.NotifyProgress || !service.CanView(task, service.HumanPrincipal(subscription.OwnerID)) {
-				continue
-			}
+		for _, subscription := range eligible {
 			result, err := pwakit.Send(ctx, pwakit.Config{PublicKey: s.publicKey, PrivateKey: s.privateKey, Contact: s.contact}, pwakit.Subscription{Endpoint: subscription.Endpoint, Keys: pwakit.Keys{P256dh: subscription.P256DH, Auth: subscription.Auth}}, payload, pwakit.Options{TTL: 300, Urgency: "normal", HTTPClient: s.client})
 			if result.Expired() {
 				if s.metrics != nil {

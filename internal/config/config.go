@@ -40,11 +40,13 @@ type Config struct {
 	OIDCAllowedSubjects      []string
 	OIDCAllowedEmails        []string
 	OIDCAllowedGroups        []string
+	OIDCTrustProviderPolicy  bool
 	CFAccessTeamDomain       string
 	CFAccessAudience         string
 	CFAccessSubjects         []string
 	CFAccessEmails           []string
 	CFAccessGroups           []string
+	CFAccessTrustPolicy      bool
 	DefaultRole              string
 	OwnerGroups              []string
 	AdminGroups              []string
@@ -92,12 +94,14 @@ func Load() (Config, error) {
 		OIDCAllowedSubjects:      split(os.Getenv("TASKBOARD_OIDC_ALLOWED_SUBJECTS")),
 		OIDCAllowedEmails:        split(os.Getenv("TASKBOARD_OIDC_ALLOWED_EMAILS")),
 		OIDCAllowedGroups:        split(os.Getenv("TASKBOARD_OIDC_ALLOWED_GROUPS")),
+		OIDCTrustProviderPolicy:  envBool("TASKBOARD_OIDC_TRUST_PROVIDER_POLICY", false),
 		CFAccessTeamDomain:       strings.TrimRight(strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN")), "/"),
 		CFAccessAudience:         strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_AUD")),
 		CFAccessSubjects:         split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS")),
 		CFAccessEmails:           split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_EMAILS")),
 		CFAccessGroups:           split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_GROUPS")),
-		DefaultRole:              env("TASKBOARD_DEFAULT_ROLE", "admin"),
+		CFAccessTrustPolicy:      envBool("TASKBOARD_CF_ACCESS_TRUST_POLICY", false),
+		DefaultRole:              env("TASKBOARD_DEFAULT_ROLE", "member"),
 		OwnerGroups:              split(os.Getenv("TASKBOARD_OWNER_GROUPS")),
 		AdminGroups:              split(os.Getenv("TASKBOARD_ADMIN_GROUPS")),
 		MemberGroups:             split(os.Getenv("TASKBOARD_MEMBER_GROUPS")),
@@ -156,7 +160,10 @@ func Load() (Config, error) {
 	if !cfg.AllowInsecure && cfg.AuthToken == "" && !isLoopback(host) {
 		return Config{}, fmt.Errorf("TASKBOARD_AUTH_TOKEN is required for a non-loopback listener")
 	}
-	if cfg.AllowInsecure && cfg.AuthToken == "" && len(cfg.AllowedHosts) == 0 {
+	if !isLoopback(host) && len(cfg.AllowedHosts) == 0 {
+		return Config{}, fmt.Errorf("TASKBOARD_ALLOWED_HOSTS is required for a non-loopback listener")
+	}
+	if isLoopback(host) && len(cfg.AllowedHosts) == 0 {
 		cfg.AllowedHosts = []string{"localhost", "127.0.0.1", "::1"}
 	}
 	if cfg.AuthToken != "" && len(cfg.AuthToken) < 32 {
@@ -218,6 +225,9 @@ func Load() (Config, error) {
 	if oidcConfigured != 0 && oidcConfigured != 3 {
 		return Config{}, fmt.Errorf("TASKBOARD_OIDC_ISSUER, TASKBOARD_OIDC_CLIENT_ID, and TASKBOARD_OIDC_REDIRECT_URL must be configured together")
 	}
+	if cfg.OIDCEnabled() && len(cfg.OIDCAllowedSubjects) == 0 && len(cfg.OIDCAllowedEmails) == 0 && len(cfg.OIDCAllowedGroups) == 0 && !cfg.OIDCTrustProviderPolicy {
+		return Config{}, fmt.Errorf("OIDC requires an application allow-list or TASKBOARD_OIDC_TRUST_PROVIDER_POLICY=true")
+	}
 	if cfg.BrowserAuthMode == BrowserAuthCloudflareAccess {
 		if cfg.CFAccessTeamDomain == "" || cfg.CFAccessAudience == "" {
 			return Config{}, fmt.Errorf("TASKBOARD_CF_ACCESS_TEAM_DOMAIN and TASKBOARD_CF_ACCESS_AUD are required in cloudflare_access mode")
@@ -225,6 +235,9 @@ func Load() (Config, error) {
 		teamDomain, err := url.Parse(cfg.CFAccessTeamDomain)
 		if err != nil || teamDomain.Scheme != "https" || teamDomain.Hostname() == "" || teamDomain.User != nil || teamDomain.RawQuery != "" || teamDomain.Fragment != "" || (teamDomain.Path != "" && teamDomain.Path != "/") {
 			return Config{}, fmt.Errorf("TASKBOARD_CF_ACCESS_TEAM_DOMAIN must be an HTTPS origin")
+		}
+		if len(cfg.CFAccessSubjects) == 0 && len(cfg.CFAccessEmails) == 0 && len(cfg.CFAccessGroups) == 0 && !cfg.CFAccessTrustPolicy {
+			return Config{}, fmt.Errorf("cloudflare Access requires an application allow-list or TASKBOARD_CF_ACCESS_TRUST_POLICY=true")
 		}
 	}
 	return cfg, nil
