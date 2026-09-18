@@ -63,9 +63,6 @@ type tasksOutput struct {
 type taskOutput struct {
 	Task model.Task `json:"task"`
 }
-type runOutput struct {
-	Run model.AgentRun `json:"run"`
-}
 type templatesOutput struct {
 	Templates []model.Template `json:"templates"`
 }
@@ -107,6 +104,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("GET /api/v1/tasks/{id}", authenticated(http.HandlerFunc(getTask(service))))
 	mux.Handle("PATCH /api/v1/tasks/{id}", authenticated(http.HandlerFunc(updateTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs", authenticated(http.HandlerFunc(claimTask(service))))
+	mux.Handle("PATCH /api/v1/tasks/{id}/runs/{run}", authenticated(http.HandlerFunc(renameRun(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/move", authenticated(http.HandlerFunc(moveTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs/{run}/heartbeat", authenticated(http.HandlerFunc(heartbeat(service))))
 	mux.Handle("GET /api/v1/events", authenticated(http.HandlerFunc(events(service, database, newEventStreamLimiter(128, 4)))))
@@ -262,7 +260,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 	}
 	server := mcpkit.MustServer(mcpkit.ServerConfig{
 		Name: "taskboard", Version: Version, Logger: logger,
-		Instructions: "Use task_create to capture future work without beginning execution. Before substantive agent work, start or claim the task, keep its task and run IDs, update it at meaningful transitions, heartbeat during long work, record blockers immediately, and complete only after all required checklist items are done or skipped with a reason. Unattended clients should send a stable idempotency_key for each mutating task operation and reuse it only when retrying the identical request.",
+		Instructions: "Use task_create to capture future work without beginning execution. Before substantive agent work, start or claim the task and keep its task and run IDs. As soon as one checklist item is finished, call task_update with that one complete_item_id and the next current_item_id; do not save completed checklist updates until the end. Heartbeat during long work, act on any stale-progress hint, record blockers immediately, and complete only after all required checklist items are done or skipped with a reason. Unattended clients should send a stable idempotency_key for each mutating task operation and reuse it only when retrying the identical request.",
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_start", Description: "Register substantial work before beginning. Creates a durable task, checklist, and leased agent run; keep the returned task_id and run_id for updates.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.StartRequest) (*mcp.CallToolResult, model.StartResult, error) {
 		if input.Type == "" {
@@ -279,7 +277,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		task, err := tasks.CreateFor(ctx, input, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. expected_version prevents overwriting another agent's changes.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. Immediately after finishing each bounded step, send that one complete_item_id and the next current_item_id instead of batching progress at the end. expected_version prevents overwriting another agent's changes.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
@@ -297,9 +295,9 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_heartbeat", Description: "Renew an active run lease during long work. The harness should call this automatically; expired runs become stale.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input heartbeatInput) (*mcp.CallToolResult, runOutput, error) {
-		run, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx))
-		return nil, runOutput{Run: run}, err
+	mcp.AddTool(server, &mcp.Tool{Name: "task_heartbeat", Description: "Renew an active run lease during long work and report checklist progress age. A stale hint is advisory: respond by recording real completed items with task_update; heartbeat never infers or changes checklist completion.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input heartbeatInput) (*mcp.CallToolResult, model.HeartbeatResult, error) {
+		result, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx))
+		return nil, result, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and agent runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input taskIDInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.GetFor(ctx, input.TaskID, mcpPrincipal(ctx))
@@ -430,6 +428,19 @@ func claimTask(tasks *service.Service) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, result)
 	}
 }
+func renameRun(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.RenameRunRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		task, err := tasks.RenameRunFor(r.Context(), r.PathValue("id"), r.PathValue("run"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, taskOutput{Task: task})
+	}
+}
 func moveTask(tasks *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input model.MoveRequest
@@ -445,11 +456,11 @@ func moveTask(tasks *service.Service) http.HandlerFunc {
 }
 func heartbeat(tasks *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		run, err := tasks.HeartbeatFor(r.Context(), r.PathValue("id"), r.PathValue("run"), principal(r.Context()))
+		result, err := tasks.HeartbeatFor(r.Context(), r.PathValue("id"), r.PathValue("run"), principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusOK, runOutput{Run: run})
+		writeJSON(w, http.StatusOK, result)
 	}
 }
 

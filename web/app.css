@@ -128,3 +128,25 @@ button,input,textarea,select{font:inherit}
   .assign-form input{width:100%;min-height:42px}
   .task-actions .secondary{min-height:42px}
 }
+
+/* Friendly run identity remains textual and distinct without relying on color. */
+.agent-chip{max-width:150px;padding:4px 8px 4px 4px;display:inline-flex;align-items:center;gap:5px}
+.agent-avatar{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--agent-color,var(--cyan));color:#071116;font-size:.6rem;font-weight:850}
+.agent-chip-label{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.agent-chip[data-tone="0"]{--agent-color:#5eead4;color:var(--agent-color)}.agent-chip[data-tone="1"]{--agent-color:#93c5fd;color:var(--agent-color)}.agent-chip[data-tone="2"]{--agent-color:#c4b5fd;color:var(--agent-color)}.agent-chip[data-tone="3"]{--agent-color:#f9a8d4;color:var(--agent-color)}
+.agent-chip[data-tone="4"]{--agent-color:#fca5a5;color:var(--agent-color)}.agent-chip[data-tone="5"]{--agent-color:#fcd34d;color:var(--agent-color)}.agent-chip[data-tone="6"]{--agent-color:#86efac;color:var(--agent-color)}.agent-chip[data-tone="7"]{--agent-color:#67e8f9;color:var(--agent-color)}
+.run-details{margin-top:9px;border-top:1px solid rgba(39,49,69,.7);padding-top:8px}
+.run-details summary{width:max-content;color:var(--muted);cursor:pointer;font-size:.74rem}
+.run-details summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.run-list{display:grid;gap:7px;margin-top:8px}
+.run-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(5,10,20,.48)}
+.run-identity{display:flex;align-items:center;gap:8px}.run-status{color:var(--muted);font-size:.72rem}
+.run-metadata{grid-column:1/-1;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 9px;margin:0;font:500 .68rem/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+.run-metadata dt{color:#aab5c5}.run-metadata dd{margin:0;overflow-wrap:anywhere}.rename-run{grid-column:2;grid-row:1;padding:2px 0;font-size:.72rem}
+
+/* Normalize native select sizing in the desktop webview. */
+.view-picker{position:relative}
+.view-picker::after{content:"";position:absolute;right:.7rem;top:50%;width:.42rem;height:.42rem;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-65%) rotate(45deg);pointer-events:none}
+.view-picker select{appearance:none;height:34px;line-height:1.1;padding-block:0}
+.search-box input{height:34px;padding-block:0}
+@media(max-width:720px){html:not([data-runtime="desktop"]) .view-picker select,html:not([data-runtime="desktop"]) .search-box input{height:42px}}

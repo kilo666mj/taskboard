@@ -130,6 +130,35 @@ func TestMCPClientNameCannotSpoofCanonicalActor(t *testing.T) {
 	}
 }
 
+func TestHumanCanRenameRunThroughAPIWithoutChangingAttribution(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Named session", Checklist: []string{"Work"}}, service.AgentPrincipal("agent:worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(model.RenameRunRequest{ExpectedVersion: started.Task.Version, Callsign: "Maple Fox"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/task/runs/run", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.SetPathValue("run", started.Run.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, service.HumanPrincipal("operator@example.com")))
+	response := httptest.NewRecorder()
+	renameRun(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var result taskOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Task.Runs[0].Callsign != "Maple Fox" || result.Task.Runs[0].Agent != "agent:worker" {
+		t.Fatalf("renamed run = %+v", result.Task.Runs[0])
+	}
+}
+
 func TestMCPPrincipalUsesOnlyTrustedAuthenticationContext(t *testing.T) {
 	for _, test := range []struct {
 		principal service.Principal

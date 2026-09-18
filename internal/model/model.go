@@ -94,11 +94,34 @@ type AgentRun struct {
 	TaskID        string     `json:"task_id"`
 	Agent         string     `json:"agent"`
 	Client        string     `json:"client,omitempty"`
+	Callsign      string     `json:"callsign"`
+	Tone          int        `json:"tone"`
 	Status        TaskStatus `json:"status"`
 	LeaseExpires  time.Time  `json:"lease_expires_at"`
 	LastHeartbeat time.Time  `json:"last_heartbeat_at"`
 	StartedAt     time.Time  `json:"started_at"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
+}
+
+type RunProgress struct {
+	LastChangedAt     time.Time `json:"last_changed_at"`
+	AgeSeconds        int64     `json:"age_seconds"`
+	StaleAfterSeconds int64     `json:"stale_after_seconds"`
+	Stale             bool      `json:"stale"`
+	CurrentItemID     string    `json:"current_item_id,omitempty"`
+	CompletedItems    int       `json:"completed_items"`
+	TotalItems        int       `json:"total_items"`
+	Hint              string    `json:"hint,omitempty"`
+}
+
+type HeartbeatResult struct {
+	Run      AgentRun    `json:"run"`
+	Progress RunProgress `json:"progress"`
+}
+
+type RenameRunRequest struct {
+	ExpectedVersion int64  `json:"expected_version"`
+	Callsign        string `json:"callsign"`
 }
 
 type Event struct {
