@@ -15,14 +15,14 @@ func TestAgentCredentialRotationRevocationAndOffboarding(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	credential, token, err := database.CreateAgentCredential(t.Context(), "Build agent", "agent:build", nil)
+	credential, token, err := database.CreateAgentCredential(t.Context(), "Build agent", "agent:build", nil, "owner@example.com")
 	if err != nil || token == "" {
 		t.Fatalf("create credential = %+v, token=%q, err=%v", credential, token, err)
 	}
 	if principal, valid, err := database.AuthenticateAgentCredential(t.Context(), token); err != nil || !valid || principal != "agent:build" {
 		t.Fatalf("authenticate = %q/%v/%v", principal, valid, err)
 	}
-	_, rotated, err := database.RotateAgentCredential(t.Context(), credential.ID)
+	_, rotated, err := database.RotateAgentCredential(t.Context(), credential.ID, "owner@example.com")
 	if err != nil || rotated == token {
 		t.Fatalf("rotate token=%q err=%v", rotated, err)
 	}
@@ -58,17 +58,17 @@ func TestAdministrativeAuditRetentionAndWebhookQueue(t *testing.T) {
 	if err := database.InsertAdminAudit(t.Context(), "owner", "retention.test", "workspace", map[string]any{"days": 30}); err != nil {
 		t.Fatal(err)
 	}
-	if count, err := database.ApplyRetention(t.Context(), now.AddDate(0, 0, -30)); err != nil || count != 1 {
+	if count, err := database.ApplyRetention(t.Context(), now.AddDate(0, 0, -30), "owner@example.com"); err != nil || count != 1 {
 		t.Fatalf("retention count/error = %d/%v", count, err)
 	}
 	audit, err := database.ListAdminAudit(t.Context(), 10)
-	if err != nil || len(audit) != 1 || audit[0].Action != "retention.test" {
+	if err != nil || len(audit) != 2 || audit[0].Action != "retention.applied" || audit[1].Action != "retention.test" {
 		t.Fatalf("audit = %+v, %v", audit, err)
 	}
-	if _, err := database.DB().ExecContext(t.Context(), `UPDATE admin_audit SET action='tampered' WHERE id=?`, audit[0].ID); err == nil {
+	if _, err := database.DB().ExecContext(t.Context(), `UPDATE admin_audit SET action='tampered' WHERE id=?`, audit[1].ID); err == nil {
 		t.Fatal("administrative audit update was accepted")
 	}
-	if _, err := database.DB().ExecContext(t.Context(), `DELETE FROM admin_audit WHERE id=?`, audit[0].ID); err == nil {
+	if _, err := database.DB().ExecContext(t.Context(), `DELETE FROM admin_audit WHERE id=?`, audit[1].ID); err == nil {
 		t.Fatal("administrative audit deletion was accepted")
 	}
 
@@ -101,7 +101,26 @@ func TestAdministrativeAuditRetentionAndWebhookQueue(t *testing.T) {
 	if err != nil || len(dead) != 1 {
 		t.Fatalf("dead letters = %+v, %v", dead, err)
 	}
-	if err := database.RetryWebhookDelivery(t.Context(), delivery.ID); err != nil {
+	if err := database.RetryWebhookDelivery(t.Context(), delivery.ID, "owner@example.com"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdministrativeMutationRollsBackWithoutAuditActor(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "taskboard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if _, _, err := database.CreateAgentCredential(t.Context(), "Build agent", "agent:build", nil, ""); err == nil {
+		t.Fatal("credential creation without an audit actor succeeded")
+	}
+	credentials, err := database.ListAgentCredentials(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 0 {
+		t.Fatalf("credentials after rolled-back creation = %+v", credentials)
 	}
 }

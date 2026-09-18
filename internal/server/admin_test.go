@@ -24,7 +24,7 @@ func adminRequest(t *testing.T, method, target, body string, role service.Role) 
 
 func TestGeneratedAgentCredentialAuthenticatesAndOffboardingRevokes(t *testing.T) {
 	_, database, _ := serverFixture(t)
-	_, token, err := database.CreateAgentCredential(t.Context(), "Build", "agent:build", nil)
+	_, token, err := database.CreateAgentCredential(t.Context(), "Build", "agent:build", nil, "owner")
 	if err != nil {
 		t.Fatal(err)
 	}

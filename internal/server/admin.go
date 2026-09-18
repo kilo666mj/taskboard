@@ -55,12 +55,11 @@ func createAgentCredential(database *store.Store) http.HandlerFunc {
 			}
 			expires = &value
 		}
-		credential, token, err := database.CreateAgentCredential(r.Context(), input.Name, input.Principal, expires)
+		credential, token, err := database.CreateAgentCredential(r.Context(), input.Name, input.Principal, expires, actor(r.Context()))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "credential.created", credential.ID, map[string]any{"principal_id": credential.Principal, "expires_at": input.ExpiresAt})
 		writeJSON(w, http.StatusCreated, map[string]any{"credential": credential, "token": token})
 	}
 }
@@ -70,11 +69,10 @@ func rotateAgentCredential(database *store.Store) http.HandlerFunc {
 		if !requireAdmin(w, r) {
 			return
 		}
-		credential, token, err := database.RotateAgentCredential(r.Context(), r.PathValue("id"))
+		credential, token, err := database.RotateAgentCredential(r.Context(), r.PathValue("id"), actor(r.Context()))
 		if apiError(w, err) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "credential.rotated", credential.ID, map[string]any{"principal_id": credential.Principal})
 		writeJSON(w, http.StatusOK, map[string]any{"credential": credential, "token": token})
 	}
 }
@@ -85,10 +83,9 @@ func revokeAgentCredential(database *store.Store) http.HandlerFunc {
 			return
 		}
 		id := r.PathValue("id")
-		if apiError(w, database.RevokeAgentCredential(r.Context(), id)) {
+		if apiError(w, database.RevokeAgentCredential(r.Context(), id, actor(r.Context()))) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "credential.revoked", id, nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -114,7 +111,6 @@ func offboardPrincipal(database *store.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "principal.offboarded", principalID, map[string]any{"reason": input.Reason})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -135,10 +131,9 @@ func reinstatePrincipal(database *store.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "confirm must match the reinstated principal"})
 			return
 		}
-		if apiError(w, database.ReinstatePrincipal(r.Context(), principalID)) {
+		if apiError(w, database.ReinstatePrincipal(r.Context(), principalID, actor(r.Context()))) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "principal.reinstated", principalID, nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -162,7 +157,9 @@ func adminExport(database *store.Store, tasks *service.Service) http.HandlerFunc
 		if !requireAdmin(w, r) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "data.exported", "workspace", nil)
+		if apiError(w, database.InsertAdminAudit(r.Context(), actor(r.Context()), "data.exported", "workspace", nil)) {
+			return
+		}
 		taskItems, err := database.ListAllTasks(r.Context())
 		if apiError(w, err) {
 			return
@@ -199,10 +196,9 @@ func deleteTaskAdministratively(database *store.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "confirm must match the task ID"})
 			return
 		}
-		if apiError(w, database.DeleteTask(r.Context(), id)) {
+		if apiError(w, database.DeleteTask(r.Context(), id, actor(r.Context()))) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "task.deleted", id, nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -227,11 +223,10 @@ func applyRetention(cfg config.Config, database *store.Store) http.HandlerFunc {
 			return
 		}
 		before := time.Now().UTC().AddDate(0, 0, -cfg.RetentionDays)
-		count, err := database.ApplyRetention(r.Context(), before)
+		count, err := database.ApplyRetention(r.Context(), before, actor(r.Context()))
 		if apiError(w, err) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "retention.applied", "workspace", map[string]any{"before": before, "deleted_tasks": count})
 		writeJSON(w, http.StatusOK, map[string]any{"deleted_tasks": count, "before": before})
 	}
 }
@@ -255,10 +250,9 @@ func retryWebhookDelivery(database *store.Store) http.HandlerFunc {
 			return
 		}
 		id := r.PathValue("id")
-		if apiError(w, database.RetryWebhookDelivery(r.Context(), id)) {
+		if apiError(w, database.RetryWebhookDelivery(r.Context(), id, actor(r.Context()))) {
 			return
 		}
-		_ = database.InsertAdminAudit(r.Context(), actor(r.Context()), "webhook.retried", id, nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

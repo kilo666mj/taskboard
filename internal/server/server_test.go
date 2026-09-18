@@ -220,6 +220,11 @@ func TestSecurityHeadersIncludeContentPolicy(t *testing.T) {
 	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
 	}
+	apiResponse := httptest.NewRecorder()
+	securityHeaders(next).ServeHTTP(apiResponse, httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/admin/export", nil))
+	if got := apiResponse.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("API Cache-Control = %q, want no-store", got)
+	}
 }
 
 func TestSavePushSubscriptionAcceptsExpirationTime(t *testing.T) {

@@ -62,7 +62,7 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Store) CreateAgentCredential(ctx context.Context, name, principal string, expiresAt *time.Time) (AgentCredential, string, error) {
+func (s *Store) CreateAgentCredential(ctx context.Context, name, principal string, expiresAt *time.Time, actor string) (AgentCredential, string, error) {
 	name, principal = strings.TrimSpace(name), strings.TrimSpace(principal)
 	if name == "" || len(name) > 100 || !strings.HasPrefix(principal, "agent:") || len(principal) > 200 {
 		return AgentCredential{}, "", fmt.Errorf("invalid credential name or principal")
@@ -78,38 +78,71 @@ func (s *Store) CreateAgentCredential(ctx context.Context, name, principal strin
 		expiresAt, expires = &value, formatTime(value)
 	}
 	credential := AgentCredential{ID: ulid.Make().String(), Name: name, Principal: principal, CreatedAt: now, ExpiresAt: expiresAt}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_credentials(id,name,principal_id,token_hash,created_at,expires_at) VALUES(?,?,?,?,?,?)`, credential.ID, name, principal, hash, formatTime(now), expires); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentCredential{}, "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_credentials(id,name,principal_id,token_hash,created_at,expires_at) VALUES(?,?,?,?,?,?)`, credential.ID, name, principal, hash, formatTime(now), expires); err != nil {
+		return AgentCredential{}, "", err
+	}
+	if err := insertAdminAudit(ctx, tx, actor, "credential.created", credential.ID, map[string]any{"principal_id": credential.Principal, "expires_at": expiresAt}); err != nil {
+		return AgentCredential{}, "", err
+	}
+	if err := tx.Commit(); err != nil {
 		return AgentCredential{}, "", err
 	}
 	return credential, token, nil
 }
 
-func (s *Store) RotateAgentCredential(ctx context.Context, id string) (AgentCredential, string, error) {
+func (s *Store) RotateAgentCredential(ctx context.Context, id, actor string) (AgentCredential, string, error) {
 	token, hash, err := newAgentToken()
 	if err != nil {
 		return AgentCredential{}, "", err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE agent_credentials SET token_hash=?,revoked_at=NULL,last_used_at=NULL WHERE id=?`, hash, strings.TrimSpace(id))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentCredential{}, "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE agent_credentials SET token_hash=?,revoked_at=NULL,last_used_at=NULL WHERE id=?`, hash, strings.TrimSpace(id))
 	if err != nil {
 		return AgentCredential{}, "", err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return AgentCredential{}, "", ErrNotFound
 	}
-	credential, err := s.AgentCredential(ctx, id)
-	return credential, token, err
+	credential, err := scanAgentCredential(tx.QueryRowContext(ctx, `SELECT id,name,principal_id,created_at,expires_at,revoked_at,last_used_at FROM agent_credentials WHERE id=?`, strings.TrimSpace(id)))
+	if err != nil {
+		return AgentCredential{}, "", err
+	}
+	if err := insertAdminAudit(ctx, tx, actor, "credential.rotated", credential.ID, map[string]any{"principal_id": credential.Principal}); err != nil {
+		return AgentCredential{}, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return AgentCredential{}, "", err
+	}
+	return credential, token, nil
 }
 
-func (s *Store) RevokeAgentCredential(ctx context.Context, id string) error {
+func (s *Store) RevokeAgentCredential(ctx context.Context, id, actor string) error {
 	now := formatTime(time.Now().UTC())
-	result, err := s.db.ExecContext(ctx, `UPDATE agent_credentials SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, now, strings.TrimSpace(id))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE agent_credentials SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, now, strings.TrimSpace(id))
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return ErrNotFound
 	}
-	return nil
+	if err := insertAdminAudit(ctx, tx, actor, "credential.revoked", strings.TrimSpace(id), nil); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) AgentCredential(ctx context.Context, id string) (AgentCredential, error) {
@@ -204,6 +237,9 @@ func (s *Store) OffboardPrincipal(ctx context.Context, principal, actor, reason 
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_credentials SET revoked_at=? WHERE principal_id=? AND revoked_at IS NULL`, now, principal); err != nil {
 		return err
 	}
+	if err := insertAdminAudit(ctx, tx, actor, "principal.offboarded", principal, map[string]any{"reason": reason}); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -215,23 +251,44 @@ func (s *Store) PrincipalRevoked(ctx context.Context, principal string) (bool, e
 	return count > 0, nil
 }
 
-func (s *Store) ReinstatePrincipal(ctx context.Context, principal string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM revoked_principals WHERE principal_id=?`, strings.TrimSpace(principal))
+func (s *Store) ReinstatePrincipal(ctx context.Context, principal, actor string) error {
+	principal = strings.TrimSpace(principal)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `DELETE FROM revoked_principals WHERE principal_id=?`, principal)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return ErrNotFound
 	}
-	return nil
+	if err := insertAdminAudit(ctx, tx, actor, "principal.reinstated", principal, nil); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) InsertAdminAudit(ctx context.Context, actor, action, target string, detail map[string]any) error {
+	return insertAdminAudit(ctx, s.db, actor, action, target, detail)
+}
+
+type adminAuditExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertAdminAudit(ctx context.Context, executor adminAuditExecutor, actor, action, target string, detail map[string]any) error {
+	actor, action = strings.TrimSpace(actor), strings.TrimSpace(action)
+	if actor == "" || action == "" {
+		return fmt.Errorf("admin audit actor and action are required")
+	}
 	encoded, err := json.Marshal(detail)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO admin_audit(id,actor,action,target,detail,created_at) VALUES(?,?,?,?,?,?)`, ulid.Make().String(), actor, action, target, string(encoded), formatTime(time.Now().UTC()))
+	_, err = executor.ExecContext(ctx, `INSERT INTO admin_audit(id,actor,action,target,detail,created_at) VALUES(?,?,?,?,?,?)`, ulid.Make().String(), actor, action, target, string(encoded), formatTime(time.Now().UTC()))
 	return err
 }
 
@@ -314,23 +371,47 @@ func (s *Store) ListAllTasks(ctx context.Context) ([]model.Task, error) {
 	return result, nil
 }
 
-func (s *Store) DeleteTask(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE id=?`, strings.TrimSpace(id))
+func (s *Store) DeleteTask(ctx context.Context, id, actor string) error {
+	id = strings.TrimSpace(id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return ErrNotFound
 	}
-	return nil
+	if err := insertAdminAudit(ctx, tx, actor, "task.deleted", id, nil); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) ApplyRetention(ctx context.Context, before time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE status IN (?,?) AND completed_at IS NOT NULL AND completed_at<?`, model.TaskDone, model.TaskCancelled, formatTime(before.UTC()))
+func (s *Store) ApplyRetention(ctx context.Context, before time.Time, actor string) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE status IN (?,?) AND completed_at IS NOT NULL AND completed_at<?`, model.TaskDone, model.TaskCancelled, formatTime(before.UTC()))
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := insertAdminAudit(ctx, tx, actor, "retention.applied", "workspace", map[string]any{"before": before.UTC(), "deleted_tasks": count}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) QueueWebhookEvents(ctx context.Context, limit int) (int, error) {
@@ -433,13 +514,22 @@ func (s *Store) ListDeadWebhookDeliveries(ctx context.Context, limit int) ([]Web
 	return result, rows.Err()
 }
 
-func (s *Store) RetryWebhookDelivery(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE webhook_deliveries SET status='retry',attempts=0,next_attempt_at=?,last_error='',updated_at=? WHERE id=? AND status='dead_letter'`, formatTime(time.Now().UTC()), formatTime(time.Now().UTC()), strings.TrimSpace(id))
+func (s *Store) RetryWebhookDelivery(ctx context.Context, id, actor string) error {
+	id = strings.TrimSpace(id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE webhook_deliveries SET status='retry',attempts=0,next_attempt_at=?,last_error='',updated_at=? WHERE id=? AND status='dead_letter'`, formatTime(time.Now().UTC()), formatTime(time.Now().UTC()), id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return ErrNotFound
 	}
-	return nil
+	if err := insertAdminAudit(ctx, tx, actor, "webhook.retried", id, nil); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
