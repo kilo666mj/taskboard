@@ -20,6 +20,20 @@ agents -> Switchboard -> Taskboard MCP -> SQLite or PostgreSQL
                                                            -> Tauri desktop
 ```
 
+## Screenshots
+
+![Taskboard showing an agent-pickup queue and two active agents with distinct callsigns and incremental checklist progress](docs/images/taskboard-overview.png)
+
+*One board for human planning and agent execution: queued pickup work, live
+checklists, status notes, and friendly session callsigns remain visible
+together.*
+
+![Expanded Taskboard agent session showing its friendly callsign, authenticated principal, client metadata, and server-issued run ID](docs/images/taskboard-agent-session.png)
+
+*The friendly name is presentation only. Taskboard keeps the authenticated
+principal, client metadata, and run ID available for authorization, diagnostics,
+and audit history.*
+
 ## What it enforces
 
 - Queued tasks can exist without a checklist, owner, run, or lease.
