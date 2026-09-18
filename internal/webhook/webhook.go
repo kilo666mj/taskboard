@@ -29,7 +29,12 @@ type Service struct {
 }
 
 func New(database *store.Store, url, secret string, maxAttempts int, logger *slog.Logger) *Service {
-	return &Service{database: database, url: url, secret: []byte(secret), maxAttempts: maxAttempts, client: &http.Client{Timeout: 15 * time.Second}, logger: logger}
+	return &Service{database: database, url: url, secret: []byte(secret), maxAttempts: maxAttempts, client: &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}, logger: logger}
 }
 
 func (s *Service) Enabled() bool { return s.url != "" && len(s.secret) > 0 }

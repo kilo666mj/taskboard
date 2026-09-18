@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,6 +17,28 @@ import (
 	"github.com/kilo666mj/taskboard/internal/service"
 	"github.com/kilo666mj/taskboard/internal/store"
 )
+
+func TestWebhookDeliveryDoesNotFollowRedirects(t *testing.T) {
+	redirectTargetCalled := false
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectTargetCalled = true
+	}))
+	defer target.Close()
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+
+	deliveries := New(nil, redirect.URL, "0123456789abcdef0123456789abcdef", 3, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	deliveries.client.Transport = redirect.Client().Transport
+	if err := deliveries.send(t.Context(), "event", 1, []byte(`{"kind":"task.created"}`)); err == nil {
+		t.Fatal("redirecting webhook was accepted")
+	}
+	if redirectTargetCalled {
+		t.Fatal("webhook client followed a redirect")
+	}
+}
 
 func TestSignedWebhookDelivery(t *testing.T) {
 	secret := "0123456789abcdef0123456789abcdef"

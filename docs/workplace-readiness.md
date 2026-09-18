@@ -45,9 +45,9 @@ an active agent run blocks that transition.
    hashed agent credentials with stable principal IDs, scopes, expiry, and
    last-used metadata. The current shared bearer remains compatible as
    `agent:shared`; unattended services should move to distinct verified
-   Cloudflare Access identities now, then to first-class credentials when they
-   are available. Human-driven agents acting through a person's authenticated
-   session need not invent a second identity.
+   Cloudflare Access identities or first-class Taskboard agent credentials.
+   Human-driven agents acting through a person's authenticated session need not
+   invent a second identity.
 2. **Workspace and project isolation.** Role-aware server authorization is
    implemented for the trusted workspace. Add workspace IDs, durable
    memberships, and project-level grants only if multi-workspace or project
@@ -60,9 +60,10 @@ an active agent run blocks that transition.
    rotation/revocation, principal offboarding, confirmed deletion, retention,
    full export, append-only administrative audit, and signed webhook retries
    with a dead-letter queue are implemented for owner/admin operators.
-5. **Operational controls.** Add quotas, rate limiting, metrics, audit export,
-   webhook/integration delivery with retries, tested disaster recovery, and a
-   documented availability model.
+5. **Operational controls.** Prometheus metrics, audit export, and signed
+   webhook delivery with retries are implemented. Quotas, rate limiting,
+   regularly tested disaster recovery, and a documented availability model
+   remain deployment-readiness work for larger installations.
 
 ## Compatibility direction
 
