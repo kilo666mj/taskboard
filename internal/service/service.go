@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/taskboard/internal/model"
+	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/store"
 	"github.com/oklog/ulid/v2"
 )
@@ -51,10 +52,15 @@ type Service struct {
 	leaseDuration time.Duration
 	mu            sync.RWMutex
 	subscribers   map[chan model.Event]struct{}
+	metrics       *observability.Metrics
 }
 
-func New(database *store.Store, leaseDuration time.Duration) *Service {
-	return &Service{store: database, leaseDuration: leaseDuration, subscribers: make(map[chan model.Event]struct{})}
+func New(database *store.Store, leaseDuration time.Duration, metrics ...*observability.Metrics) *Service {
+	service := &Service{store: database, leaseDuration: leaseDuration, subscribers: make(map[chan model.Event]struct{})}
+	if len(metrics) > 0 {
+		service.metrics = metrics[0]
+	}
+	return service
 }
 
 func (s *Service) Ready(ctx context.Context) error { return s.store.Ping(ctx) }
@@ -64,28 +70,46 @@ func (s *Service) Subscribe() (<-chan model.Event, func()) {
 	s.mu.Lock()
 	s.subscribers[channel] = struct{}{}
 	s.mu.Unlock()
+	if s.metrics != nil {
+		s.metrics.AddSubscriber()
+	}
 	return channel, func() {
 		s.mu.Lock()
 		if _, ok := s.subscribers[channel]; ok {
 			delete(s.subscribers, channel)
 			close(channel)
+			if s.metrics != nil {
+				s.metrics.RemoveSubscriber()
+			}
 		}
 		s.mu.Unlock()
 	}
 }
 
 func (s *Service) publish(event model.Event) {
+	if s.metrics != nil {
+		s.metrics.ObserveEvent("published")
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for subscriber := range s.subscribers {
 		select {
 		case subscriber <- event:
+			if s.metrics != nil {
+				s.metrics.ObserveEvent("delivered")
+			}
 		default:
+			if s.metrics != nil {
+				s.metrics.ObserveEvent("dropped")
+			}
 		}
 	}
 }
 
-func (s *Service) Start(ctx context.Context, request model.StartRequest, actor string) (model.StartResult, error) {
+func (s *Service) Start(ctx context.Context, request model.StartRequest, actor string) (output model.StartResult, err error) {
+	if s.metrics != nil {
+		defer func() { s.metrics.ObserveAgentRun("start", err) }()
+	}
 	request.Title = strings.TrimSpace(request.Title)
 	request.Type = normalizedTaskType(request.Type)
 	request.Visibility = normalizedVisibility(request.Visibility, model.VisibilityTeam)
@@ -425,7 +449,10 @@ func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.Cla
 	return s.Claim(ctx, taskID, request, principal.ID)
 }
 
-func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimRequest, actor string) (model.StartResult, error) {
+func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimRequest, actor string) (output model.StartResult, err error) {
+	if s.metrics != nil {
+		defer func() { s.metrics.ObserveAgentRun("claim", err) }()
+	}
 	taskID = strings.TrimSpace(taskID)
 	request.Agent = strings.TrimSpace(request.Agent)
 	request.Client = strings.TrimSpace(request.Client)
@@ -933,7 +960,10 @@ func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.Up
 	return s.Update(ctx, taskID, request, principal.ID)
 }
 
-func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (model.AgentRun, error) {
+func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (output model.AgentRun, err error) {
+	if s.metrics != nil {
+		defer func() { s.metrics.ObserveAgentRun("heartbeat", err) }()
+	}
 	now := time.Now().UTC()
 	result, err := s.store.DB().ExecContext(ctx, `UPDATE agent_runs SET lease_expires_at=?,last_heartbeat_at=? WHERE id=? AND task_id=? AND ended_at IS NULL AND status=?`, stamp(now.Add(s.leaseDuration)), stamp(now), strings.TrimSpace(runID), strings.TrimSpace(taskID), model.TaskActive)
 	if err != nil {
@@ -1052,13 +1082,16 @@ func (s *Service) MoveFor(ctx context.Context, taskID string, request model.Move
 	return s.Move(ctx, taskID, request, principal.ID)
 }
 
-func (s *Service) SweepStale(ctx context.Context) (int64, error) {
+func (s *Service) SweepStale(ctx context.Context) (count int64, err error) {
+	if s.metrics != nil {
+		defer func() { s.metrics.ObserveAgentRun("sweep", err) }()
+	}
 	now := time.Now().UTC()
 	result, err := s.store.DB().ExecContext(ctx, `UPDATE agent_runs SET status=? WHERE ended_at IS NULL AND status=? AND lease_expires_at < ?`, model.TaskStale, model.TaskActive, stamp(now))
 	if err != nil {
 		return 0, err
 	}
-	count, err := result.RowsAffected()
+	count, err = result.RowsAffected()
 	if err != nil {
 		return 0, err
 	}
@@ -1066,6 +1099,9 @@ func (s *Service) SweepStale(ctx context.Context) (int64, error) {
 		WHERE status=?
 		AND id IN (SELECT task_id FROM agent_runs WHERE status=?)
 		AND id NOT IN (SELECT task_id FROM agent_runs WHERE ended_at IS NULL AND status=? AND lease_expires_at >= ?)`, model.TaskStale, stamp(now), model.TaskActive, model.TaskStale, model.TaskActive, stamp(now))
+	if s.metrics != nil {
+		s.metrics.AddStaleRuns(count)
+	}
 	return count, err
 }
 

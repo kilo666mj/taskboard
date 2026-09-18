@@ -18,58 +18,60 @@ const (
 )
 
 type Config struct {
-	ListenAddress       string
-	DatabasePath        string
-	DatabaseURL         string
-	AuthToken           string
-	AllowInsecure       bool
-	AllowedHosts        []string
-	LeaseDuration       time.Duration
-	MCPDefaultTaskType  string
-	BrowserAuthMode     string
-	VAPIDPublicKey      string
-	VAPIDPrivateKey     string
-	VAPIDContact        string
-	OIDCIssuer          string
-	OIDCClientID        string
-	OIDCClientSecret    string
-	OIDCRedirectURL     string
-	OIDCAllowedSubjects []string
-	OIDCAllowedEmails   []string
-	OIDCAllowedGroups   []string
-	CFAccessTeamDomain  string
-	CFAccessAudience    string
-	CFAccessSubjects    []string
-	CFAccessEmails      []string
-	CFAccessGroups      []string
+	ListenAddress        string
+	MetricsListenAddress string
+	DatabasePath         string
+	DatabaseURL          string
+	AuthToken            string
+	AllowInsecure        bool
+	AllowedHosts         []string
+	LeaseDuration        time.Duration
+	MCPDefaultTaskType   string
+	BrowserAuthMode      string
+	VAPIDPublicKey       string
+	VAPIDPrivateKey      string
+	VAPIDContact         string
+	OIDCIssuer           string
+	OIDCClientID         string
+	OIDCClientSecret     string
+	OIDCRedirectURL      string
+	OIDCAllowedSubjects  []string
+	OIDCAllowedEmails    []string
+	OIDCAllowedGroups    []string
+	CFAccessTeamDomain   string
+	CFAccessAudience     string
+	CFAccessSubjects     []string
+	CFAccessEmails       []string
+	CFAccessGroups       []string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddress:       env("TASKBOARD_LISTEN_ADDRESS", "127.0.0.1:8095"),
-		DatabasePath:        env("TASKBOARD_DATABASE_PATH", "taskboard.db"),
-		DatabaseURL:         strings.TrimSpace(os.Getenv("TASKBOARD_DATABASE_URL")),
-		AuthToken:           strings.TrimSpace(os.Getenv("TASKBOARD_AUTH_TOKEN")),
-		AllowInsecure:       envBool("TASKBOARD_ALLOW_INSECURE", false),
-		AllowedHosts:        split(os.Getenv("TASKBOARD_ALLOWED_HOSTS")),
-		LeaseDuration:       2 * time.Minute,
-		MCPDefaultTaskType:  env("TASKBOARD_MCP_DEFAULT_TYPE", "work"),
-		BrowserAuthMode:     env("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthOIDC),
-		VAPIDPublicKey:      strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PUBLIC_KEY")),
-		VAPIDPrivateKey:     strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PRIVATE_KEY")),
-		VAPIDContact:        env("TASKBOARD_VAPID_CONTACT", "mailto:admin@localhost"),
-		OIDCIssuer:          strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_ISSUER")),
-		OIDCClientID:        strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_ID")),
-		OIDCClientSecret:    strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_SECRET")),
-		OIDCRedirectURL:     strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_REDIRECT_URL")),
-		OIDCAllowedSubjects: split(os.Getenv("TASKBOARD_OIDC_ALLOWED_SUBJECTS")),
-		OIDCAllowedEmails:   split(os.Getenv("TASKBOARD_OIDC_ALLOWED_EMAILS")),
-		OIDCAllowedGroups:   split(os.Getenv("TASKBOARD_OIDC_ALLOWED_GROUPS")),
-		CFAccessTeamDomain:  strings.TrimRight(strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN")), "/"),
-		CFAccessAudience:    strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_AUD")),
-		CFAccessSubjects:    split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS")),
-		CFAccessEmails:      split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_EMAILS")),
-		CFAccessGroups:      split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_GROUPS")),
+		ListenAddress:        env("TASKBOARD_LISTEN_ADDRESS", "127.0.0.1:8095"),
+		MetricsListenAddress: strings.TrimSpace(os.Getenv("TASKBOARD_METRICS_LISTEN_ADDRESS")),
+		DatabasePath:         env("TASKBOARD_DATABASE_PATH", "taskboard.db"),
+		DatabaseURL:          strings.TrimSpace(os.Getenv("TASKBOARD_DATABASE_URL")),
+		AuthToken:            strings.TrimSpace(os.Getenv("TASKBOARD_AUTH_TOKEN")),
+		AllowInsecure:        envBool("TASKBOARD_ALLOW_INSECURE", false),
+		AllowedHosts:         split(os.Getenv("TASKBOARD_ALLOWED_HOSTS")),
+		LeaseDuration:        2 * time.Minute,
+		MCPDefaultTaskType:   env("TASKBOARD_MCP_DEFAULT_TYPE", "work"),
+		BrowserAuthMode:      env("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthOIDC),
+		VAPIDPublicKey:       strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PUBLIC_KEY")),
+		VAPIDPrivateKey:      strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PRIVATE_KEY")),
+		VAPIDContact:         env("TASKBOARD_VAPID_CONTACT", "mailto:admin@localhost"),
+		OIDCIssuer:           strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_ISSUER")),
+		OIDCClientID:         strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_ID")),
+		OIDCClientSecret:     strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_SECRET")),
+		OIDCRedirectURL:      strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_REDIRECT_URL")),
+		OIDCAllowedSubjects:  split(os.Getenv("TASKBOARD_OIDC_ALLOWED_SUBJECTS")),
+		OIDCAllowedEmails:    split(os.Getenv("TASKBOARD_OIDC_ALLOWED_EMAILS")),
+		OIDCAllowedGroups:    split(os.Getenv("TASKBOARD_OIDC_ALLOWED_GROUPS")),
+		CFAccessTeamDomain:   strings.TrimRight(strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN")), "/"),
+		CFAccessAudience:     strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_AUD")),
+		CFAccessSubjects:     split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS")),
+		CFAccessEmails:       split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_EMAILS")),
+		CFAccessGroups:       split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_GROUPS")),
 	}
 	if value := strings.TrimSpace(os.Getenv("TASKBOARD_LEASE_SECONDS")); value != "" {
 		seconds, err := strconv.Atoi(value)
@@ -81,6 +83,11 @@ func Load() (Config, error) {
 	host, _, err := net.SplitHostPort(cfg.ListenAddress)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid TASKBOARD_LISTEN_ADDRESS: %w", err)
+	}
+	if cfg.MetricsListenAddress != "" {
+		if _, _, err := net.SplitHostPort(cfg.MetricsListenAddress); err != nil {
+			return Config{}, fmt.Errorf("invalid TASKBOARD_METRICS_LISTEN_ADDRESS: %w", err)
+		}
 	}
 	if cfg.AllowInsecure && cfg.AuthToken == "" && !isLoopback(host) {
 		return Config{}, fmt.Errorf("TASKBOARD_ALLOW_INSECURE without a token requires a loopback listener")

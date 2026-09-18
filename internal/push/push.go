@@ -10,6 +10,7 @@ import (
 
 	pwakit "github.com/kilo666mj/pwa-kit"
 	"github.com/kilo666mj/taskboard/internal/model"
+	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/service"
 	"github.com/kilo666mj/taskboard/internal/store"
 )
@@ -23,6 +24,7 @@ type Service struct {
 	logger     *slog.Logger
 	client     *http.Client
 	wait       sync.WaitGroup
+	metrics    *observability.Metrics
 }
 
 type notification struct {
@@ -32,8 +34,12 @@ type notification struct {
 	urgent bool
 }
 
-func New(database *store.Store, tasks *service.Service, publicKey, privateKey, contact string, logger *slog.Logger) *Service {
-	return &Service{database: database, tasks: tasks, publicKey: publicKey, privateKey: privateKey, contact: contact, logger: logger, client: pwakit.NewPublicHTTPClient(15 * time.Second)}
+func New(database *store.Store, tasks *service.Service, publicKey, privateKey, contact string, logger *slog.Logger, metrics ...*observability.Metrics) *Service {
+	service := &Service{database: database, tasks: tasks, publicKey: publicKey, privateKey: privateKey, contact: contact, logger: logger, client: pwakit.NewPublicHTTPClient(15 * time.Second)}
+	if len(metrics) > 0 {
+		service.metrics = metrics[0]
+	}
+	return service
 }
 
 func (s *Service) Enabled() bool     { return s.publicKey != "" && s.privateKey != "" }
@@ -101,10 +107,17 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 			}
 			result, err := pwakit.Send(ctx, pwakit.Config{PublicKey: s.publicKey, PrivateKey: s.privateKey, Contact: s.contact}, pwakit.Subscription{Endpoint: subscription.Endpoint, Keys: pwakit.Keys{P256dh: subscription.P256DH, Auth: subscription.Auth}}, payload, pwakit.Options{TTL: 300, Urgency: "normal", HTTPClient: s.client})
 			if result.Expired() {
+				if s.metrics != nil {
+					s.metrics.ObservePush("expired")
+				}
 				_ = s.database.DeletePushSubscription(ctx, subscription.Endpoint, subscription.OwnerID)
-			}
-			if err != nil {
+			} else if err != nil {
+				if s.metrics != nil {
+					s.metrics.ObservePush("error")
+				}
 				s.logger.Warn("push delivery failed", "error", err)
+			} else if s.metrics != nil {
+				s.metrics.ObservePush("success")
 			}
 		}
 	}

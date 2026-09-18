@@ -54,6 +54,11 @@ probe, and use `/healthz` as the liveness probe. PostgreSQL makes task state,
 sessions, templates, subscriptions, and audit events independent of pod
 lifetime.
 
+For Prometheus scraping, set `TASKBOARD_METRICS_LISTEN_ADDRESS=0.0.0.0:9090`,
+add a named metrics port to the pod, and permit that port only from the
+monitoring namespace with a NetworkPolicy. The metrics listener is unauthenticated
+and must not be added to the public Service or ingress.
+
 Run migrations as part of a controlled rollout with only one new-version pod
 starting against the database at a time. PostgreSQL serializes migration work
 with an advisory transaction lock, but a pre-upgrade backup and a documented

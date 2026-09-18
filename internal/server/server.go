@@ -22,6 +22,7 @@ import (
 	pwakit "github.com/kilo666mj/pwa-kit"
 	"github.com/kilo666mj/taskboard/internal/config"
 	"github.com/kilo666mj/taskboard/internal/model"
+	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/push"
 	"github.com/kilo666mj/taskboard/internal/service"
 	"github.com/kilo666mj/taskboard/internal/store"
@@ -72,7 +73,11 @@ type templateOutput struct {
 	Template model.Template `json:"template"`
 }
 
-func New(cfg config.Config, database *store.Store, service *service.Service, notifications *push.Service, logger *slog.Logger) (http.Handler, error) {
+func New(cfg config.Config, database *store.Store, service *service.Service, notifications *push.Service, logger *slog.Logger, metricSets ...*observability.Metrics) (http.Handler, error) {
+	var metrics *observability.Metrics
+	if len(metricSets) > 0 {
+		metrics = metricSets[0]
+	}
 	mcpHandler, err := mcpkit.StatelessHTTP(func(*http.Request) *mcp.Server {
 		return newMCPServer(service, model.TaskType(cfg.MCPDefaultTaskType), logger)
 	}, mcpkit.HTTPOptions{
@@ -92,7 +97,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 		DesktopHandoffParam: "desktop", DesktopSuccessPath: "/api/v1/auth/desktop/complete", ValidateDesktopHandoff: validDesktopHandoff,
 	}, sessions)
 	oidcAuth.Register(mux)
-	authenticated := auth(cfg, sessions, cloudflare, logger)
+	authenticated := auth(cfg, sessions, cloudflare, logger, metrics)
 	mux.Handle("/mcp", authenticated(mcpHandler))
 	mux.Handle("/mcp/", authenticated(mcpHandler))
 	mux.Handle("GET /api/v1/tasks", authenticated(http.HandlerFunc(listTasks(service))))
@@ -124,7 +129,11 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("GET /readyz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
-		if err := service.Ready(ctx); err != nil {
+		err := service.Ready(ctx)
+		if metrics != nil {
+			metrics.ObserveDatabasePing(err)
+		}
+		if err != nil {
 			logger.Error("readiness check failed")
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 			return
@@ -137,7 +146,11 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	}
 	fileServer := http.FileServer(http.FS(assets))
 	mux.Handle("/", spaHandler(fileServer, assets))
-	return securityHeaders(logging(logger, requireAllowedHost(cfg.AllowedHosts, mux))), nil
+	handler := securityHeaders(logging(logger, requireAllowedHost(cfg.AllowedHosts, mux)))
+	if metrics != nil {
+		handler = metrics.HTTP(handler)
+	}
+	return handler, nil
 }
 
 func pushKey(notifications *push.Service) http.HandlerFunc {
@@ -504,29 +517,44 @@ func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration
 	}
 }
 
-func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess, logger *slog.Logger) func(http.Handler) http.Handler {
+func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess, logger *slog.Logger, metricSets ...*observability.Metrics) func(http.Handler) http.Handler {
+	var metrics *observability.Metrics
+	if len(metricSets) > 0 {
+		metrics = metricSets[0]
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mcpRequest := r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")
 			if !mcpRequest && !safeMethod(r.Method) && !safeBrowserMutation(r) {
+				if metrics != nil {
+					metrics.ObserveAuth("browser_mutation", "rejected")
+				}
 				logger.Warn("rejected unsafe browser mutation")
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
 				return
 			}
 			if cfg.AllowInsecure && cfg.AuthToken == "" {
+				if metrics != nil {
+					metrics.ObserveAuth("local", "success")
+				}
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: "local", Agent: mcpRequest})))
 				return
 			}
-			valid, who := false, ""
+			valid, who, mechanism := false, "", "session"
 			if mcpRequest {
+				mechanism = "token"
 				values := r.Header.Values("Authorization")
 				accessValues := r.Header.Values(cloudflareAccessJWTHeader)
 				if len(values) > 0 && len(accessValues) > 0 {
+					if metrics != nil {
+						metrics.ObserveAuth("ambiguous", "rejected")
+					}
 					logger.Warn("rejected request with ambiguous credentials")
 					writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 					return
 				}
 				if cloudflare != nil && len(accessValues) > 0 {
+					mechanism = "cloudflare_access"
 					if identity, err := cloudflare.identity(r); err == nil {
 						valid = true
 						who = identity.Subject
@@ -537,6 +565,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					who = "agent:shared"
 				}
 			} else if cloudflare != nil {
+				mechanism = "cloudflare_access"
 				if identity, err := cloudflare.identity(r); err == nil {
 					valid = true
 					who = identity.Subject
@@ -546,9 +575,15 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				who = identity.Subject
 			}
 			if !valid {
+				if metrics != nil {
+					metrics.ObserveAuth(mechanism, "failure")
+				}
 				w.Header().Set("WWW-Authenticate", `Bearer realm="taskboard"`)
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 				return
+			}
+			if metrics != nil {
+				metrics.ObserveAuth(mechanism, "success")
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: who, Agent: mcpRequest})))
 		})

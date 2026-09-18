@@ -10,6 +10,58 @@ Alert on repeated process restarts, readiness failures, authentication failures,
 and storage exhaustion. Task contents may appear in ordinary application use,
 so treat the database, backups, and operator access as sensitive.
 
+## Prometheus metrics
+
+Set `TASKBOARD_METRICS_LISTEN_ADDRESS` to enable a separate listener that serves
+only `GET /metrics`. It is disabled by default and is intentionally absent from
+the public application listener. Bind it to loopback for a local collector, or
+to a private pod interface protected by a Kubernetes NetworkPolicy. Do not put
+the metrics port behind the public ingress.
+
+```dotenv
+TASKBOARD_METRICS_LISTEN_ADDRESS=127.0.0.1:9090
+```
+
+```yaml
+scrape_configs:
+  - job_name: taskboard
+    static_configs:
+      - targets: ["taskboard.internal:9090"]
+```
+
+Taskboard exports HTTP request counts and latency, authentication decisions,
+database readiness and connection-pool state, agent run and lease operations,
+event fan-out, subscriber count, and Web Push outcomes. Labels use only fixed,
+bounded vocabularies such as route patterns, status classes, mechanisms, and
+outcomes. Task IDs, user IDs, agent IDs, push endpoints, database addresses, and
+error text are never labels.
+
+Useful initial alerts include:
+
+```promql
+# Any failed database readiness check over five minutes.
+increase(taskboard_database_ping_total{outcome="error"}[5m]) > 0
+
+# Event consumers are falling behind and losing live updates.
+increase(taskboard_event_deliveries_total{outcome="dropped"}[5m]) > 0
+
+# Agent leases have expired. Tune the threshold to expected work patterns.
+increase(taskboard_agent_run_operations_total{operation="sweep",outcome="stale"}[15m]) > 0
+
+# More than 5% server errors with at least modest traffic.
+(
+  sum(rate(taskboard_http_requests_total{status_class="5xx"}[5m]))
+  /
+  clamp_min(sum(rate(taskboard_http_requests_total[5m])), 0.1)
+) > 0.05
+```
+
+Start dashboards with request rate, p50/p95/p99 request duration by route,
+server-error ratio, authentication failures by mechanism, database pool usage,
+agent run outcomes, stale leases, event drops and subscriber count, and push
+success/error/expired rates. Authentication failures and push errors are often
+environment-dependent, so establish a baseline before paging on them.
+
 ## Backups
 
 For PostgreSQL deployments, use the managed service's automated backups and

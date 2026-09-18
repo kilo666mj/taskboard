@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/taskboard/internal/config"
+	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/push"
 	"github.com/kilo666mj/taskboard/internal/server"
 	"github.com/kilo666mj/taskboard/internal/service"
@@ -42,11 +43,12 @@ func main() {
 			logger.Error("database close failed", "error", err)
 		}
 	}()
-	tasks := service.New(database, cfg.LeaseDuration)
-	notifications := push.New(database, tasks, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDContact, logger)
+	metrics := observability.New(database.DB())
+	tasks := service.New(database, cfg.LeaseDuration, metrics)
+	notifications := push.New(database, tasks, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDContact, logger, metrics)
 	runContext, stopNotifications := context.WithCancel(context.Background())
 	notifications.Run(runContext)
-	handler, err := server.New(cfg, database, tasks, notifications, logger)
+	handler, err := server.New(cfg, database, tasks, notifications, logger, metrics)
 	if err != nil {
 		logger.Error("server startup failed", "error", err)
 		os.Exit(1)
@@ -60,6 +62,24 @@ func main() {
 		BaseContext: func(net.Listener) context.Context {
 			return httpContext
 		},
+	}
+	var metricsServer *http.Server
+	if cfg.MetricsListenAddress != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("GET /metrics", metrics.Handler())
+		metricsServer = &http.Server{
+			Addr:              cfg.MetricsListenAddress,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+		go func() {
+			logger.Info("taskboard metrics listening", "address", cfg.MetricsListenAddress)
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("metrics HTTP server failed", "error", err)
+				os.Exit(1)
+			}
+		}()
 	}
 	stopSweep := make(chan struct{})
 	go func() {
@@ -95,6 +115,11 @@ func main() {
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
+	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error("metrics graceful shutdown failed", "error", err)
+		}
 	}
 	notifications.Wait()
 }
