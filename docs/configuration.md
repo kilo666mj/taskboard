@@ -41,6 +41,10 @@ disable their feature.
 | `TASKBOARD_AGENT_MAX_RUN_SECONDS` | `28800` | Maximum run age that may be extended by heartbeat (60-604800 seconds). |
 | `TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY` | `false` | Require `idempotency_key` on mutating task operations for service principals. |
 | `TASKBOARD_AGENT_POLICIES_JSON` | none | JSON object containing per-principal capability and limit overrides. |
+| `TASKBOARD_RETENTION_DAYS` | `0` | Age in days for explicit administrative pruning of completed/cancelled tasks. `0` disables retention deletion. |
+| `TASKBOARD_WEBHOOK_URL` | none | HTTPS endpoint for durable signed event delivery. Requires `TASKBOARD_WEBHOOK_SECRET`. |
+| `TASKBOARD_WEBHOOK_SECRET` | none | HMAC-SHA256 webhook signing secret of at least 32 characters. |
+| `TASKBOARD_WEBHOOK_MAX_ATTEMPTS` | `8` | Delivery attempts before a webhook enters the administrative dead-letter queue (1-100). |
 
 OIDC requires issuer, client ID, and redirect URL together. At least one OIDC
 allowlist is recommended for a workplace deployment unless the identity
@@ -87,6 +91,9 @@ request returns the original task/run identity (with its current task state);
 reusing a key with different input is a conflict. Heartbeats are naturally
 idempotent. In-process serialization closes concurrent duplicate races for the
 supported single-replica deployment model.
+
+Administrative credential, offboarding, retention, export/deletion, audit, and
+webhook procedures are documented in [Administration](administration.md).
 
 `TASKBOARD_DATABASE_URL` accepts `postgres://` and `postgresql://` URLs. A
 multi-host URL can use `target_session_attrs=read-write` to select the writable

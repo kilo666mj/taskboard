@@ -111,6 +111,25 @@ func TestAgentSafetyPolicyConfiguration(t *testing.T) {
 	}
 }
 
+func TestAdministrativeLifecycleConfiguration(t *testing.T) {
+	t.Setenv("TASKBOARD_RETENTION_DAYS", "90")
+	t.Setenv("TASKBOARD_WEBHOOK_URL", "https://hooks.example.com/taskboard")
+	t.Setenv("TASKBOARD_WEBHOOK_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TASKBOARD_WEBHOOK_MAX_ATTEMPTS", "12")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RetentionDays != 90 || cfg.WebhookMaxAttempts != 12 || cfg.WebhookURL == "" {
+		t.Fatalf("administrative configuration = %#v", cfg)
+	}
+
+	t.Setenv("TASKBOARD_WEBHOOK_URL", "http://internal.example.com/hook")
+	if _, err := Load(); err == nil {
+		t.Fatal("non-HTTPS webhook URL was accepted")
+	}
+}
+
 func TestCloudflareAccessConfigurationFailsClosed(t *testing.T) {
 	for _, teamDomain := range []string{"", "http://team.cloudflareaccess.com", "https://team.cloudflareaccess.com/path"} {
 		t.Run(teamDomain, func(t *testing.T) {

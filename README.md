@@ -9,7 +9,8 @@ notifications or Web Push.
 It is designed for a trusted personal or team workspace. Task visibility is
 server-enforced, but the current release is not tenant-isolated; see
 [Workplace readiness](docs/workplace-readiness.md) for the path to individually
-authorized agents, roles, and workspace boundaries.
+authorized agents and workspace boundaries. Operational owners should also read
+the [administration guide](docs/administration.md).
 
 Taskboard is an upstream application, not state embedded in Switchboard:
 
