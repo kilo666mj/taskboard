@@ -130,8 +130,8 @@ func TestSchemaCreatesQueryIndexes(t *testing.T) {
 	for rows.Next() {
 		count++
 	}
-	if count != 11 {
-		t.Fatalf("application indexes = %d, want 11", count)
+	if count != 14 {
+		t.Fatalf("application indexes = %d, want 14", count)
 	}
 }
 

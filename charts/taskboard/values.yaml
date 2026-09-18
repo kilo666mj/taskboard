@@ -70,6 +70,7 @@ secrets:
   oidcClientSecretKey: oidc-client-secret
   vapidPublicKeyKey: vapid-public-key
   vapidPrivateKeyKey: vapid-private-key
+  webhookSecretKey: webhook-secret
 
 taskboard:
   allowedHosts: ["taskboard.example.com"]
@@ -90,6 +91,10 @@ taskboard:
     maxRunSeconds: 28800
     requireIdempotency: false
     policiesJSON: ""
+  retentionDays: 0
+  webhook:
+    url: ""
+    maxAttempts: 8
   oidc:
     issuer: https://idp.example.com
     clientID: taskboard

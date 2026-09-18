@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const latestSchemaVersion = 2
+const latestSchemaVersion = 3
 
 type schemaMigration struct {
 	Version  int
@@ -49,6 +49,33 @@ var schemaMigrations = []schemaMigration{
 			`CREATE TRIGGER taskboard_event_notify AFTER INSERT ON events FOR EACH ROW EXECUTE FUNCTION taskboard_notify_event()`,
 		},
 	},
+	{
+		Version: 3,
+		Name:    "administrative_lifecycle",
+		SQLite: []string{
+			`CREATE TABLE agent_credentials (id TEXT PRIMARY KEY,name TEXT NOT NULL,principal_id TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,expires_at TEXT,revoked_at TEXT,last_used_at TEXT)`,
+			`CREATE INDEX idx_agent_credentials_principal ON agent_credentials(principal_id,revoked_at)`,
+			`CREATE TABLE revoked_principals (principal_id TEXT PRIMARY KEY,reason TEXT NOT NULL DEFAULT '',revoked_by TEXT NOT NULL,revoked_at TEXT NOT NULL)`,
+			`CREATE TABLE admin_audit (id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_admin_audit_created ON admin_audit(created_at,id)`,
+			`CREATE TRIGGER admin_audit_no_update BEFORE UPDATE ON admin_audit BEGIN SELECT RAISE(ABORT, 'admin audit is append-only'); END`,
+			`CREATE TRIGGER admin_audit_no_delete BEFORE DELETE ON admin_audit BEGIN SELECT RAISE(ABORT, 'admin audit is append-only'); END`,
+			`CREATE TABLE webhook_deliveries (id TEXT PRIMARY KEY,event_id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL,last_error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries(status,next_attempt_at)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE agent_credentials (id TEXT PRIMARY KEY,name TEXT NOT NULL,principal_id TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,expires_at TEXT,revoked_at TEXT,last_used_at TEXT)`,
+			`CREATE INDEX idx_agent_credentials_principal ON agent_credentials(principal_id,revoked_at)`,
+			`CREATE TABLE revoked_principals (principal_id TEXT PRIMARY KEY,reason TEXT NOT NULL DEFAULT '',revoked_by TEXT NOT NULL,revoked_at TEXT NOT NULL)`,
+			`CREATE TABLE admin_audit (id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_admin_audit_created ON admin_audit(created_at,id)`,
+			`CREATE FUNCTION taskboard_protect_admin_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'admin audit is append-only'; END; $$`,
+			`CREATE TRIGGER admin_audit_no_update BEFORE UPDATE ON admin_audit FOR EACH ROW EXECUTE FUNCTION taskboard_protect_admin_audit()`,
+			`CREATE TRIGGER admin_audit_no_delete BEFORE DELETE ON admin_audit FOR EACH ROW EXECUTE FUNCTION taskboard_protect_admin_audit()`,
+			`CREATE TABLE webhook_deliveries (id TEXT PRIMARY KEY,event_id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL,last_error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries(status,next_attempt_at)`,
+		},
+	},
 }
 
 var requiredSchema = map[string][]string{
@@ -79,6 +106,15 @@ var requiredIndexes = []string{
 	"idx_push_subscriptions_owner",
 	"idx_desktop_handoffs_confirmation",
 }
+
+var administrativeSchema = map[string][]string{
+	"agent_credentials":  {"id", "name", "principal_id", "token_hash", "created_at", "expires_at", "revoked_at", "last_used_at"},
+	"revoked_principals": {"principal_id", "reason", "revoked_by", "revoked_at"},
+	"admin_audit":        {"id", "actor", "action", "target", "detail", "created_at"},
+	"webhook_deliveries": {"id", "event_id", "status", "attempts", "next_attempt_at", "last_error", "created_at", "updated_at"},
+}
+
+var administrativeIndexes = []string{"idx_agent_credentials_principal", "idx_admin_audit_created", "idx_webhook_deliveries_due"}
 
 func (s *Store) migrate(ctx context.Context) error {
 	if err := validateDefinedMigrations(); err != nil {
@@ -166,6 +202,12 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := validateCurrentSchema(ctx, tx, s.db.dialect); err != nil {
 		return err
 	}
+	if err := validateAdministrativeSchema(ctx, tx, s.db.dialect); err != nil {
+		return err
+	}
+	if err := validateAdministrativeAuditProtection(ctx, tx, s.db.dialect); err != nil {
+		return err
+	}
 	if s.db.dialect == DialectPostgres {
 		var notificationTriggerExists bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
@@ -187,6 +229,31 @@ func (s *Store) migrate(ctx context.Context) error {
 	if s.db.dialect == DialectSQLite {
 		if _, err := s.db.ExecContext(ctx, "PRAGMA optimize"); err != nil {
 			return fmt.Errorf("optimize SQLite schema: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateAdministrativeAuditProtection(ctx context.Context, tx *Tx, dialect Dialect) error {
+	for _, trigger := range []string{"admin_audit_no_update", "admin_audit_no_delete"} {
+		var exists bool
+		var err error
+		if dialect == DialectPostgres {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM pg_trigger trigger
+				JOIN pg_class relation ON relation.oid=trigger.tgrelid
+				JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+				WHERE namespace.nspname=current_schema() AND relation.relname='admin_audit'
+				AND trigger.tgname=? AND NOT trigger.tgisinternal
+			)`, trigger).Scan(&exists)
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name='admin_audit' AND name=?)`, trigger).Scan(&exists)
+		}
+		if err != nil {
+			return fmt.Errorf("validate administrative audit trigger %s: %w", trigger, err)
+		}
+		if !exists {
+			return fmt.Errorf("schema version %d is partial: administrative audit trigger %s is missing", latestSchemaVersion, trigger)
 		}
 	}
 	return nil
@@ -444,6 +511,37 @@ func validateCurrentSchema(ctx context.Context, tx *Tx, dialect Dialect) error {
 		}
 	}
 	for _, index := range requiredIndexes {
+		exists, err := indexExists(ctx, tx, dialect, index)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("schema version %d is partial: required index %s is missing", latestSchemaVersion, index)
+		}
+	}
+	return nil
+}
+
+func validateAdministrativeSchema(ctx context.Context, tx *Tx, dialect Dialect) error {
+	for table, requiredColumns := range administrativeSchema {
+		exists, err := tableExists(ctx, tx, dialect, table)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("schema version %d is partial: required table %s is missing", latestSchemaVersion, table)
+		}
+		columns, err := tableColumns(ctx, tx, dialect, table)
+		if err != nil {
+			return err
+		}
+		for _, column := range requiredColumns {
+			if !columns[column] {
+				return fmt.Errorf("schema version %d is partial: required column %s.%s is missing", latestSchemaVersion, table, column)
+			}
+		}
+	}
+	for _, index := range administrativeIndexes {
 		exists, err := indexExists(ctx, tx, dialect, index)
 		if err != nil {
 			return err

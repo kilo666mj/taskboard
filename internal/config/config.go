@@ -56,6 +56,10 @@ type Config struct {
 	AgentMaxRunDuration      time.Duration
 	AgentRequireIdempotency  bool
 	AgentPolicies            map[string]AgentPolicy
+	RetentionDays            int
+	WebhookURL               string
+	WebhookSecret            string
+	WebhookMaxAttempts       int
 }
 
 type AgentPolicy struct {
@@ -104,6 +108,10 @@ func Load() (Config, error) {
 		AgentMaxRunDuration:      time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
 		AgentRequireIdempotency:  envBool("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", false),
 		AgentPolicies:            map[string]AgentPolicy{},
+		RetentionDays:            envInt("TASKBOARD_RETENTION_DAYS", 0),
+		WebhookURL:               strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
+		WebhookSecret:            strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_SECRET")),
+		WebhookMaxAttempts:       envInt("TASKBOARD_WEBHOOK_MAX_ATTEMPTS", 8),
 	}
 	if raw := strings.TrimSpace(os.Getenv("TASKBOARD_AGENT_POLICIES_JSON")); raw != "" {
 		decoder := json.NewDecoder(strings.NewReader(raw))
@@ -173,6 +181,24 @@ func Load() (Config, error) {
 	}
 	if err := validateAgentPolicies(cfg); err != nil {
 		return Config{}, err
+	}
+	if cfg.RetentionDays < 0 || cfg.RetentionDays > 36500 {
+		return Config{}, fmt.Errorf("TASKBOARD_RETENTION_DAYS must be between 0 and 36500")
+	}
+	if cfg.WebhookMaxAttempts < 1 || cfg.WebhookMaxAttempts > 100 {
+		return Config{}, fmt.Errorf("TASKBOARD_WEBHOOK_MAX_ATTEMPTS must be between 1 and 100")
+	}
+	if (cfg.WebhookURL == "") != (cfg.WebhookSecret == "") {
+		return Config{}, fmt.Errorf("TASKBOARD_WEBHOOK_URL and TASKBOARD_WEBHOOK_SECRET must be configured together")
+	}
+	if cfg.WebhookURL != "" {
+		webhookURL, err := url.Parse(cfg.WebhookURL)
+		if err != nil || webhookURL.Scheme != "https" || webhookURL.Host == "" || webhookURL.User != nil {
+			return Config{}, fmt.Errorf("TASKBOARD_WEBHOOK_URL must be an HTTPS URL without user info")
+		}
+		if len(cfg.WebhookSecret) < 32 {
+			return Config{}, fmt.Errorf("TASKBOARD_WEBHOOK_SECRET must contain at least 32 characters")
+		}
 	}
 	if (cfg.VAPIDPublicKey == "") != (cfg.VAPIDPrivateKey == "") {
 		return Config{}, fmt.Errorf("TASKBOARD_VAPID_PUBLIC_KEY and TASKBOARD_VAPID_PRIVATE_KEY must be configured together")

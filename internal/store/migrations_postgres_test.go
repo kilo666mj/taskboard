@@ -52,7 +52,7 @@ func TestPostgresMigrationMetadataAndCompatibility(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := admin.ExecContext(t.Context(), `INSERT INTO `+schema+`.schema_migrations(version,name,checksum,applied_at) VALUES(3,'future','future','2026-01-01T00:00:00Z')`); err != nil {
+		if _, err := admin.ExecContext(t.Context(), `INSERT INTO `+schema+`.schema_migrations(version,name,checksum,applied_at) VALUES(4,'future','future','2026-01-01T00:00:00Z')`); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "newer than supported") {
@@ -91,6 +91,23 @@ func TestPostgresMigrationMetadataAndCompatibility(t *testing.T) {
 		}
 		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "notification trigger is missing") {
 			t.Fatalf("OpenURL error = %v, want missing notification trigger error", err)
+		}
+	})
+
+	t.Run("rejects missing administrative audit trigger", func(t *testing.T) {
+		databaseURL, admin, schema := postgresMigrationFixture(t, baseURL)
+		database, err := OpenURL(t.Context(), databaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.ExecContext(t.Context(), `DROP TRIGGER admin_audit_no_delete ON `+schema+`.admin_audit`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "administrative audit trigger") {
+			t.Fatalf("OpenURL error = %v, want missing administrative audit trigger error", err)
 		}
 	})
 }

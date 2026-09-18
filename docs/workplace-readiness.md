@@ -56,9 +56,10 @@ an active agent run blocks that transition.
    concurrency/pickup/run limits, idempotency keys, and a separately granted
    sensitive-action capability are implemented. Future workflow-specific
    approvals can build on the same immutable principal policy boundary.
-4. **Administrative lifecycle.** Add credential rotation and revocation,
-   membership offboarding, export/deletion, configurable retention, and an
-   auditable administrative log.
+4. **Administrative lifecycle.** Individually hashed agent credentials,
+   rotation/revocation, principal offboarding, confirmed deletion, retention,
+   full export, append-only administrative audit, and signed webhook retries
+   with a dead-letter queue are implemented for owner/admin operators.
 5. **Operational controls.** Add quotas, rate limiting, metrics, audit export,
    webhook/integration delivery with retries, tested disaster recovery, and a
    documented availability model.

@@ -17,6 +17,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/server"
 	"github.com/kilo666mj/taskboard/internal/service"
 	"github.com/kilo666mj/taskboard/internal/store"
+	"github.com/kilo666mj/taskboard/internal/webhook"
 )
 
 func main() {
@@ -46,8 +47,10 @@ func main() {
 	metrics := observability.New(database.DB())
 	tasks := service.New(database, cfg.LeaseDuration, metrics)
 	notifications := push.New(database, tasks, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDContact, logger, metrics)
+	webhooks := webhook.New(database, cfg.WebhookURL, cfg.WebhookSecret, cfg.WebhookMaxAttempts, logger)
 	runContext, stopNotifications := context.WithCancel(context.Background())
 	notifications.Run(runContext)
+	webhooks.Run(runContext)
 	tasks.RunEventFanout(runContext, logger)
 	handler, err := server.New(cfg, database, tasks, notifications, logger, metrics)
 	if err != nil {
@@ -123,5 +126,6 @@ func main() {
 		}
 	}
 	notifications.Wait()
+	webhooks.Wait()
 	tasks.WaitEventFanout()
 }

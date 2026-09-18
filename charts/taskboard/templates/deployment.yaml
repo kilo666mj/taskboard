@@ -102,6 +102,19 @@ spec:
               value: {{ .Values.taskboard.agentPolicy.requireIdempotency | quote }}
             - name: TASKBOARD_AGENT_POLICIES_JSON
               value: {{ .Values.taskboard.agentPolicy.policiesJSON | quote }}
+            - name: TASKBOARD_RETENTION_DAYS
+              value: {{ .Values.taskboard.retentionDays | quote }}
+            {{- if .Values.taskboard.webhook.url }}
+            - name: TASKBOARD_WEBHOOK_URL
+              value: {{ .Values.taskboard.webhook.url | quote }}
+            - name: TASKBOARD_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.webhookSecretKey }}
+            - name: TASKBOARD_WEBHOOK_MAX_ATTEMPTS
+              value: {{ .Values.taskboard.webhook.maxAttempts | quote }}
+            {{- end }}
             - name: TASKBOARD_VAPID_CONTACT
               value: {{ .Values.taskboard.vapidContact | quote }}
             - name: TASKBOARD_VAPID_PUBLIC_KEY

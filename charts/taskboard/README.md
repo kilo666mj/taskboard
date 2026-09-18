@@ -25,3 +25,6 @@ write access; the default `admin` value preserves existing installations.
 Configure service-principal capabilities and limits under
 `taskboard.agentPolicy`; keep `task:sensitive` out of the default capability
 set unless an operator has explicitly approved agent cancellation and skipping.
+Webhook signing uses `taskboard.webhook.url` and the key selected by
+`secrets.webhookSecretKey`; retention remains disabled until
+`taskboard.retentionDays` is greater than zero.

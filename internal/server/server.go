@@ -112,6 +112,18 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("GET /api/v1/templates", authenticated(http.HandlerFunc(listTemplates(service))))
 	mux.Handle("POST /api/v1/templates", authenticated(http.HandlerFunc(saveTemplate(service))))
 	mux.Handle("DELETE /api/v1/templates/{id}", authenticated(http.HandlerFunc(deleteTemplate(service))))
+	mux.Handle("GET /api/v1/admin/credentials", authenticated(http.HandlerFunc(listAgentCredentials(database))))
+	mux.Handle("POST /api/v1/admin/credentials", authenticated(http.HandlerFunc(createAgentCredential(database))))
+	mux.Handle("POST /api/v1/admin/credentials/{id}/rotate", authenticated(http.HandlerFunc(rotateAgentCredential(database))))
+	mux.Handle("DELETE /api/v1/admin/credentials/{id}", authenticated(http.HandlerFunc(revokeAgentCredential(database))))
+	mux.Handle("POST /api/v1/admin/principals/{principal}/offboard", authenticated(http.HandlerFunc(offboardPrincipal(database))))
+	mux.Handle("DELETE /api/v1/admin/principals/{principal}/offboard", authenticated(http.HandlerFunc(reinstatePrincipal(database))))
+	mux.Handle("GET /api/v1/admin/audit", authenticated(http.HandlerFunc(adminAudit(database))))
+	mux.Handle("GET /api/v1/admin/export", authenticated(http.HandlerFunc(adminExport(database, service))))
+	mux.Handle("DELETE /api/v1/admin/tasks/{id}", authenticated(http.HandlerFunc(deleteTaskAdministratively(database))))
+	mux.Handle("POST /api/v1/admin/retention", authenticated(http.HandlerFunc(applyRetention(cfg, database))))
+	mux.Handle("GET /api/v1/admin/webhooks/dead-letters", authenticated(http.HandlerFunc(deadWebhookDeliveries(database))))
+	mux.Handle("POST /api/v1/admin/webhooks/{id}/retry", authenticated(http.HandlerFunc(retryWebhookDelivery(database))))
 	mux.Handle("/pwa-kit/", pwakit.Handler())
 	mux.Handle("GET /api/v1/push/key", authenticated(http.HandlerFunc(pushKey(notifications))))
 	mux.Handle("POST /api/v1/push/subscriptions", authenticated(http.HandlerFunc(savePushSubscription(notifications))))
@@ -587,8 +599,13 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					}
 				} else if len(values) == 1 && strings.HasPrefix(values[0], "Bearer ") {
 					presented := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))
-					valid = secureEqual(presented, cfg.AuthToken)
-					authenticatedPrincipal = agentPrincipal(cfg, "agent:shared")
+					if secureEqual(presented, cfg.AuthToken) {
+						valid = true
+						authenticatedPrincipal = agentPrincipal(cfg, "agent:shared")
+					} else if principalID, credentialValid, err := sessions.store.AuthenticateAgentCredential(r.Context(), presented); err == nil && credentialValid {
+						valid = true
+						authenticatedPrincipal = agentPrincipal(cfg, principalID)
+					}
 				}
 			} else if cloudflare != nil {
 				mechanism = "cloudflare_access"
@@ -608,6 +625,13 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 				return
 			}
+			if revoked, err := sessions.store.PrincipalRevoked(r.Context(), authenticatedPrincipal.ID); err != nil || revoked {
+				if metrics != nil {
+					metrics.ObserveAuth(mechanism, "revoked")
+				}
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				return
+			}
 			if metrics != nil {
 				metrics.ObserveAuth(mechanism, "success")
 			}
@@ -624,6 +648,11 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 		}
 		if cloudflare != nil {
 			identity, err := cloudflare.identity(r)
+			if err == nil {
+				if revoked, checkErr := sessions.store.PrincipalRevoked(r.Context(), identity.Subject); checkErr != nil || revoked {
+					err = store.ErrNotFound
+				}
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"authenticated":             err == nil,
 				"auth_mode":                 config.BrowserAuthCloudflareAccess,
@@ -636,6 +665,11 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 			return
 		}
 		identity, valid := sessions.identity(r.Context(), r)
+		if valid {
+			if revoked, err := sessions.store.PrincipalRevoked(r.Context(), identity.Subject); err != nil || revoked {
+				valid = false
+			}
+		}
 		role := service.Role("")
 		if valid {
 			role = roleForGroups(cfg, identity.Groups)

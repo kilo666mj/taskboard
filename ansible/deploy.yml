@@ -34,6 +34,9 @@
     taskboard_agent_max_run_seconds: 28800
     taskboard_agent_require_idempotency: false
     taskboard_agent_policies_json: ""
+    taskboard_retention_days: 0
+    taskboard_webhook_url: ""
+    taskboard_webhook_max_attempts: 8
 
   pre_tasks:
     - name: Validate deployment inputs
@@ -55,6 +58,9 @@
           - taskboard_agent_max_concurrent_runs | int >= 1
           - taskboard_agent_max_pickups_per_minute | int >= 1
           - taskboard_agent_max_run_seconds | int >= 60
+          - taskboard_retention_days | int >= 0
+          - taskboard_webhook_max_attempts | int >= 1
+          - taskboard_webhook_url | length == 0 or taskboard_webhook_secret | length >= 32
           - "'replace' not in (taskboard_auth_token | lower)"
         fail_msg: Run go run ./cmd/taskboard-init-config before deploying.
       no_log: true
