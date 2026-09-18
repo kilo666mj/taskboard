@@ -33,17 +33,7 @@
   <div class="app-shell">
     <main>
       <p id="notificationMessage" class="notification-message" role="status" hidden></p>
-      <section class="overview" aria-labelledby="overviewHeading">
-        <div>
-          <p class="eyebrow">Personal + agent work / live status</p>
-          <h1 id="overviewHeading">What’s <span>moving</span></h1>
-        </div>
-        <div class="metrics" aria-label="Task summary">
-          <div><strong id="activeCount">0</strong><span>Active</span></div>
-          <div><strong id="blockedCount">0</strong><span>Need attention</span></div>
-          <div><strong id="doneCount">0</strong><span>Done today</span></div>
-        </div>
-      </section>
+      <h1 class="visually-hidden">Taskboard tasks</h1>
 
       <div class="view-toolbar">
         <label class="view-picker">
@@ -74,7 +64,7 @@
             </optgroup>
           </select>
         </label>
-        <label class="search-box"><span class="visually-hidden">Search all tasks</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search all tasks"></label>
+        <label class="search-box"><span class="visually-hidden">Search all tasks</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search tasks"></label>
       </div>
 
       <section id="board" class="board" aria-live="polite" aria-busy="true"></section>
