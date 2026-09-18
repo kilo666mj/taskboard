@@ -42,8 +42,30 @@ not a verified recovery path.
 5. If validation fails, stop the service, restore the prior binary or image and,
    only if a release note requires it, restore the matching database backup.
 
-Schema migrations run during startup and are designed to be additive. Release
-notes must call out any migration that changes rollback requirements.
+Schema migrations run transactionally during startup. Taskboard records every
+ordered migration in `schema_migrations` with an immutable name and SHA-256
+checksum. Startup refuses to continue when it finds a future schema version, a
+gap or changed checksum in migration history, or a schema that is missing a
+required table, column, or index.
+
+Version 1 is the baseline for the public SQLite and PostgreSQL schemas. On the
+first upgrade to the versioned runner, a complete pre-versioned SQLite schema or
+an existing version-1 schema is upgraded, validated, and sealed with baseline
+metadata. A database containing only part of the legacy schema is rejected
+instead of being guessed into a usable shape.
+
+Migration files are append-only after release: never edit, reorder, or reuse a
+version. CI must exercise a fresh database and an upgrade from every supported
+schema version for both backends. Release notes must state the new schema
+version, the oldest directly supported version, backup requirements, and
+whether restoring the previous binary also requires restoring its database
+backup.
+
+Before upgrading, take and verify a backup as described above. If startup
+rejects the schema, retain the error and database untouched; do not manually
+edit `schema_migrations`. Roll back by stopping Taskboard, restoring both the
+previous binary or image and its matching database backup, then checking
+`/readyz` before reopening traffic.
 
 ## Credential rotation
 
