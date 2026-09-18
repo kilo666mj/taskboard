@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,12 +24,47 @@ var (
 	ErrConflict   = errors.New("task version conflict")
 	ErrForbidden  = errors.New("task access forbidden")
 	ErrValidation = errors.New("validation failed")
+	ErrRateLimit  = errors.New("agent policy limit reached")
 )
 
 type Principal struct {
-	ID    string
-	Agent bool
-	Role  Role
+	ID     string
+	Agent  bool
+	Role   Role
+	Policy AgentPolicy
+}
+
+type AgentPolicy struct {
+	Capabilities        map[string]bool
+	MaxConcurrentRuns   int
+	MaxPickupsPerMinute int
+	MaxRunDuration      time.Duration
+	RequireIdempotency  bool
+}
+
+const (
+	CapabilityTaskRead       = "task:read"
+	CapabilityTaskCreate     = "task:create"
+	CapabilityTaskClaim      = "task:claim"
+	CapabilityTaskUpdate     = "task:update"
+	CapabilityTaskComplete   = "task:complete"
+	CapabilityTaskSensitive  = "task:sensitive"
+	CapabilityTemplateRead   = "template:read"
+	CapabilityTemplateManage = "template:manage"
+)
+
+var KnownAgentCapabilities = []string{
+	CapabilityTaskRead, CapabilityTaskCreate, CapabilityTaskClaim, CapabilityTaskUpdate,
+	CapabilityTaskComplete, CapabilityTaskSensitive, CapabilityTemplateRead, CapabilityTemplateManage,
+}
+
+func DefaultAgentPolicy() AgentPolicy {
+	capabilities := make(map[string]bool, len(KnownAgentCapabilities))
+	for _, capability := range KnownAgentCapabilities {
+		capabilities[capability] = true
+	}
+	delete(capabilities, CapabilityTaskSensitive)
+	return AgentPolicy{Capabilities: capabilities, MaxConcurrentRuns: 4, MaxPickupsPerMinute: 30, MaxRunDuration: 8 * time.Hour}
 }
 
 type Role string
@@ -63,7 +100,18 @@ func HumanPrincipalWithRole(id string, role Role) Principal {
 }
 
 func AgentPrincipal(id string) Principal {
-	return Principal{ID: strings.TrimSpace(id), Agent: true, Role: RoleAgent}
+	return AgentPrincipalWithPolicy(id, DefaultAgentPolicy())
+}
+
+func AgentPrincipalWithPolicy(id string, policy AgentPolicy) Principal {
+	if policy.Capabilities == nil {
+		policy.Capabilities = map[string]bool{}
+	}
+	return Principal{ID: strings.TrimSpace(id), Agent: true, Role: RoleAgent, Policy: policy}
+}
+
+func (principal Principal) HasCapability(capability string) bool {
+	return principal.Agent && principal.Policy.Capabilities[capability]
 }
 
 func IsHumanRole(role Role) bool {
@@ -73,8 +121,14 @@ func IsHumanRole(role Role) bool {
 func (principal Principal) Can(permission Permission) bool {
 	if principal.Agent {
 		switch permission {
-		case PermissionTaskRead, PermissionTaskWrite, PermissionTemplateRead, PermissionTemplateManage:
-			return true
+		case PermissionTaskRead:
+			return principal.HasCapability(CapabilityTaskRead)
+		case PermissionTaskWrite:
+			return principal.HasCapability(CapabilityTaskUpdate)
+		case PermissionTemplateRead:
+			return principal.HasCapability(CapabilityTemplateRead)
+		case PermissionTemplateManage:
+			return principal.HasCapability(CapabilityTemplateManage)
 		default:
 			return false
 		}
@@ -115,6 +169,105 @@ func canMutate(task model.Task, principal Principal) bool {
 	return task.Owner != "" && task.Owner == principal.ID
 }
 
+func validateIdempotencyKey(key string) error {
+	if key == "" {
+		return nil
+	}
+	if len(key) < 8 || len(key) > 128 {
+		return fmt.Errorf("%w: idempotency_key must contain 8-128 safe characters", ErrValidation)
+	}
+	for _, character := range key {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || strings.ContainsRune("._:-", character)) {
+			return fmt.Errorf("%w: idempotency_key must contain 8-128 safe characters", ErrValidation)
+		}
+	}
+	return nil
+}
+
+func requestHash(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func idempotencyPayload(operation, key, hash string) map[string]any {
+	if key == "" {
+		return map[string]any{}
+	}
+	return map[string]any{"idempotency_operation": operation, "idempotency_key": key, "idempotency_hash": hash}
+}
+
+func (s *Service) replayIdempotency(ctx context.Context, principal Principal, operation, key, hash string) (model.Event, bool, error) {
+	if key == "" {
+		if principal.Agent && principal.Policy.RequireIdempotency {
+			return model.Event{}, false, fmt.Errorf("%w: idempotency_key is required by agent policy", ErrValidation)
+		}
+		return model.Event{}, false, nil
+	}
+	if err := validateIdempotencyKey(key); err != nil {
+		return model.Event{}, false, err
+	}
+	rows, err := s.store.DB().QueryContext(ctx, `SELECT task_id,run_id,payload FROM events WHERE actor=? ORDER BY created_at DESC`, principal.ID)
+	if err != nil {
+		return model.Event{}, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var event model.Event
+		var payloadJSON string
+		if err := rows.Scan(&event.TaskID, &event.RunID, &payloadJSON); err != nil {
+			return model.Event{}, false, err
+		}
+		if err := json.Unmarshal([]byte(payloadJSON), &event.Payload); err != nil {
+			continue
+		}
+		if event.Payload["idempotency_operation"] != operation || event.Payload["idempotency_key"] != key {
+			continue
+		}
+		if event.Payload["idempotency_hash"] != hash {
+			return model.Event{}, false, fmt.Errorf("%w: idempotency key was already used with a different request", ErrConflict)
+		}
+		return event, true, nil
+	}
+	return model.Event{}, false, rows.Err()
+}
+
+func (s *Service) enforceAgentPickupLimits(ctx context.Context, principal Principal) error {
+	if !principal.Agent {
+		return nil
+	}
+	now := time.Now().UTC()
+	if principal.Policy.MaxConcurrentRuns > 0 {
+		var count int
+		if err := s.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE agent=? AND ended_at IS NULL AND status=? AND lease_expires_at>=?`, principal.ID, model.TaskActive, stamp(now)).Scan(&count); err != nil {
+			return err
+		}
+		if count >= principal.Policy.MaxConcurrentRuns {
+			return fmt.Errorf("%w: maximum concurrent runs is %d", ErrRateLimit, principal.Policy.MaxConcurrentRuns)
+		}
+	}
+	if principal.Policy.MaxPickupsPerMinute > 0 {
+		var count int
+		if err := s.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE agent=? AND started_at>=?`, principal.ID, stamp(now.Add(-time.Minute))).Scan(&count); err != nil {
+			return err
+		}
+		if count >= principal.Policy.MaxPickupsPerMinute {
+			return fmt.Errorf("%w: maximum pickups per minute is %d", ErrRateLimit, principal.Policy.MaxPickupsPerMinute)
+		}
+	}
+	return nil
+}
+
+func mergePayload(base, extra map[string]any) map[string]any {
+	for key, value := range extra {
+		base[key] = value
+	}
+	return base
+}
+
 type Service struct {
 	store         *store.Store
 	leaseDuration time.Duration
@@ -125,6 +278,8 @@ type Service struct {
 	fanoutHealthy atomic.Bool
 	fanoutWait    sync.WaitGroup
 	recentMu      sync.Mutex
+	idempotencyMu sync.Mutex
+	pickupMu      sync.Mutex
 	recentEvents  map[string]time.Time
 	recentOrder   []recentEvent
 }
@@ -328,7 +483,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	if err != nil {
 		return model.StartResult{}, err
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.started", Actor: request.Agent, Message: request.Title, CreatedAt: now}
+	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.started", Actor: request.Agent, Message: request.Title, Payload: idempotencyPayload("task_start", request.IdempotencyKey, request.IdempotencyHash), CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.StartResult{}, err
 	}
@@ -344,10 +499,13 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 }
 
 func (s *Service) StartFor(ctx context.Context, request model.StartRequest, principal Principal) (model.StartResult, error) {
-	if !principal.Can(PermissionTaskWrite) {
+	if !principal.Agent && !principal.Can(PermissionTaskWrite) {
 		return model.StartResult{}, ErrForbidden
 	}
 	if principal.Agent {
+		if !principal.HasCapability(CapabilityTaskCreate) {
+			return model.StartResult{}, ErrForbidden
+		}
 		if request.Visibility == "" {
 			request.Visibility = model.VisibilityAgent
 		}
@@ -357,6 +515,38 @@ func (s *Service) StartFor(ctx context.Context, request model.StartRequest, prin
 		request.Agent = principal.ID
 	} else if request.Visibility == "" {
 		request.Visibility = model.VisibilityPrivate
+	}
+	if principal.Agent {
+		s.pickupMu.Lock()
+		defer s.pickupMu.Unlock()
+		if request.IdempotencyKey != "" {
+			s.idempotencyMu.Lock()
+			defer s.idempotencyMu.Unlock()
+		}
+		hash, err := requestHash(request)
+		if err != nil {
+			return model.StartResult{}, err
+		}
+		request.IdempotencyHash = hash
+		event, replay, err := s.replayIdempotency(ctx, principal, "task_start", request.IdempotencyKey, hash)
+		if err != nil {
+			return model.StartResult{}, err
+		}
+		if replay {
+			task, err := s.store.GetTask(ctx, event.TaskID)
+			if err != nil {
+				return model.StartResult{}, err
+			}
+			for _, run := range task.Runs {
+				if run.ID == event.RunID {
+					return model.StartResult{Task: task, Run: run}, nil
+				}
+			}
+			return model.StartResult{}, store.ErrNotFound
+		}
+		if err := s.enforceAgentPickupLimits(ctx, principal); err != nil {
+			return model.StartResult{}, err
+		}
 	}
 	return s.Start(ctx, request, principal.ID)
 }
@@ -421,7 +611,8 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 			return model.Task{}, err
 		}
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}, CreatedAt: now}
+	eventPayload := map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}
+	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: mergePayload(eventPayload, idempotencyPayload("task_create", request.IdempotencyKey, request.IdempotencyHash)), CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.Task{}, err
 	}
@@ -436,10 +627,13 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 }
 
 func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
-	if !principal.Can(PermissionTaskWrite) {
+	if !principal.Agent && !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
 	if principal.Agent {
+		if !principal.HasCapability(CapabilityTaskCreate) {
+			return model.Task{}, ErrForbidden
+		}
 		if request.Visibility == "" {
 			request.Visibility = model.VisibilityAgent
 		}
@@ -448,6 +642,24 @@ func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, pr
 		}
 	} else if request.Visibility == "" {
 		request.Visibility = model.VisibilityPrivate
+	}
+	if principal.Agent {
+		if request.IdempotencyKey != "" {
+			s.idempotencyMu.Lock()
+			defer s.idempotencyMu.Unlock()
+		}
+		hash, err := requestHash(request)
+		if err != nil {
+			return model.Task{}, err
+		}
+		request.IdempotencyHash = hash
+		event, replay, err := s.replayIdempotency(ctx, principal, "task_create", request.IdempotencyKey, hash)
+		if err != nil {
+			return model.Task{}, err
+		}
+		if replay {
+			return s.store.GetTask(ctx, event.TaskID)
+		}
 	}
 	return s.Create(ctx, request, principal.ID)
 }
@@ -608,6 +820,40 @@ func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.Cla
 	if !principal.Agent {
 		return model.StartResult{}, ErrForbidden
 	}
+	if !principal.HasCapability(CapabilityTaskClaim) {
+		return model.StartResult{}, ErrForbidden
+	}
+	request.Agent = principal.ID
+	s.pickupMu.Lock()
+	defer s.pickupMu.Unlock()
+	if request.IdempotencyKey != "" {
+		s.idempotencyMu.Lock()
+		defer s.idempotencyMu.Unlock()
+	}
+	hash, err := requestHash(struct {
+		TaskID string
+		model.ClaimRequest
+	}{taskID, request})
+	if err != nil {
+		return model.StartResult{}, err
+	}
+	request.IdempotencyHash = hash
+	event, replay, err := s.replayIdempotency(ctx, principal, "task_claim", request.IdempotencyKey, hash)
+	if err != nil {
+		return model.StartResult{}, err
+	}
+	if replay {
+		task, err := s.store.GetTask(ctx, event.TaskID)
+		if err != nil {
+			return model.StartResult{}, err
+		}
+		for _, run := range task.Runs {
+			if run.ID == event.RunID {
+				return model.StartResult{Task: task, Run: run}, nil
+			}
+		}
+		return model.StartResult{}, store.ErrNotFound
+	}
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
 		return model.StartResult{}, err
@@ -618,7 +864,9 @@ func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.Cla
 	if task.Visibility == model.VisibilityTeam && task.Owner != principal.ID {
 		return model.StartResult{}, ErrForbidden
 	}
-	request.Agent = principal.ID
+	if err := s.enforceAgentPickupLimits(ctx, principal); err != nil {
+		return model.StartResult{}, err
+	}
 	return s.Claim(ctx, taskID, request, principal.ID)
 }
 
@@ -669,7 +917,8 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	if count, _ := result.RowsAffected(); count != 1 {
 		return model.StartResult{}, ErrConflict
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.claimed", Actor: request.Agent, Message: "Task claimed", Payload: map[string]any{"status": model.TaskActive, "version": request.ExpectedVersion + 1}, CreatedAt: now}
+	eventPayload := map[string]any{"status": model.TaskActive, "version": request.ExpectedVersion + 1}
+	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.claimed", Actor: request.Agent, Message: "Task claimed", Payload: mergePayload(eventPayload, idempotencyPayload("task_claim", request.IdempotencyKey, request.IdempotencyHash)), CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.StartResult{}, err
 	}
@@ -1099,6 +1348,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if len(completedItemIDs) > 0 {
 		payload["completed_item_ids"] = completedItemIDs
 	}
+	mergePayload(payload, idempotencyPayload("task_update", request.IdempotencyKey, request.IdempotencyHash))
 	event := model.Event{ID: newID(now), TaskID: taskID, RunID: request.RunID, Kind: "task.updated", Actor: defaultActor(actor, current.Owner), Message: currentNote, Payload: payload, CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.Task{}, err
@@ -1117,7 +1367,36 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 }
 
 func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.UpdateRequest, principal Principal) (model.Task, error) {
-	if !principal.Can(PermissionTaskWrite) {
+	if principal.Agent {
+		if request.IdempotencyKey != "" {
+			s.idempotencyMu.Lock()
+			defer s.idempotencyMu.Unlock()
+		}
+		if !principal.HasCapability(CapabilityTaskUpdate) {
+			return model.Task{}, ErrForbidden
+		}
+		if request.Status == model.TaskDone && !principal.HasCapability(CapabilityTaskComplete) {
+			return model.Task{}, ErrForbidden
+		}
+		if (request.Status == model.TaskCancelled || len(request.SkipItemIDs) > 0) && !principal.HasCapability(CapabilityTaskSensitive) {
+			return model.Task{}, ErrForbidden
+		}
+		hash, err := requestHash(struct {
+			TaskID string
+			model.UpdateRequest
+		}{taskID, request})
+		if err != nil {
+			return model.Task{}, err
+		}
+		request.IdempotencyHash = hash
+		event, replay, err := s.replayIdempotency(ctx, principal, "task_update", request.IdempotencyKey, hash)
+		if err != nil {
+			return model.Task{}, err
+		}
+		if replay {
+			return s.GetFor(ctx, event.TaskID, principal)
+		}
+	} else if !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
 	current, err := s.GetFor(ctx, taskID, principal)
@@ -1161,7 +1440,7 @@ func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (o
 }
 
 func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, principal Principal) (model.AgentRun, error) {
-	if !principal.Agent {
+	if !principal.Agent || !principal.HasCapability(CapabilityTaskUpdate) {
 		return model.AgentRun{}, ErrForbidden
 	}
 	task, err := s.GetFor(ctx, taskID, principal)
@@ -1170,6 +1449,9 @@ func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, princi
 	}
 	for _, run := range task.Runs {
 		if run.ID == strings.TrimSpace(runID) && run.Agent == principal.ID {
+			if principal.Policy.MaxRunDuration > 0 && time.Since(run.StartedAt) >= principal.Policy.MaxRunDuration {
+				return model.AgentRun{}, fmt.Errorf("%w: maximum run duration is %s", ErrRateLimit, principal.Policy.MaxRunDuration)
+			}
 			return s.Heartbeat(ctx, taskID, runID, principal.ID)
 		}
 	}

@@ -84,6 +84,113 @@ func TestViewerCannotMutateVisibleTaskOrTemplates(t *testing.T) {
 	}
 }
 
+func TestAgentCapabilitiesAndSensitiveApprovalGate(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	readOnly := AgentPrincipalWithPolicy("agent:reader", AgentPolicy{Capabilities: map[string]bool{CapabilityTaskRead: true}})
+	if _, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Denied"}, readOnly); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("read-only agent create error = %v, want forbidden", err)
+	}
+
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Guarded work", Checklist: []string{"Sensitive step"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{
+		ExpectedVersion: started.Task.Version,
+		RunID:           started.Run.ID,
+		SkipItemIDs:     []string{started.Task.Items[0].ID},
+		SkipReason:      "irreversible",
+	}, agent); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ungated sensitive update error = %v, want forbidden", err)
+	}
+
+	policy := DefaultAgentPolicy()
+	policy.Capabilities[CapabilityTaskSensitive] = true
+	approved := AgentPrincipalWithPolicy("agent:worker", policy)
+	if _, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{
+		ExpectedVersion: started.Task.Version,
+		RunID:           started.Run.ID,
+		SkipItemIDs:     []string{started.Task.Items[0].ID},
+		SkipReason:      "approved by policy",
+	}, approved); err != nil {
+		t.Fatalf("approved sensitive update: %v", err)
+	}
+}
+
+func TestAgentIdempotencyReplaysMutationAndRejectsKeyReuse(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	request := model.CreateRequest{Title: "Idempotent task", IdempotencyKey: "request-12345678"}
+	first, err := tasks.CreateFor(t.Context(), request, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tasks.CreateFor(t.Context(), request, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("replay task ID = %q, want %q", second.ID, first.ID)
+	}
+	request.Title = "Different mutation"
+	if _, err := tasks.CreateFor(t.Context(), request, agent); !errors.Is(err, ErrConflict) {
+		t.Fatalf("reused idempotency key error = %v, want conflict", err)
+	}
+
+	requiredPolicy := DefaultAgentPolicy()
+	requiredPolicy.RequireIdempotency = true
+	required := AgentPrincipalWithPolicy("agent:strict", requiredPolicy)
+	if _, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Missing key"}, required); !errors.Is(err, ErrValidation) {
+		t.Fatalf("missing required idempotency key error = %v, want validation", err)
+	}
+}
+
+func TestConcurrentAgentRetriesCreateOnlyOneTask(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	request := model.CreateRequest{Title: "Concurrent retry", IdempotencyKey: "concurrent-12345678"}
+	type result struct {
+		task model.Task
+		err  error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			task, err := tasks.CreateFor(t.Context(), request, agent)
+			results <- result{task, err}
+		}()
+	}
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil || first.task.ID != second.task.ID {
+		t.Fatalf("concurrent retry results = %+v / %+v", first, second)
+	}
+	all, err := tasks.List(t.Context(), nil, 10)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("created tasks = %+v, %v", all, err)
+	}
+}
+
+func TestAgentConcurrencyAndRunDurationLimits(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	policy := DefaultAgentPolicy()
+	policy.MaxConcurrentRuns = 1
+	agent := AgentPrincipalWithPolicy("agent:limited", policy)
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "First", Checklist: []string{"Run"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Second", Checklist: []string{"Run"}}, agent); !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("concurrency error = %v, want rate limit", err)
+	}
+
+	policy.MaxRunDuration = time.Nanosecond
+	expired := AgentPrincipalWithPolicy("agent:limited", policy)
+	if _, err := tasks.HeartbeatFor(t.Context(), started.Task.ID, started.Run.ID, expired); !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("run duration error = %v, want rate limit", err)
+	}
+}
+
 func TestChecklistLifecycleAndCompletionGate(t *testing.T) {
 	service := testService(t, time.Minute)
 	started, err := service.Start(t.Context(), model.StartRequest{

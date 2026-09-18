@@ -113,35 +113,39 @@ type Event struct {
 }
 
 type StartRequest struct {
-	Title      string         `json:"title"`
-	Type       TaskType       `json:"type,omitempty"`
-	Visibility TaskVisibility `json:"visibility,omitempty"`
-	Summary    string         `json:"summary,omitempty"`
-	Section    string         `json:"section,omitempty"`
-	Project    string         `json:"project,omitempty"`
-	Repository string         `json:"repository,omitempty"`
-	Priority   Priority       `json:"priority,omitempty"`
-	DueDate    string         `json:"due_date,omitempty"`
-	DeferUntil string         `json:"defer_until,omitempty"`
-	Recurrence string         `json:"recurrence,omitempty"`
-	Checklist  []string       `json:"checklist"`
-	Agent      string         `json:"agent,omitempty"`
-	Client     string         `json:"client,omitempty"`
+	Title           string         `json:"title"`
+	Type            TaskType       `json:"type,omitempty"`
+	Visibility      TaskVisibility `json:"visibility,omitempty"`
+	Summary         string         `json:"summary,omitempty"`
+	Section         string         `json:"section,omitempty"`
+	Project         string         `json:"project,omitempty"`
+	Repository      string         `json:"repository,omitempty"`
+	Priority        Priority       `json:"priority,omitempty"`
+	DueDate         string         `json:"due_date,omitempty"`
+	DeferUntil      string         `json:"defer_until,omitempty"`
+	Recurrence      string         `json:"recurrence,omitempty"`
+	Checklist       []string       `json:"checklist"`
+	Agent           string         `json:"agent,omitempty"`
+	Client          string         `json:"client,omitempty"`
+	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
+	IdempotencyHash string         `json:"-"`
 }
 
 type CreateRequest struct {
-	Title      string         `json:"title"`
-	Type       TaskType       `json:"type,omitempty"`
-	Visibility TaskVisibility `json:"visibility,omitempty"`
-	Summary    string         `json:"summary,omitempty"`
-	Section    string         `json:"section,omitempty"`
-	Project    string         `json:"project,omitempty"`
-	Repository string         `json:"repository,omitempty"`
-	Priority   Priority       `json:"priority,omitempty"`
-	DueDate    string         `json:"due_date,omitempty"`
-	DeferUntil string         `json:"defer_until,omitempty"`
-	Recurrence string         `json:"recurrence,omitempty"`
-	Checklist  []string       `json:"checklist,omitempty"`
+	Title           string         `json:"title"`
+	Type            TaskType       `json:"type,omitempty"`
+	Visibility      TaskVisibility `json:"visibility,omitempty"`
+	Summary         string         `json:"summary,omitempty"`
+	Section         string         `json:"section,omitempty"`
+	Project         string         `json:"project,omitempty"`
+	Repository      string         `json:"repository,omitempty"`
+	Priority        Priority       `json:"priority,omitempty"`
+	DueDate         string         `json:"due_date,omitempty"`
+	DeferUntil      string         `json:"defer_until,omitempty"`
+	Recurrence      string         `json:"recurrence,omitempty"`
+	Checklist       []string       `json:"checklist,omitempty"`
+	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
+	IdempotencyHash string         `json:"-"`
 }
 
 type UpdateRequest struct {
@@ -170,6 +174,8 @@ type UpdateRequest struct {
 	SkipItemIDs     []string        `json:"skip_item_ids,omitempty"`
 	SkipReason      string          `json:"skip_reason,omitempty"`
 	AddItems        []string        `json:"add_items,omitempty"`
+	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
+	IdempotencyHash string          `json:"-"`
 }
 
 type StartResult struct {
@@ -181,6 +187,8 @@ type ClaimRequest struct {
 	ExpectedVersion int64  `json:"expected_version"`
 	Agent           string `json:"agent,omitempty"`
 	Client          string `json:"client,omitempty"`
+	IdempotencyKey  string `json:"idempotency_key,omitempty"`
+	IdempotencyHash string `json:"-"`
 }
 
 type MoveRequest struct {

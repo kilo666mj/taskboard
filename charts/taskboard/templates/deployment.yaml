@@ -90,6 +90,18 @@ spec:
               value: {{ join "," .Values.taskboard.roles.memberGroups | quote }}
             - name: TASKBOARD_VIEWER_GROUPS
               value: {{ join "," .Values.taskboard.roles.viewerGroups | quote }}
+            - name: TASKBOARD_AGENT_CAPABILITIES
+              value: {{ join "," .Values.taskboard.agentPolicy.capabilities | quote }}
+            - name: TASKBOARD_AGENT_MAX_CONCURRENT_RUNS
+              value: {{ .Values.taskboard.agentPolicy.maxConcurrentRuns | quote }}
+            - name: TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE
+              value: {{ .Values.taskboard.agentPolicy.maxPickupsPerMinute | quote }}
+            - name: TASKBOARD_AGENT_MAX_RUN_SECONDS
+              value: {{ .Values.taskboard.agentPolicy.maxRunSeconds | quote }}
+            - name: TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY
+              value: {{ .Values.taskboard.agentPolicy.requireIdempotency | quote }}
+            - name: TASKBOARD_AGENT_POLICIES_JSON
+              value: {{ .Values.taskboard.agentPolicy.policiesJSON | quote }}
             - name: TASKBOARD_VAPID_CONTACT
               value: {{ .Values.taskboard.vapidContact | quote }}
             - name: TASKBOARD_VAPID_PUBLIC_KEY

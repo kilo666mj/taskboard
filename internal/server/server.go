@@ -249,7 +249,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 	}
 	server := mcpkit.MustServer(mcpkit.ServerConfig{
 		Name: "taskboard", Version: Version, Logger: logger,
-		Instructions: "Use task_create to capture future work without beginning execution. Before substantive agent work, start or claim the task, keep its task and run IDs, update it at meaningful transitions, heartbeat during long work, record blockers immediately, and complete only after all required checklist items are done or skipped with a reason.",
+		Instructions: "Use task_create to capture future work without beginning execution. Before substantive agent work, start or claim the task, keep its task and run IDs, update it at meaningful transitions, heartbeat during long work, record blockers immediately, and complete only after all required checklist items are done or skipped with a reason. Unattended clients should send a stable idempotency_key for each mutating task operation and reuse it only when retrying the identical request.",
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_start", Description: "Register substantial work before beginning. Creates a durable task, checklist, and leased agent run; keep the returned task_id and run_id for updates.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.StartRequest) (*mcp.CallToolResult, model.StartResult, error) {
 		if input.Type == "" {
@@ -560,7 +560,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				}
 				authenticatedPrincipal := service.HumanPrincipalWithRole("local", roleForGroups(cfg, nil))
 				if mcpRequest {
-					authenticatedPrincipal = service.AgentPrincipal("agent:local")
+					authenticatedPrincipal = agentPrincipal(cfg, "agent:local")
 				}
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)))
 				return
@@ -583,12 +583,12 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					mechanism = "cloudflare_access"
 					if identity, err := cloudflare.identity(r); err == nil {
 						valid = true
-						authenticatedPrincipal = service.AgentPrincipal(identity.Subject)
+						authenticatedPrincipal = agentPrincipal(cfg, identity.Subject)
 					}
 				} else if len(values) == 1 && strings.HasPrefix(values[0], "Bearer ") {
 					presented := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))
 					valid = secureEqual(presented, cfg.AuthToken)
-					authenticatedPrincipal = service.AgentPrincipal("agent:shared")
+					authenticatedPrincipal = agentPrincipal(cfg, "agent:shared")
 				}
 			} else if cloudflare != nil {
 				mechanism = "cloudflare_access"
@@ -663,6 +663,9 @@ func apiError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, service.ErrForbidden):
 		status = http.StatusForbidden
 		message = "forbidden"
+	case errors.Is(err, service.ErrRateLimit):
+		status = http.StatusTooManyRequests
+		message = err.Error()
 	case errors.Is(err, service.ErrValidation):
 		status = http.StatusBadRequest
 		message = err.Error()
@@ -703,6 +706,15 @@ func principal(ctx context.Context) service.Principal {
 }
 func actor(ctx context.Context) string { return principal(ctx).ID }
 func mcpPrincipal(ctx context.Context) service.Principal {
+	if authenticated := principal(ctx); authenticated.Agent && authenticated.ID != "" {
+		switch authenticated.ID {
+		case "agent":
+			authenticated.ID = "agent:shared"
+		case "local":
+			authenticated.ID = "agent:local"
+		}
+		return authenticated
+	}
 	switch authenticated := strings.TrimSpace(actor(ctx)); authenticated {
 	case "", "agent":
 		return service.AgentPrincipal("agent:shared")

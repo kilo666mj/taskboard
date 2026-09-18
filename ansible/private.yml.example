@@ -17,6 +17,7 @@ taskboard_owner_groups: []
 taskboard_admin_groups: []
 taskboard_member_groups: []
 taskboard_viewer_groups: []
+taskboard_agent_policies_json: ""
 taskboard_browser_auth_mode: oidc
 taskboard_cf_access_team_domain: ""
 taskboard_cf_access_aud: ""
