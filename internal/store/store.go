@@ -23,7 +23,10 @@ var (
 	ErrConflict = errors.New("conflict")
 )
 
-type Store struct{ db *DB }
+type Store struct {
+	db          *DB
+	databaseURL string
+}
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	return open(ctx, "sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", DialectSQLite)
@@ -40,7 +43,11 @@ func OpenURL(ctx context.Context, databaseURL string) (*Store, error) {
 	if parsed.Host == "" || parsed.Path == "" || parsed.Path == "/" {
 		return nil, fmt.Errorf("database URL must include a host and database name")
 	}
-	return open(ctx, "pgx", databaseURL, DialectPostgres)
+	store, err := open(ctx, "pgx", databaseURL, DialectPostgres)
+	if err == nil {
+		store.databaseURL = databaseURL
+	}
+	return store, err
 }
 
 func open(ctx context.Context, driver, dsn string, dialect Dialect) (*Store, error) {

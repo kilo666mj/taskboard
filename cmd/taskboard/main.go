@@ -48,6 +48,7 @@ func main() {
 	notifications := push.New(database, tasks, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDContact, logger, metrics)
 	runContext, stopNotifications := context.WithCancel(context.Background())
 	notifications.Run(runContext)
+	tasks.RunEventFanout(runContext, logger)
 	handler, err := server.New(cfg, database, tasks, notifications, logger, metrics)
 	if err != nil {
 		logger.Error("server startup failed", "error", err)
@@ -122,4 +123,5 @@ func main() {
 		}
 	}
 	notifications.Wait()
+	tasks.WaitEventFanout()
 }

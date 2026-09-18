@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const latestSchemaVersion = 1
+const latestSchemaVersion = 2
 
 type schemaMigration struct {
 	Version  int
@@ -27,12 +27,29 @@ type appliedMigration struct {
 	Checksum string
 }
 
-var schemaMigrations = []schemaMigration{{
-	Version:  1,
-	Name:     "baseline",
-	SQLite:   sqliteBaselineStatements(),
-	Postgres: postgresBaselineStatements(),
-}}
+var schemaMigrations = []schemaMigration{
+	{
+		Version:  1,
+		Name:     "baseline",
+		SQLite:   sqliteBaselineStatements(),
+		Postgres: postgresBaselineStatements(),
+	},
+	{
+		Version: 2,
+		Name:    "postgres_event_notifications",
+		SQLite:  []string{`SELECT 1`},
+		Postgres: []string{
+			`CREATE OR REPLACE FUNCTION taskboard_notify_event() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				PERFORM pg_notify('taskboard_events', NEW.id);
+				RETURN NEW;
+			END;
+			$$`,
+			`DROP TRIGGER IF EXISTS taskboard_event_notify ON events`,
+			`CREATE TRIGGER taskboard_event_notify AFTER INSERT ON events FOR EACH ROW EXECUTE FUNCTION taskboard_notify_event()`,
+		},
+	},
+}
 
 var requiredSchema = map[string][]string{
 	"tasks": {
@@ -148,6 +165,21 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	if err := validateCurrentSchema(ctx, tx, s.db.dialect); err != nil {
 		return err
+	}
+	if s.db.dialect == DialectPostgres {
+		var notificationTriggerExists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM pg_trigger trigger
+			JOIN pg_class relation ON relation.oid=trigger.tgrelid
+			JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+			WHERE namespace.nspname=current_schema() AND relation.relname='events'
+			AND trigger.tgname='taskboard_event_notify' AND NOT trigger.tgisinternal
+		)`).Scan(&notificationTriggerExists); err != nil {
+			return fmt.Errorf("validate PostgreSQL event notification trigger: %w", err)
+		}
+		if !notificationTriggerExists {
+			return fmt.Errorf("schema version %d is partial: PostgreSQL event notification trigger is missing", latestSchemaVersion)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema migrations: %w", err)

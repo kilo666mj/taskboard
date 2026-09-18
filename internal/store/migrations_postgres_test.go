@@ -52,7 +52,7 @@ func TestPostgresMigrationMetadataAndCompatibility(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := admin.ExecContext(t.Context(), `UPDATE `+schema+`.schema_migrations SET version=2 WHERE version=1`); err != nil {
+		if _, err := admin.ExecContext(t.Context(), `INSERT INTO `+schema+`.schema_migrations(version,name,checksum,applied_at) VALUES(3,'future','future','2026-01-01T00:00:00Z')`); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "newer than supported") {
@@ -74,6 +74,23 @@ func TestPostgresMigrationMetadataAndCompatibility(t *testing.T) {
 		}
 		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "partial") {
 			t.Fatalf("OpenURL error = %v, want partial schema error", err)
+		}
+	})
+
+	t.Run("rejects missing event notification trigger", func(t *testing.T) {
+		databaseURL, admin, schema := postgresMigrationFixture(t, baseURL)
+		database, err := OpenURL(t.Context(), databaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.ExecContext(t.Context(), `DROP TRIGGER taskboard_event_notify ON `+schema+`.events`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "notification trigger is missing") {
+			t.Fatalf("OpenURL error = %v, want missing notification trigger error", err)
 		}
 	})
 }
