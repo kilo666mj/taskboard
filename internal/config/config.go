@@ -43,6 +43,11 @@ type Config struct {
 	CFAccessSubjects     []string
 	CFAccessEmails       []string
 	CFAccessGroups       []string
+	DefaultRole          string
+	OwnerGroups          []string
+	AdminGroups          []string
+	MemberGroups         []string
+	ViewerGroups         []string
 }
 
 func Load() (Config, error) {
@@ -72,6 +77,11 @@ func Load() (Config, error) {
 		CFAccessSubjects:     split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS")),
 		CFAccessEmails:       split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_EMAILS")),
 		CFAccessGroups:       split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_GROUPS")),
+		DefaultRole:          env("TASKBOARD_DEFAULT_ROLE", "admin"),
+		OwnerGroups:          split(os.Getenv("TASKBOARD_OWNER_GROUPS")),
+		AdminGroups:          split(os.Getenv("TASKBOARD_ADMIN_GROUPS")),
+		MemberGroups:         split(os.Getenv("TASKBOARD_MEMBER_GROUPS")),
+		ViewerGroups:         split(os.Getenv("TASKBOARD_VIEWER_GROUPS")),
 	}
 	if value := strings.TrimSpace(os.Getenv("TASKBOARD_LEASE_SECONDS")); value != "" {
 		seconds, err := strconv.Atoi(value)
@@ -112,6 +122,11 @@ func Load() (Config, error) {
 	}
 	if cfg.BrowserAuthMode != BrowserAuthOIDC && cfg.BrowserAuthMode != BrowserAuthCloudflareAccess {
 		return Config{}, fmt.Errorf("TASKBOARD_BROWSER_AUTH_MODE must be oidc or cloudflare_access")
+	}
+	switch cfg.DefaultRole {
+	case "owner", "admin", "member", "viewer":
+	default:
+		return Config{}, fmt.Errorf("TASKBOARD_DEFAULT_ROLE must be owner, admin, member, or viewer")
 	}
 	if (cfg.VAPIDPublicKey == "") != (cfg.VAPIDPrivateKey == "") {
 		return Config{}, fmt.Errorf("TASKBOARD_VAPID_PUBLIC_KEY and TASKBOARD_VAPID_PRIVATE_KEY must be configured together")

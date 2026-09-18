@@ -18,3 +18,7 @@ and upgrade examples are in
 The chart creates no credentials or database. Before installing, create the
 Secrets selected by `database.existingSecret` and `secrets.existingSecret` and
 customize NetworkPolicy selectors and CIDRs for the cluster.
+
+Map OIDC or Cloudflare Access groups with `taskboard.roles.*Groups`. Set
+`taskboard.roles.default` to `viewer` to require an explicit mapped group for
+write access; the default `admin` value preserves existing installations.

@@ -154,7 +154,11 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 }
 
 func pushKey(notifications *push.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !principal(r.Context()).Can(service.PermissionPushManage) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		if !notifications.Enabled() {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Web Push is not configured"})
 			return
@@ -165,6 +169,10 @@ func pushKey(notifications *push.Service) http.HandlerFunc {
 
 func savePushSubscription(notifications *push.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !principal(r.Context()).Can(service.PermissionPushManage) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		if !notifications.Enabled() {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Web Push is not configured"})
 			return
@@ -187,6 +195,10 @@ func savePushSubscription(notifications *push.Service) http.HandlerFunc {
 
 func deletePushSubscription(notifications *push.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !principal(r.Context()).Can(service.PermissionPushManage) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		var input struct {
 			Endpoint string `json:"endpoint"`
 		}
@@ -207,6 +219,10 @@ func deletePushSubscription(notifications *push.Service) http.HandlerFunc {
 
 func updatePushPreferences(notifications *push.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !principal(r.Context()).Can(service.PermissionPushManage) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
 		var input struct {
 			Endpoint  string `json:"endpoint"`
 			Progress  bool   `json:"progress"`
@@ -281,11 +297,11 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		return nil, tasksOutput{Tasks: items}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_template_list", Description: "List reusable Taskboard task and checklist templates.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, templatesOutput, error) {
-		items, err := tasks.ListTemplates(ctx)
+		items, err := tasks.ListTemplatesFor(ctx, mcpPrincipal(ctx))
 		return nil, templatesOutput{Templates: items}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_template_save", Description: "Create or replace a reusable task and checklist template by name.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, input model.TemplateRequest) (*mcp.CallToolResult, templateOutput, error) {
-		item, err := tasks.SaveTemplate(ctx, input)
+		item, err := tasks.SaveTemplateFor(ctx, input, mcpPrincipal(ctx))
 		return nil, templateOutput{Template: item}, err
 	})
 	return server
@@ -293,7 +309,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 
 func listTemplates(tasks *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := tasks.ListTemplates(r.Context())
+		items, err := tasks.ListTemplatesFor(r.Context(), principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -306,7 +322,7 @@ func saveTemplate(tasks *service.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		item, err := tasks.SaveTemplate(r.Context(), input)
+		item, err := tasks.SaveTemplateFor(r.Context(), input, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
@@ -315,7 +331,7 @@ func saveTemplate(tasks *service.Service) http.HandlerFunc {
 }
 func deleteTemplate(tasks *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if apiError(w, tasks.DeleteTemplate(r.Context(), r.PathValue("id"))) {
+		if apiError(w, tasks.DeleteTemplateFor(r.Context(), r.PathValue("id"), principal(r.Context()))) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -465,7 +481,12 @@ func events(tasks *service.Service, limiter *eventStreamLimiter) http.HandlerFun
 
 func eventsWithKeepalive(tasks *service.Service, keepaliveInterval time.Duration, limiter *eventStreamLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		principalID := principal(r.Context()).ID
+		authenticatedPrincipal := principal(r.Context())
+		if !authenticatedPrincipal.Can(service.PermissionEventStream) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		principalID := authenticatedPrincipal.ID
 		if !limiter.acquire(principalID) {
 			w.Header().Set("Retry-After", "5")
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many live event streams"})
@@ -537,10 +558,15 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				if metrics != nil {
 					metrics.ObserveAuth("local", "success")
 				}
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: "local", Agent: mcpRequest})))
+				authenticatedPrincipal := service.HumanPrincipalWithRole("local", roleForGroups(cfg, nil))
+				if mcpRequest {
+					authenticatedPrincipal = service.AgentPrincipal("agent:local")
+				}
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)))
 				return
 			}
-			valid, who, mechanism := false, "", "session"
+			valid, mechanism := false, "session"
+			authenticatedPrincipal := service.Principal{}
 			if mcpRequest {
 				mechanism = "token"
 				values := r.Header.Values("Authorization")
@@ -557,22 +583,22 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					mechanism = "cloudflare_access"
 					if identity, err := cloudflare.identity(r); err == nil {
 						valid = true
-						who = identity.Subject
+						authenticatedPrincipal = service.AgentPrincipal(identity.Subject)
 					}
 				} else if len(values) == 1 && strings.HasPrefix(values[0], "Bearer ") {
 					presented := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))
 					valid = secureEqual(presented, cfg.AuthToken)
-					who = "agent:shared"
+					authenticatedPrincipal = service.AgentPrincipal("agent:shared")
 				}
 			} else if cloudflare != nil {
 				mechanism = "cloudflare_access"
 				if identity, err := cloudflare.identity(r); err == nil {
 					valid = true
-					who = identity.Subject
+					authenticatedPrincipal = service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups))
 				}
 			} else if identity, ok := sessions.identity(r.Context(), r); ok {
 				valid = true
-				who = identity.Subject
+				authenticatedPrincipal = browserPrincipal(cfg, identity)
 			}
 			if !valid {
 				if metrics != nil {
@@ -585,7 +611,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			if metrics != nil {
 				metrics.ObserveAuth(mechanism, "success")
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, service.Principal{ID: who, Agent: mcpRequest})))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)))
 		})
 	}
 }
@@ -593,7 +619,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.AllowInsecure && cfg.AuthToken == "" {
-			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "auth_mode": "local", "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": "local"})
+			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "auth_mode": "local", "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": "local", "role": roleForGroups(cfg, nil)})
 			return
 		}
 		if cloudflare != nil {
@@ -604,12 +630,17 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 				"oidc_enabled":              false,
 				"cloudflare_access_enabled": true,
 				"identity":                  identityActor(identity),
+				"role":                      roleForGroups(cfg, identity.Groups),
 				"logout_url":                "/cdn-cgi/access/logout",
 			})
 			return
 		}
 		identity, valid := sessions.identity(r.Context(), r)
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": valid, "auth_mode": config.BrowserAuthOIDC, "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": identityActor(identity)})
+		role := service.Role("")
+		if valid {
+			role = roleForGroups(cfg, identity.Groups)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": valid, "auth_mode": config.BrowserAuthOIDC, "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": identityActor(identity), "role": role})
 	}
 }
 

@@ -30,10 +30,33 @@ disable their feature.
 | `TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS` | none | Optional comma-separated Access subject allowlist. |
 | `TASKBOARD_CF_ACCESS_ALLOWED_EMAILS` | none | Optional comma-separated Access email allowlist. |
 | `TASKBOARD_CF_ACCESS_ALLOWED_GROUPS` | none | Optional comma-separated Access group allowlist. |
+| `TASKBOARD_DEFAULT_ROLE` | `admin` | Role assigned when no configured role group matches: `owner`, `admin`, `member`, or `viewer`. The `admin` default preserves existing deployments. |
+| `TASKBOARD_OWNER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `owner`. |
+| `TASKBOARD_ADMIN_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `admin`. |
+| `TASKBOARD_MEMBER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `member`. |
+| `TASKBOARD_VIEWER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `viewer`. |
 
 OIDC requires issuer, client ID, and redirect URL together. At least one OIDC
 allowlist is recommended for a workplace deployment unless the identity
 provider application assignment already restricts access.
+
+Role mappings are evaluated in descending authority order: owner, admin,
+member, then viewer. If an identity belongs to several mapped groups, the
+highest role wins. Set `TASKBOARD_DEFAULT_ROLE=viewer` when every identity that
+may change data should be explicitly placed in a member, admin, or owner group.
+The same mappings apply to group claims from OIDC and Cloudflare Access.
+
+| Action | Owner | Admin | Member | Viewer |
+| --- | --- | --- | --- | --- |
+| Read visible tasks, templates, and live events | yes | yes | yes | yes |
+| Manage own Web Push subscription | yes | yes | yes | yes |
+| Create, edit, assign, move, and complete visible tasks | yes | yes | yes | no |
+| Create, replace, and delete task templates | yes | yes | no | no |
+
+Private tasks remain visible only to their immutable creator, including for
+owners and admins. Roles apply to the single trusted workspace and do not add
+tenant or project isolation. MCP service principals keep the existing agent
+authorization model; automated-agent capabilities are configured separately.
 
 `TASKBOARD_DATABASE_URL` accepts `postgres://` and `postgresql://` URLs. A
 multi-host URL can use `target_session_attrs=read-write` to select the writable

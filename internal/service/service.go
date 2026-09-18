@@ -27,12 +27,78 @@ var (
 type Principal struct {
 	ID    string
 	Agent bool
+	Role  Role
 }
 
-func HumanPrincipal(id string) Principal { return Principal{ID: strings.TrimSpace(id)} }
-func AgentPrincipal(id string) Principal { return Principal{ID: strings.TrimSpace(id), Agent: true} }
+type Role string
+
+const (
+	RoleOwner  Role = "owner"
+	RoleAdmin  Role = "admin"
+	RoleMember Role = "member"
+	RoleViewer Role = "viewer"
+	RoleAgent  Role = "agent"
+)
+
+type Permission string
+
+const (
+	PermissionTaskRead       Permission = "task:read"
+	PermissionTaskWrite      Permission = "task:write"
+	PermissionTemplateRead   Permission = "template:read"
+	PermissionTemplateManage Permission = "template:manage"
+	PermissionEventStream    Permission = "event:stream"
+	PermissionPushManage     Permission = "push:manage-self"
+)
+
+func HumanPrincipal(id string) Principal {
+	return Principal{ID: strings.TrimSpace(id), Role: RoleAdmin}
+}
+
+func HumanPrincipalWithRole(id string, role Role) Principal {
+	if !IsHumanRole(role) {
+		role = RoleViewer
+	}
+	return Principal{ID: strings.TrimSpace(id), Role: role}
+}
+
+func AgentPrincipal(id string) Principal {
+	return Principal{ID: strings.TrimSpace(id), Agent: true, Role: RoleAgent}
+}
+
+func IsHumanRole(role Role) bool {
+	return role == RoleOwner || role == RoleAdmin || role == RoleMember || role == RoleViewer
+}
+
+func (principal Principal) Can(permission Permission) bool {
+	if principal.Agent {
+		switch permission {
+		case PermissionTaskRead, PermissionTaskWrite, PermissionTemplateRead, PermissionTemplateManage:
+			return true
+		default:
+			return false
+		}
+	}
+	role := principal.Role
+	if role == "" {
+		role = RoleAdmin
+	}
+	switch permission {
+	case PermissionTaskRead, PermissionTemplateRead, PermissionEventStream, PermissionPushManage:
+		return IsHumanRole(role)
+	case PermissionTaskWrite:
+		return role == RoleOwner || role == RoleAdmin || role == RoleMember
+	case PermissionTemplateManage:
+		return role == RoleOwner || role == RoleAdmin
+	default:
+		return false
+	}
+}
 
 func CanView(task model.Task, principal Principal) bool {
+	if !principal.Can(PermissionTaskRead) {
+		return false
+	}
 	if principal.Agent {
 		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && task.Owner == principal.ID
 	}
@@ -278,6 +344,9 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 }
 
 func (s *Service) StartFor(ctx context.Context, request model.StartRequest, principal Principal) (model.StartResult, error) {
+	if !principal.Can(PermissionTaskWrite) {
+		return model.StartResult{}, ErrForbidden
+	}
 	if principal.Agent {
 		if request.Visibility == "" {
 			request.Visibility = model.VisibilityAgent
@@ -367,6 +436,9 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 }
 
 func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
+	if !principal.Can(PermissionTaskWrite) {
+		return model.Task{}, ErrForbidden
+	}
 	if principal.Agent {
 		if request.Visibility == "" {
 			request.Visibility = model.VisibilityAgent
@@ -438,6 +510,27 @@ func (s *Service) ListTemplates(ctx context.Context) ([]model.Template, error) {
 	return result, rows.Err()
 }
 
+func (s *Service) ListTemplatesFor(ctx context.Context, principal Principal) ([]model.Template, error) {
+	if !principal.Can(PermissionTemplateRead) {
+		return nil, ErrForbidden
+	}
+	return s.ListTemplates(ctx)
+}
+
+func (s *Service) SaveTemplateFor(ctx context.Context, request model.TemplateRequest, principal Principal) (model.Template, error) {
+	if !principal.Can(PermissionTemplateManage) {
+		return model.Template{}, ErrForbidden
+	}
+	return s.SaveTemplate(ctx, request)
+}
+
+func (s *Service) DeleteTemplateFor(ctx context.Context, id string, principal Principal) error {
+	if !principal.Can(PermissionTemplateManage) {
+		return ErrForbidden
+	}
+	return s.DeleteTemplate(ctx, id)
+}
+
 func (s *Service) DeleteTemplate(ctx context.Context, id string) error {
 	result, err := s.store.DB().ExecContext(ctx, `DELETE FROM task_templates WHERE id=?`, strings.TrimSpace(id))
 	if err != nil {
@@ -477,6 +570,9 @@ func (s *Service) Get(ctx context.Context, id string) (model.Task, error) {
 }
 
 func (s *Service) GetFor(ctx context.Context, id string, principal Principal) (model.Task, error) {
+	if !principal.Can(PermissionTaskRead) {
+		return model.Task{}, ErrForbidden
+	}
 	task, err := s.Get(ctx, id)
 	if err != nil {
 		return model.Task{}, err
@@ -497,6 +593,9 @@ func (s *Service) List(ctx context.Context, statuses []model.TaskStatus, limit i
 }
 
 func (s *Service) ListFor(ctx context.Context, statuses []model.TaskStatus, limit int, principal Principal) ([]model.Task, error) {
+	if !principal.Can(PermissionTaskRead) {
+		return nil, ErrForbidden
+	}
 	for _, status := range statuses {
 		if !model.IsTaskStatus(status) {
 			return nil, fmt.Errorf("%w: unknown status %q", ErrValidation, status)
@@ -1018,6 +1117,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 }
 
 func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.UpdateRequest, principal Principal) (model.Task, error) {
+	if !principal.Can(PermissionTaskWrite) {
+		return model.Task{}, ErrForbidden
+	}
 	current, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
 		return model.Task{}, err
@@ -1143,7 +1245,7 @@ func (s *Service) Move(ctx context.Context, taskID string, request model.MoveReq
 }
 
 func (s *Service) MoveFor(ctx context.Context, taskID string, request model.MoveRequest, principal Principal) (model.Task, error) {
-	if principal.Agent {
+	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
 	task, err := s.GetFor(ctx, taskID, principal)

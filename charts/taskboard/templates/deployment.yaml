@@ -80,6 +80,16 @@ spec:
               value: {{ .Values.taskboard.mcpDefaultType | quote }}
             - name: TASKBOARD_BROWSER_AUTH_MODE
               value: {{ .Values.taskboard.browserAuthMode | quote }}
+            - name: TASKBOARD_DEFAULT_ROLE
+              value: {{ .Values.taskboard.roles.default | quote }}
+            - name: TASKBOARD_OWNER_GROUPS
+              value: {{ join "," .Values.taskboard.roles.ownerGroups | quote }}
+            - name: TASKBOARD_ADMIN_GROUPS
+              value: {{ join "," .Values.taskboard.roles.adminGroups | quote }}
+            - name: TASKBOARD_MEMBER_GROUPS
+              value: {{ join "," .Values.taskboard.roles.memberGroups | quote }}
+            - name: TASKBOARD_VIEWER_GROUPS
+              value: {{ join "," .Values.taskboard.roles.viewerGroups | quote }}
             - name: TASKBOARD_VAPID_CONTACT
               value: {{ .Values.taskboard.vapidContact | quote }}
             - name: TASKBOARD_VAPID_PUBLIC_KEY

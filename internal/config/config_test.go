@@ -66,6 +66,26 @@ func TestCloudflareAccessConfiguration(t *testing.T) {
 	}
 }
 
+func TestWorkplaceRoleConfiguration(t *testing.T) {
+	t.Setenv("TASKBOARD_DEFAULT_ROLE", "viewer")
+	t.Setenv("TASKBOARD_OWNER_GROUPS", "taskboard-owners")
+	t.Setenv("TASKBOARD_ADMIN_GROUPS", "taskboard-admins")
+	t.Setenv("TASKBOARD_MEMBER_GROUPS", "engineering,operations")
+	t.Setenv("TASKBOARD_VIEWER_GROUPS", "auditors")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultRole != "viewer" || len(cfg.MemberGroups) != 2 || cfg.OwnerGroups[0] != "taskboard-owners" {
+		t.Fatalf("role configuration = %#v", cfg)
+	}
+
+	t.Setenv("TASKBOARD_DEFAULT_ROLE", "superuser")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid default role was accepted")
+	}
+}
+
 func TestCloudflareAccessConfigurationFailsClosed(t *testing.T) {
 	for _, teamDomain := range []string{"", "http://team.cloudflareaccess.com", "https://team.cloudflareaccess.com/path"} {
 		t.Run(teamDomain, func(t *testing.T) {
