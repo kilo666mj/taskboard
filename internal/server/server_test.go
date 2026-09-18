@@ -249,8 +249,13 @@ func TestDesktopConfirmationPageEscapesAllValues(t *testing.T) {
 func TestRequestRateLimiterRejectsBurst(t *testing.T) {
 	limiter := newRequestRateLimiter(2, time.Minute, 2)
 	now := time.Now()
-	if !limiter.allow("client", now) || !limiter.allow("client", now) || limiter.allow("client", now) {
-		t.Fatal("rate limiter did not enforce its fixed-window bound")
+	for attempt := 1; attempt <= 2; attempt++ {
+		if !limiter.allow("client", now) {
+			t.Fatalf("rate limiter rejected allowed attempt %d", attempt)
+		}
+	}
+	if limiter.allow("client", now) {
+		t.Fatal("rate limiter accepted a request above its fixed-window bound")
 	}
 	if !limiter.allow("client", now.Add(time.Minute)) {
 		t.Fatal("rate limiter did not reset after its window")

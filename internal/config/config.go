@@ -237,7 +237,7 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("TASKBOARD_CF_ACCESS_TEAM_DOMAIN must be an HTTPS origin")
 		}
 		if len(cfg.CFAccessSubjects) == 0 && len(cfg.CFAccessEmails) == 0 && len(cfg.CFAccessGroups) == 0 && !cfg.CFAccessTrustPolicy {
-			return Config{}, fmt.Errorf("Cloudflare Access requires an application allow-list or TASKBOARD_CF_ACCESS_TRUST_POLICY=true")
+			return Config{}, fmt.Errorf("cloudflare Access requires an application allow-list or TASKBOARD_CF_ACCESS_TRUST_POLICY=true")
 		}
 	}
 	return cfg, nil
