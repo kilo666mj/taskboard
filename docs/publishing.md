@@ -31,7 +31,8 @@ those account-level controls.
 Push a semantic version tag such as `v1.0.0`. The release workflow builds the
 Linux and macOS binary bundles and publishes their checksums. The container
 workflow publishes multi-architecture images to GHCR with version, major/minor,
-`latest`, and immutable digest-backed tags, plus provenance and an SBOM.
+`latest`, and immutable digest-backed tags, plus provenance and an SBOM. The
+release also includes a version-matched Helm chart archive in `SHA256SUMS`.
 
 Keep deployment credentials and real infrastructure inventory outside the
 repository. Use GitHub environments and narrowly scoped secrets only when a

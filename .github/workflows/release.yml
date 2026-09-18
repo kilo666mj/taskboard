@@ -34,13 +34,21 @@ jobs:
       - name: Build release bundles
         env:
           VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version }}
-        run: ./scripts/build-release.sh "$VERSION"
+        run: |
+          ./scripts/build-release.sh "$VERSION"
+          chart_version="${VERSION#v}"
+          if [[ ! "$chart_version" =~ ^[0-9] ]]; then
+            chart_version="0.0.0-${chart_version}"
+          fi
+          helm package charts/taskboard --version "$chart_version" --app-version "$VERSION" --destination dist
+          (cd dist && sha256sum "taskboard-${chart_version}.tgz" >> SHA256SUMS)
       - name: Upload release assets
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: release-assets
           path: |
             dist/*.tar.gz
+            dist/taskboard-*.tgz
             dist/SHA256SUMS
           if-no-files-found: error
 
@@ -62,4 +70,5 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/taskboard-*.tgz
             dist/SHA256SUMS

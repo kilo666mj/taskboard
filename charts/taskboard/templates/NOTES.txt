@@ -1,0 +1,17 @@
+Taskboard has been installed as {{ include "taskboard.fullname" . }}.
+
+Application service:
+  {{ include "taskboard.fullname" . }}:{{ .Values.service.port }}
+{{- if .Values.metrics.enabled }}
+Metrics service (keep private):
+  {{ include "taskboard.fullname" . }}-metrics:{{ .Values.metrics.port }}/metrics
+{{- end }}
+
+Check rollout and readiness:
+  kubectl rollout status deployment/{{ include "taskboard.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl port-forward service/{{ include "taskboard.fullname" . }} 8095:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl --fail http://127.0.0.1:8095/readyz
+
+The chart references existing Secrets and does not create credentials. See
+docs/helm.md for External Secrets, Cloudflare Access, NetworkPolicy, and upgrade
+guidance.

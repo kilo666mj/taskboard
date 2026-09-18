@@ -113,6 +113,10 @@ durable `LISTEN/NOTIFY` fan-out so SSE and Web Push stay coherent across pods.
 See the [deployment guide](docs/deployment.md) for managed-database and
 session-pooling guidance.
 
+For EKS, the optional [hardened Helm chart](docs/helm.md) uses existing Secrets,
+external PostgreSQL, non-root read-only containers, probes, resource limits,
+and default-deny ingress and egress controls.
+
 Agents send that token as a bearer credential to `/mcp`; it is never accepted
 as a human login credential. Browser users authenticate through an OIDC provider
 using authorization code flow with PKCE and receive an identity-bound, hashed,
