@@ -29,6 +29,41 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, statement := range []string{
+		`CREATE TABLE checklist_items (
+			id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			label TEXT NOT NULL, status TEXT NOT NULL, position INTEGER NOT NULL, required INTEGER NOT NULL DEFAULT 1,
+			note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE agent_runs (
+			id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			agent TEXT NOT NULL, client TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+			lease_expires_at TEXT NOT NULL, last_heartbeat_at TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT
+		)`,
+		`CREATE TABLE events (
+			id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			run_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, actor TEXT NOT NULL,
+			message TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE push_subscriptions (
+			endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE browser_sessions (
+			token_hash BLOB PRIMARY KEY, subject TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
+			groups_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE task_templates (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+			section TEXT NOT NULL DEFAULT 'General', project TEXT NOT NULL DEFAULT '', repository TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL DEFAULT 'normal', recurrence TEXT NOT NULL DEFAULT '', checklist_json TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		)`,
+	} {
+		if _, err := legacy.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := legacy.Exec(`INSERT INTO tasks(id,title,status,created_at,updated_at) VALUES(?,?,?,?,?)`, "legacy", "Existing task", "queued", stamp, stamp); err != nil {
 		t.Fatal(err)
