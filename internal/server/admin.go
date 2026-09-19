@@ -172,11 +172,39 @@ func adminExport(database *store.Store, tasks *service.Service) http.HandlerFunc
 		if apiError(w, err) {
 			return
 		}
+		messages, err := database.ListAllTaskMessages(r.Context())
+		if apiError(w, err) {
+			return
+		}
+		escalations, err := database.ListAllTaskEscalations(r.Context())
+		if apiError(w, err) {
+			return
+		}
+		controls, err := database.ListAllRunControls(r.Context())
+		if apiError(w, err) {
+			return
+		}
+		references, err := database.ListAllTaskReferences(r.Context())
+		if apiError(w, err) {
+			return
+		}
 		audit, err := database.ListAllAdminAudit(r.Context())
 		if apiError(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"exported_at": time.Now().UTC(), "tasks": taskItems, "templates": templates, "events": events, "admin_audit": audit})
+		handoffs, err := database.ListAllRunHandoffs(r.Context())
+		if apiError(w, err) {
+			return
+		}
+		completion, err := database.ListAllCompletionRequirements(r.Context())
+		if apiError(w, err) {
+			return
+		}
+		usage, err := database.ListAllUsageRecords(r.Context())
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"exported_at": time.Now().UTC(), "tasks": taskItems, "templates": templates, "messages": messages, "escalations": escalations, "controls": controls, "references": references, "handoffs": handoffs, "completion": completion, "usage": usage, "events": events, "admin_audit": audit})
 	}
 }
 

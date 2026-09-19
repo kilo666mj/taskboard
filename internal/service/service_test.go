@@ -48,6 +48,9 @@ func TestPrincipalPermissionMatrix(t *testing.T) {
 			if got := principal.Can(PermissionTaskWrite); got != test.writeTasks {
 				t.Errorf("%s task write = %v, want %v", test.role, got, test.writeTasks)
 			}
+			if got := principal.Can(PermissionTaskMessage); got != test.writeTasks {
+				t.Errorf("%s task message = %v, want %v", test.role, got, test.writeTasks)
+			}
 			if got := principal.Can(PermissionTemplateManage); got != test.manageTemplates {
 				t.Errorf("%s template manage = %v, want %v", test.role, got, test.manageTemplates)
 			}
@@ -55,7 +58,7 @@ func TestPrincipalPermissionMatrix(t *testing.T) {
 	}
 
 	agent := AgentPrincipal("agent:build")
-	if !agent.Can(PermissionTaskRead) || !agent.Can(PermissionTaskWrite) || agent.Can(PermissionPushManage) {
+	if !agent.Can(PermissionTaskRead) || !agent.Can(PermissionTaskWrite) || !agent.Can(PermissionTaskMessage) || agent.Can(PermissionPushManage) {
 		t.Fatalf("unexpected agent permissions: %+v", agent)
 	}
 }
@@ -361,6 +364,111 @@ func TestHeartbeatReportsProgressWithoutInferringCompletion(t *testing.T) {
 	}
 	if heartbeat.Progress.Stale || heartbeat.Progress.CompletedItems != 1 || heartbeat.Progress.CurrentItemID != updated.Items[1].ID {
 		t.Fatalf("fresh progress = %+v", heartbeat.Progress)
+	}
+}
+
+func TestTaskConversationDeliveryAndAcknowledgement(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	operator := HumanPrincipal("operator@example.com")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Directed work", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := started.Task.Version
+	instruction, err := tasks.AddMessageFor(t.Context(), started.Task.ID, model.AddMessageRequest{
+		TargetRunID: started.Run.ID, Kind: model.MessageInstruction, Body: "Run the focused tests", IdempotencyKey: "instruction-001",
+	}, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !instruction.RequiresAck || instruction.TargetRunID != started.Run.ID {
+		t.Fatalf("instruction = %+v", instruction)
+	}
+	var eventPayload string
+	if err := tasks.store.DB().QueryRowContext(t.Context(), `SELECT payload FROM events WHERE task_id=? AND kind='task.message_added'`, started.Task.ID).Scan(&eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(eventPayload, instruction.Body) {
+		t.Fatalf("message body leaked into event payload: %s", eventPayload)
+	}
+	replayed, err := tasks.AddMessageFor(t.Context(), started.Task.ID, model.AddMessageRequest{
+		TargetRunID: started.Run.ID, Kind: model.MessageInstruction, Body: "Run the focused tests", IdempotencyKey: "instruction-001",
+	}, operator)
+	if err != nil || replayed.ID != instruction.ID {
+		t.Fatalf("replayed instruction = %+v, %v", replayed, err)
+	}
+	heartbeat, err := tasks.HeartbeatFor(t.Context(), started.Task.ID, started.Run.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(heartbeat.PendingMessages) != 1 || heartbeat.PendingMessages[0].ID != instruction.ID {
+		t.Fatalf("heartbeat pending = %+v", heartbeat.PendingMessages)
+	}
+	pending, err := tasks.RecordMessageReceiptsFor(t.Context(), started.Task.ID, started.Run.ID, model.MessageReceiptRequest{
+		ObservedMessageIDs: []string{instruction.ID}, IdempotencyKey: "receipt-observed-001",
+	}, agent)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("observed instruction pending = %+v, %v", pending, err)
+	}
+	pending, err = tasks.RecordMessageReceiptsFor(t.Context(), started.Task.ID, started.Run.ID, model.MessageReceiptRequest{
+		AcknowledgedMessageIDs: []string{instruction.ID}, IdempotencyKey: "receipt-acknowledged-001",
+	}, agent)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("acknowledged instruction pending = %+v, %v", pending, err)
+	}
+	question, err := tasks.AddMessageFor(t.Context(), started.Task.ID, model.AddMessageRequest{
+		AuthorRunID: started.Run.ID, Kind: model.MessageQuestion, Body: "Which environment should I validate?", IdempotencyKey: "question-001",
+	}, agent)
+	if err != nil || question.AuthorRunID != started.Run.ID {
+		t.Fatalf("agent question = %+v, %v", question, err)
+	}
+	thread, err := tasks.ListMessagesFor(t.Context(), started.Task.ID, "", 10, operator)
+	if err != nil || len(thread) != 2 {
+		t.Fatalf("thread = %+v, %v", thread, err)
+	}
+	var received model.TaskMessage
+	for _, message := range thread {
+		if message.ID == instruction.ID {
+			received = message
+		}
+	}
+	if len(received.Receipts) != 1 || received.Receipts[0].AcknowledgedAt == nil {
+		t.Fatalf("instruction receipts = %+v", received.Receipts)
+	}
+	unchanged, err := tasks.GetFor(t.Context(), started.Task.ID, operator)
+	if err != nil || unchanged.Version != version {
+		t.Fatalf("message changed task version: %d -> %d, %v", version, unchanged.Version, err)
+	}
+}
+
+func TestTaskConversationAuthorizationAndValidation(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Guarded messages", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := HumanPrincipalWithRole("viewer@example.com", RoleViewer)
+	if _, err := tasks.AddMessageFor(t.Context(), started.Task.ID, model.AddMessageRequest{Kind: model.MessageNote, Body: "No"}, viewer); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer message error = %v, want forbidden", err)
+	}
+	if _, err := tasks.AddMessageFor(t.Context(), started.Task.ID, model.AddMessageRequest{AuthorRunID: started.Run.ID, Kind: model.MessageInstruction, Body: "No"}, agent); !errors.Is(err, ErrValidation) {
+		t.Fatalf("agent instruction error = %v, want validation", err)
+	}
+	other := AgentPrincipal("agent:other")
+	if _, err := tasks.ListMessagesFor(t.Context(), started.Task.ID, "", 10, other); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("other agent list error = %v, want forbidden", err)
+	}
+	withoutMessaging := DefaultAgentPolicy()
+	delete(withoutMessaging.Capabilities, CapabilityTaskMessage)
+	restricted := AgentPrincipalWithPolicy("agent:worker", withoutMessaging)
+	if _, err := tasks.ListMessagesFor(t.Context(), started.Task.ID, "", 10, restricted); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("restricted agent list error = %v, want forbidden", err)
+	}
+	heartbeat, err := tasks.HeartbeatFor(t.Context(), started.Task.ID, started.Run.ID, restricted)
+	if err != nil || len(heartbeat.PendingMessages) != 0 {
+		t.Fatalf("restricted heartbeat messages = %+v, %v", heartbeat.PendingMessages, err)
 	}
 }
 

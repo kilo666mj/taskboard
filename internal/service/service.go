@@ -44,19 +44,28 @@ type AgentPolicy struct {
 }
 
 const (
-	CapabilityTaskRead       = "task:read"
-	CapabilityTaskCreate     = "task:create"
-	CapabilityTaskClaim      = "task:claim"
-	CapabilityTaskUpdate     = "task:update"
-	CapabilityTaskComplete   = "task:complete"
-	CapabilityTaskSensitive  = "task:sensitive"
-	CapabilityTemplateRead   = "template:read"
-	CapabilityTemplateManage = "template:manage"
+	CapabilityTaskRead        = "task:read"
+	CapabilityTaskCreate      = "task:create"
+	CapabilityTaskClaim       = "task:claim"
+	CapabilityTaskUpdate      = "task:update"
+	CapabilityTaskMessage     = "task:message"
+	CapabilityTaskEscalate    = "task:escalate"
+	CapabilityTaskControl     = "task:control"
+	CapabilityTaskReference   = "task:reference"
+	CapabilityTaskHandoff     = "task:handoff"
+	CapabilityTaskEvidence    = "task:evidence"
+	CapabilityTaskSession     = "task:session"
+	CapabilityTaskComplete    = "task:complete"
+	CapabilityTaskSensitive   = "task:sensitive"
+	CapabilityWorkerAdvertise = "worker:advertise"
+	CapabilityTaskUsage       = "task:usage"
+	CapabilityTemplateRead    = "template:read"
+	CapabilityTemplateManage  = "template:manage"
 )
 
 var KnownAgentCapabilities = []string{
 	CapabilityTaskRead, CapabilityTaskCreate, CapabilityTaskClaim, CapabilityTaskUpdate,
-	CapabilityTaskComplete, CapabilityTaskSensitive, CapabilityTemplateRead, CapabilityTemplateManage,
+	CapabilityTaskMessage, CapabilityTaskEscalate, CapabilityTaskControl, CapabilityTaskReference, CapabilityTaskHandoff, CapabilityTaskEvidence, CapabilityTaskSession, CapabilityTaskUsage, CapabilityTaskComplete, CapabilityTaskSensitive, CapabilityWorkerAdvertise, CapabilityTemplateRead, CapabilityTemplateManage,
 }
 
 func DefaultAgentPolicy() AgentPolicy {
@@ -83,6 +92,7 @@ type Permission string
 const (
 	PermissionTaskRead       Permission = "task:read"
 	PermissionTaskWrite      Permission = "task:write"
+	PermissionTaskMessage    Permission = "task:message"
 	PermissionTemplateRead   Permission = "template:read"
 	PermissionTemplateManage Permission = "template:manage"
 	PermissionEventStream    Permission = "event:stream"
@@ -126,6 +136,8 @@ func (principal Principal) Can(permission Permission) bool {
 			return principal.HasCapability(CapabilityTaskRead)
 		case PermissionTaskWrite:
 			return principal.HasCapability(CapabilityTaskUpdate)
+		case PermissionTaskMessage:
+			return principal.HasCapability(CapabilityTaskMessage)
 		case PermissionTemplateRead:
 			return principal.HasCapability(CapabilityTemplateRead)
 		case PermissionTemplateManage:
@@ -141,7 +153,7 @@ func (principal Principal) Can(permission Permission) bool {
 	switch permission {
 	case PermissionTaskRead, PermissionTemplateRead, PermissionEventStream, PermissionPushManage:
 		return IsHumanRole(role)
-	case PermissionTaskWrite:
+	case PermissionTaskWrite, PermissionTaskMessage:
 		return role == RoleOwner || role == RoleAdmin || role == RoleMember
 	case PermissionTemplateManage:
 		return role == RoleOwner || role == RoleAdmin
@@ -829,7 +841,18 @@ func (s *Service) ListFor(ctx context.Context, statuses []model.TaskStatus, limi
 			return nil, fmt.Errorf("%w: unknown status %q", ErrValidation, status)
 		}
 	}
-	return s.store.ListVisibleTasks(ctx, statuses, limit, principal.ID, principal.Agent)
+	items, err := s.store.ListVisibleTasks(ctx, statuses, limit, principal.ID, principal.Agent)
+	if err != nil || !principal.Agent {
+		return items, err
+	}
+	filtered := items[:0]
+	advertisement, _ := s.store.GetWorkerAdvertisement(ctx, principal.ID)
+	for _, item := range items {
+		if item.Status != model.TaskQueued && item.Status != model.TaskStale || item.Ready && workerMatches(item.Requirements, advertisement.Capabilities) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.ClaimRequest, principal Principal) (model.StartResult, error) {
@@ -880,6 +903,19 @@ func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.Cla
 	if task.Visibility == model.VisibilityTeam && task.Owner != principal.ID {
 		return model.StartResult{}, ErrForbidden
 	}
+	advertisement, _ := s.store.GetWorkerAdvertisement(ctx, principal.ID)
+	if !workerMatches(task.Requirements, advertisement.Capabilities) {
+		return model.StartResult{}, fmt.Errorf("%w: worker is missing operational requirements", ErrValidation)
+	}
+	if advertisement.Capacity > 0 {
+		var active int
+		if err := s.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE agent=? AND ended_at IS NULL AND status=?`, principal.ID, model.TaskActive).Scan(&active); err != nil {
+			return model.StartResult{}, err
+		}
+		if active >= advertisement.Capacity {
+			return model.StartResult{}, fmt.Errorf("%w: advertised worker capacity is full", ErrRateLimit)
+		}
+	}
 	if err := s.enforceAgentPickupLimits(ctx, principal); err != nil {
 		return model.StartResult{}, err
 	}
@@ -916,6 +952,13 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	if current.Status == model.TaskDone || current.Status == model.TaskCancelled {
 		return model.StartResult{}, fmt.Errorf("%w: terminal tasks cannot be claimed", ErrValidation)
 	}
+	var unmetDependencies int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_dependencies dependency JOIN tasks blocker ON blocker.id=dependency.blocked_by_task_id WHERE dependency.task_id=? AND blocker.status<>?`, taskID, model.TaskDone).Scan(&unmetDependencies); err != nil {
+		return model.StartResult{}, err
+	}
+	if unmetDependencies > 0 {
+		return model.StartResult{}, fmt.Errorf("%w: task has %d unmet dependencies", ErrValidation, unmetDependencies)
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE checklist_items SET status=?,updated_at=?
 		WHERE id=(SELECT id FROM checklist_items WHERE task_id=? AND status=? ORDER BY position LIMIT 1)
 		AND NOT EXISTS (SELECT 1 FROM checklist_items WHERE task_id=? AND status=?)`, model.ItemActive, stamp(now), taskID, model.ItemTodo, taskID, model.ItemActive); err != nil {
@@ -946,9 +989,10 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 		return model.StartResult{}, err
 	}
 	s.publish(event)
+	handoffs, _ := s.store.ListTaskHandoffs(ctx, taskID)
 	for _, run := range task.Runs {
 		if run.ID == runID {
-			return model.StartResult{Task: task, Run: run}, nil
+			return model.StartResult{Task: task, Run: run, Handoffs: handoffs}, nil
 		}
 	}
 	return model.StartResult{}, store.ErrNotFound
@@ -1184,6 +1228,32 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		if remaining > 0 {
 			return model.Task{}, fmt.Errorf("%w: %d required checklist items remain open", ErrValidation, remaining)
 		}
+		rows, err := tx.QueryContext(ctx, `SELECT label FROM completion_requirements WHERE task_id=? AND required=TRUE AND status NOT IN (?,?) ORDER BY id`, taskID, model.RequirementSatisfied, model.RequirementWaived)
+		if err != nil {
+			return model.Task{}, err
+		}
+		unmet := []string{}
+		for rows.Next() {
+			var label string
+			if err := rows.Scan(&label); err != nil {
+				_ = rows.Close()
+				return model.Task{}, err
+			}
+			unmet = append(unmet, label)
+		}
+		if err := rows.Close(); err != nil {
+			return model.Task{}, err
+		}
+		if len(unmet) > 0 {
+			return model.Task{}, fmt.Errorf("%w: unmet completion requirements: %s", ErrValidation, strings.Join(unmet, "; "))
+		}
+		var unmetDependencies int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_dependencies dependency JOIN tasks blocker ON blocker.id=dependency.blocked_by_task_id WHERE dependency.task_id=? AND blocker.status<>?`, taskID, model.TaskDone).Scan(&unmetDependencies); err != nil {
+			return model.Task{}, err
+		}
+		if unmetDependencies > 0 {
+			return model.Task{}, fmt.Errorf("%w: task has %d unmet dependencies", ErrValidation, unmetDependencies)
+		}
 	}
 	if status == model.TaskActive && current.Status != model.TaskActive && request.CurrentItemID == "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE checklist_items SET status=?,updated_at=?
@@ -1378,6 +1448,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		if recurringEvent != nil {
 			s.publish(*recurringEvent)
 		}
+		if request.RunID != "" && (status == model.TaskDone || status == model.TaskCancelled) {
+			_ = s.ensureDerivedHandoff(ctx, taskID, request.RunID, model.HandoffFinal)
+		}
 	}
 	return task, err
 }
@@ -1472,7 +1545,26 @@ func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, princi
 			if err != nil {
 				return model.HeartbeatResult{}, err
 			}
-			return model.HeartbeatResult{Run: updated, Progress: s.runProgress(task, updated)}, nil
+			var pending []model.TaskMessage
+			if principal.HasCapability(CapabilityTaskMessage) {
+				pending, err = s.store.ListPendingTaskMessages(ctx, taskID, runID, principal.ID, 50)
+				if err != nil {
+					return model.HeartbeatResult{}, err
+				}
+			}
+			var controls []model.RunControlRequest
+			if principal.HasCapability(CapabilityTaskControl) {
+				items, controlErr := s.ListPendingRunControlsFor(ctx, 100, principal)
+				if controlErr != nil {
+					return model.HeartbeatResult{}, controlErr
+				}
+				for _, item := range items {
+					if item.TaskID == taskID && item.TargetRunID == runID {
+						controls = append(controls, item)
+					}
+				}
+			}
+			return model.HeartbeatResult{Run: updated, Progress: s.runProgress(task, updated), PendingMessages: pending, PendingControls: controls}, nil
 		}
 	}
 	return model.HeartbeatResult{}, store.ErrNotFound
@@ -1674,7 +1766,24 @@ func (s *Service) SweepStale(ctx context.Context) (count int64, err error) {
 		defer func() { s.metrics.ObserveAgentRun("sweep", err) }()
 	}
 	now := time.Now().UTC()
-	result, err := s.store.DB().ExecContext(ctx, `UPDATE agent_runs SET status=? WHERE ended_at IS NULL AND status=? AND lease_expires_at < ?`, model.TaskStale, model.TaskActive, stamp(now))
+	rows, queryErr := s.store.DB().QueryContext(ctx, `SELECT id,task_id FROM agent_runs WHERE ended_at IS NULL AND status=? AND lease_expires_at < ?`, model.TaskActive, stamp(now))
+	if queryErr != nil {
+		return 0, queryErr
+	}
+	type expiredRun struct{ id, taskID string }
+	expired := []expiredRun{}
+	for rows.Next() {
+		var item expiredRun
+		if scanErr := rows.Scan(&item.id, &item.taskID); scanErr != nil {
+			_ = rows.Close()
+			return 0, scanErr
+		}
+		expired = append(expired, item)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return 0, closeErr
+	}
+	result, err := s.store.DB().ExecContext(ctx, `UPDATE agent_runs SET status=?,ended_at=? WHERE ended_at IS NULL AND status=? AND lease_expires_at < ?`, model.TaskStale, stamp(now), model.TaskActive, stamp(now))
 	if err != nil {
 		return 0, err
 	}
@@ -1688,6 +1797,11 @@ func (s *Service) SweepStale(ctx context.Context) (count int64, err error) {
 		AND id NOT IN (SELECT task_id FROM agent_runs WHERE ended_at IS NULL AND status=? AND lease_expires_at >= ?)`, model.TaskStale, stamp(now), model.TaskActive, model.TaskStale, model.TaskActive, stamp(now))
 	if s.metrics != nil {
 		s.metrics.AddStaleRuns(count)
+	}
+	if err == nil {
+		for _, item := range expired {
+			_ = s.ensureDerivedHandoff(ctx, item.taskID, item.id, model.HandoffStale)
+		}
 	}
 	return count, err
 }

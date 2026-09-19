@@ -125,6 +125,19 @@ Version 2 installs PostgreSQL's transactional event-notification trigger.
 SQLite records the version as a compatibility no-op. PostgreSQL startup also
 verifies that the trigger exists and rejects a partially modified schema.
 
+Versions 3 and 4 add administrative lifecycle records and friendly agent-run
+callsigns. Taskboard v0.6.0 advances the schema from version 4 to version 14:
+version 5 adds task messages, 6 structured escalations, 7 acknowledged run
+controls, 8 typed delivery references, 9 run handoffs, 10 completion contracts,
+11 trusted session bridges, 12 task dependencies, 13 worker matching, and 14
+numeric usage records. A v0.6.0 binary upgrades any complete supported schema
+from version 1 through 13 directly and transactionally.
+
+Back up the database before upgrading to v0.6.0. The new tables are additive,
+but a v0.5.x binary rejects schema version 14 as newer than it supports. Rolling
+back from v0.6.0 therefore requires restoring the database backup taken before
+the upgrade together with the prior binary or image.
+
 Migration files are append-only after release: never edit, reorder, or reuse a
 version. CI must exercise a fresh database and an upgrade from every supported
 schema version for both backends. Release notes must state the new schema

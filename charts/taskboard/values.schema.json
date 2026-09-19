@@ -74,7 +74,7 @@
           "type": "object",
           "required": ["capabilities", "maxConcurrentRuns", "maxPickupsPerMinute", "maxRunSeconds", "requireIdempotency", "policiesJSON"],
           "properties": {
-            "capabilities": { "type": "array", "items": { "enum": ["task:read", "task:create", "task:claim", "task:update", "task:complete", "task:sensitive", "template:read", "template:manage"] } },
+            "capabilities": { "type": "array", "items": { "enum": ["task:read", "task:create", "task:claim", "task:update", "task:message", "task:escalate", "task:control", "task:reference", "task:handoff", "task:evidence", "task:session", "task:usage", "task:complete", "task:sensitive", "worker:advertise", "template:read", "template:manage"] } },
             "maxConcurrentRuns": { "type": "integer", "minimum": 1, "maximum": 100 },
             "maxPickupsPerMinute": { "type": "integer", "minimum": 1, "maximum": 1000 },
             "maxRunSeconds": { "type": "integer", "minimum": 60, "maximum": 604800 },

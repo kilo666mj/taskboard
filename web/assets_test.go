@@ -43,3 +43,149 @@ func TestAgentIdentityAndDesktopToolbarHaveResponsiveStyles(t *testing.T) {
 		}
 	}
 }
+
+func TestEscalationDecisionUIIsWiredAndResponsive(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{`class="escalation-list"`, `aria-label="Task decisions"`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=true`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`.escalation[data-blocking=true]`, `.send-message,.escalation-answer-form .primary,.request-control,.add-reference,.add-completion`} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("app.css missing %q", expected)
+		}
+	}
+}
+
+func TestRunControlUIShowsRequestsAsAcknowledgedWorkflow(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{`class="control-panel"`, `class="control-list"`, `class="control-form"`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`function availableControl`, `function renderControls`, `/controls`, `data.control`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`.control-status`, `.send-message,.escalation-answer-form .primary,.request-control,.add-reference,.add-completion`} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("app.css missing %q", expected)
+		}
+	}
+}
+
+func TestDeliveryUIUsesTypedReferencesAndHTTPSLinks(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{`<details class="delivery">`, `class="milestone-list"`, `class="reference-list"`, `class="reference-form"`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`function safeReferenceURL`, `parsed.protocol==='https:'`, `rel='noopener noreferrer'`, `/delivery`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`.milestone-list`, `.reference-kind`, `.send-message,.escalation-answer-form .primary,.request-control,.add-reference,.add-completion`} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("app.css missing %q", expected)
+		}
+	}
+}
+
+func TestControlPlaneExpansionUIIsWiredAndResponsive(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{
+		`class="handoff-list"`,
+		`class="completion-contract"`,
+		`class="dependency-panel"`,
+		`class="requirements-panel"`,
+		`id="analyticsDialog"`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		`function renderCompletion`,
+		`function renderDependencies`,
+		`function renderRequirements`,
+		`/session-requests`,
+		`/api/v1/analytics?days=`,
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		`.session-actions`,
+		`.analytics-grid`,
+		`.dependency-form,.requirements-form{grid-template-columns:1fr}`,
+		`.reference,.handoff,.completion-requirement,.dependency{grid-template-columns:1fr}`,
+	} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("app.css missing %q", expected)
+		}
+	}
+}
+
+func TestTaskCancellationUsesAcknowledgedControlsForActiveRuns(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{`class="text-button cancel-task"`, `>Cancel task</button>`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		`function cancelTaskFromCard`,
+		`run.status==='active'&&!run.ended_at`,
+		`kind:'cancel'`,
+		`status:'cancelled'`,
+		`window.confirm(prompt)`,
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`.cancel-task{margin-left:auto`, `.task-card[data-status=cancelled] .cancel-task{display:none}`} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("app.css missing %q", expected)
+		}
+	}
+}
+
+func TestTaskContextExplainsDurableDescriptionAndConversation(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	for _, expected := range []string{
+		`Task context <span>(durable)</span>`,
+		`rows="4" aria-describedby="taskContextHelp"`,
+		`Use Conversation for later updates and decisions`,
+		`class="task-context" aria-label="Task context"`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	javascript := embeddedText(t, "app.js")
+	if !strings.Contains(javascript, `function renderTaskContext`) {
+		t.Error("app.js does not render the full task context")
+	}
+}

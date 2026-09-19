@@ -48,17 +48,43 @@ and audit history.*
 - Every run receives a friendly, collision-free callsign while the authenticated
   principal and run ID remain authoritative audit identity.
 - Agents report each completed checklist item immediately; heartbeat responses
-  warn when checklist progress is stale but never infer completion.
+  warn when checklist progress is stale, return pending task messages, and never
+  infer completion.
+- Tasks have an append-only human↔agent thread with task- or run-targeted notes,
+  instructions, questions, answers, immutable supersession, and explicit
+  observed or acknowledged receipts.
+- Structured escalations pair questions, choices, and recommendations with a
+  human decision. Blocking questions end their run and queue the task for a
+  fresh claim only after an answer is recorded.
+- Human run controls are acknowledged requests with visible accepted, rejected,
+  completed, or expired outcomes; pause and cancel never masquerade as instant
+  process kills.
+- Typed Linear, source, PR, CI, review, deployment, and evidence references
+- Append-only run handoffs for reliable replacement-agent continuation
+- Human-owned completion contracts with verified evidence gates
+- Cycle-safe `blocked_by` dependencies with derived pickup readiness
+- Short-lived worker advertisements for operational requirement matching
+- Privacy-bounded delivery analytics and optional numeric usage accounting
+  produce an ordered delivery timeline without duplicating provider state.
 - An append-only event history records user-visible transitions without storing
   prompts, reasoning, credentials, or tool output.
 
 The MCP server exposes `task_create`, `task_start`, `task_claim`, `task_update`,
-`task_complete`, `task_heartbeat`, `task_get`, `task_list`, `task_move`,
-`task_template_list`, and `task_template_save`. The example Switchboard
-capability is in `capabilities/taskboard.example.json`.
+`task_complete`, `task_heartbeat`, `task_message_list`, `task_message_add`,
+`task_message_ack`, `task_escalate`, `task_escalation_list`,
+`task_control_list`, `task_control_update`, `task_reference_add`,
+`task_reference_list`, `task_delivery_get`, `task_handoff_add`, `task_handoff_list`,
+`task_completion_get`, `task_completion_evidence_submit`, `task_get`, `task_list`, `task_move`,
+`task_session_register`, `task_session_request_list`, `task_session_request_update`,
+`task_dependency_list`,
+`worker_advertise`,
+`task_usage_record`,
+`task_template_list`, and `task_template_save`. The
+example Switchboard capability is in
+`capabilities/taskboard.example.json`.
 
 See [Agent integrations](docs/agent-integrations.md) for the incremental
-checklist, callsign, and heartbeat contracts.
+checklist, conversation, acknowledgement, callsign, and heartbeat contracts.
 
 Audit actors always come from authenticated server context. The deployment
 bearer token maps to the stable `agent:shared` actor, while an MCP client's
@@ -231,7 +257,14 @@ requires lifecycle integration in each agent harness:
 1. Create or claim a task before substantive work.
 2. Keep the returned task and run IDs in run state.
 3. Renew the run lease automatically.
-4. Intercept final output until Taskboard accepts a terminal state.
+4. Fetch task messages from heartbeat and explicitly record receipts.
+5. Stop heartbeat after a blocking escalation; after an answer, claim a new run
+   before resuming the existing session or starting a replacement.
+6. Poll and acknowledge run controls, apply accepted requests at a safe point,
+   and report completion with the latest task version.
+7. Persist typed delivery references as branches, PRs, CI runs, reviews, and
+   deployments appear.
+8. Intercept final output until Taskboard accepts a terminal state.
 
 Switchboard can additionally require an active task context before selected
 mutating capabilities are used. This does not cover local shell operations, so

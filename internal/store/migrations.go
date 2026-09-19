@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 4
+const latestSchemaVersion = 14
 
 type schemaMigration struct {
 	Version  int
@@ -90,7 +90,195 @@ var schemaMigrations = []schemaMigration{
 			`CREATE UNIQUE INDEX idx_runs_active_callsign ON agent_runs(lower(callsign)) WHERE ended_at IS NULL AND status='active' AND callsign<>''`,
 		},
 	},
+	{
+		Version: 5,
+		Name:    "task_messages",
+		SQLite: []string{
+			`CREATE TABLE task_messages (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,author TEXT NOT NULL,author_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,target_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,kind TEXT NOT NULL,body TEXT NOT NULL,reply_to_id TEXT REFERENCES task_messages(id) ON DELETE SET NULL,supersedes_id TEXT REFERENCES task_messages(id) ON DELETE SET NULL,requires_ack INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_task_messages_task ON task_messages(task_id,id DESC)`,
+			`CREATE INDEX idx_task_messages_target ON task_messages(target_run_id,id DESC)`,
+			`CREATE UNIQUE INDEX idx_task_messages_supersedes ON task_messages(supersedes_id) WHERE supersedes_id IS NOT NULL`,
+			`CREATE TABLE message_receipts (message_id TEXT NOT NULL REFERENCES task_messages(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,observer TEXT NOT NULL,observed_at TEXT NOT NULL,acknowledged_at TEXT,PRIMARY KEY(message_id,run_id))`,
+			`CREATE INDEX idx_message_receipts_run ON message_receipts(run_id,message_id)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE task_messages (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,author TEXT NOT NULL,author_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,target_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,kind TEXT NOT NULL,body TEXT NOT NULL,reply_to_id TEXT REFERENCES task_messages(id) ON DELETE SET NULL,supersedes_id TEXT REFERENCES task_messages(id) ON DELETE SET NULL,requires_ack BOOLEAN NOT NULL DEFAULT FALSE,created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_task_messages_task ON task_messages(task_id,id DESC)`,
+			`CREATE INDEX idx_task_messages_target ON task_messages(target_run_id,id DESC)`,
+			`CREATE UNIQUE INDEX idx_task_messages_supersedes ON task_messages(supersedes_id) WHERE supersedes_id IS NOT NULL`,
+			`CREATE TABLE message_receipts (message_id TEXT NOT NULL REFERENCES task_messages(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,observer TEXT NOT NULL,observed_at TEXT NOT NULL,acknowledged_at TEXT,PRIMARY KEY(message_id,run_id))`,
+			`CREATE INDEX idx_message_receipts_run ON message_receipts(run_id,message_id)`,
+		},
+	},
+	{
+		Version: 6,
+		Name:    "task_escalations",
+		SQLite: []string{
+			`CREATE TABLE task_escalations (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,question_message_id TEXT NOT NULL UNIQUE REFERENCES task_messages(id) ON DELETE CASCADE,answer_message_id TEXT UNIQUE REFERENCES task_messages(id) ON DELETE SET NULL,blocking INTEGER NOT NULL DEFAULT 0,options_json TEXT NOT NULL DEFAULT '[]',recommendation TEXT NOT NULL DEFAULT '',selected_option TEXT NOT NULL DEFAULT '',status TEXT NOT NULL, resolved_by TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,resolved_at TEXT)`,
+			`CREATE INDEX idx_task_escalations_task ON task_escalations(task_id,id DESC)`,
+			`CREATE INDEX idx_task_escalations_open ON task_escalations(task_id,status,id)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE task_escalations (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,question_message_id TEXT NOT NULL UNIQUE REFERENCES task_messages(id) ON DELETE CASCADE,answer_message_id TEXT UNIQUE REFERENCES task_messages(id) ON DELETE SET NULL,blocking BOOLEAN NOT NULL DEFAULT FALSE,options_json TEXT NOT NULL DEFAULT '[]',recommendation TEXT NOT NULL DEFAULT '',selected_option TEXT NOT NULL DEFAULT '',status TEXT NOT NULL, resolved_by TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,resolved_at TEXT)`,
+			`CREATE INDEX idx_task_escalations_task ON task_escalations(task_id,id DESC)`,
+			`CREATE INDEX idx_task_escalations_open ON task_escalations(task_id,status,id)`,
+		},
+	},
+	{
+		Version: 7,
+		Name:    "run_control_requests",
+		SQLite: []string{
+			`CREATE TABLE run_control_requests (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,target_run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,target_agent TEXT NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,requested_by TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '',outcome_note TEXT NOT NULL DEFAULT '',task_version INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,acknowledged_at TEXT,decided_at TEXT,completed_at TEXT)`,
+			`CREATE INDEX idx_run_controls_task ON run_control_requests(task_id,id DESC)`,
+			`CREATE INDEX idx_run_controls_agent_status ON run_control_requests(target_agent,status,expires_at,id)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE run_control_requests (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,target_run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,target_agent TEXT NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,requested_by TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '',outcome_note TEXT NOT NULL DEFAULT '',task_version BIGINT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL,acknowledged_at TEXT,decided_at TEXT,completed_at TEXT)`,
+			`CREATE INDEX idx_run_controls_task ON run_control_requests(task_id,id DESC)`,
+			`CREATE INDEX idx_run_controls_agent_status ON run_control_requests(target_agent,status,expires_at,id)`,
+		},
+	},
+	{
+		Version: 8,
+		Name:    "task_references",
+		SQLite: []string{
+			`CREATE TABLE task_references (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,kind TEXT NOT NULL,label TEXT NOT NULL,locator TEXT NOT NULL DEFAULT '',url TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,provenance TEXT NOT NULL,created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_task_references_task ON task_references(task_id,id)`,
+			`CREATE INDEX idx_task_references_run ON task_references(run_id,id)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE task_references (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,kind TEXT NOT NULL,label TEXT NOT NULL,locator TEXT NOT NULL DEFAULT '',url TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,provenance TEXT NOT NULL,created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_task_references_task ON task_references(task_id,id)`,
+			`CREATE INDEX idx_task_references_run ON task_references(run_id,id)`,
+		},
+	},
+	{
+		Version: 9,
+		Name:    "run_handoffs",
+		SQLite: []string{
+			`CREATE TABLE run_handoffs (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,kind TEXT NOT NULL,last_completed_step TEXT NOT NULL DEFAULT '',worktree TEXT NOT NULL DEFAULT '',branch TEXT NOT NULL DEFAULT '',commits_json TEXT NOT NULL DEFAULT '[]',pull_requests_json TEXT NOT NULL DEFAULT '[]',validation_json TEXT NOT NULL DEFAULT '[]',review_findings_json TEXT NOT NULL DEFAULT '[]',blocker TEXT NOT NULL DEFAULT '',next_action TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_run_handoffs_task ON run_handoffs(task_id,id DESC)`,
+			`CREATE INDEX idx_run_handoffs_run ON run_handoffs(run_id,id DESC)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE run_handoffs (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,kind TEXT NOT NULL,last_completed_step TEXT NOT NULL DEFAULT '',worktree TEXT NOT NULL DEFAULT '',branch TEXT NOT NULL DEFAULT '',commits_json TEXT NOT NULL DEFAULT '[]',pull_requests_json TEXT NOT NULL DEFAULT '[]',validation_json TEXT NOT NULL DEFAULT '[]',review_findings_json TEXT NOT NULL DEFAULT '[]',blocker TEXT NOT NULL DEFAULT '',next_action TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,created_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_run_handoffs_task ON run_handoffs(task_id,id DESC)`,
+			`CREATE INDEX idx_run_handoffs_run ON run_handoffs(run_id,id DESC)`,
+		},
+	},
+	{
+		Version: 10,
+		Name:    "completion_contracts",
+		SQLite: []string{
+			`CREATE TABLE completion_requirements (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,label TEXT NOT NULL,required INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL,created_by TEXT NOT NULL,verified_by TEXT NOT NULL DEFAULT '',waiver_reason TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,verified_at TEXT)`,
+			`CREATE INDEX idx_completion_requirements_task ON completion_requirements(task_id,id)`,
+			`CREATE TABLE completion_evidence (id TEXT PRIMARY KEY,requirement_id TEXT NOT NULL REFERENCES completion_requirements(id) ON DELETE CASCADE,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,reference_id TEXT REFERENCES task_references(id) ON DELETE SET NULL,note TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,submitted_by TEXT NOT NULL,reviewed_by TEXT NOT NULL DEFAULT '',review_note TEXT NOT NULL DEFAULT '',submitted_at TEXT NOT NULL,reviewed_at TEXT)`,
+			`CREATE INDEX idx_completion_evidence_requirement ON completion_evidence(requirement_id,id)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE completion_requirements (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,label TEXT NOT NULL,required BOOLEAN NOT NULL DEFAULT TRUE,status TEXT NOT NULL,created_by TEXT NOT NULL,verified_by TEXT NOT NULL DEFAULT '',waiver_reason TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,verified_at TEXT)`,
+			`CREATE INDEX idx_completion_requirements_task ON completion_requirements(task_id,id)`,
+			`CREATE TABLE completion_evidence (id TEXT PRIMARY KEY,requirement_id TEXT NOT NULL REFERENCES completion_requirements(id) ON DELETE CASCADE,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,reference_id TEXT REFERENCES task_references(id) ON DELETE SET NULL,note TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,submitted_by TEXT NOT NULL,reviewed_by TEXT NOT NULL DEFAULT '',review_note TEXT NOT NULL DEFAULT '',submitted_at TEXT NOT NULL,reviewed_at TEXT)`,
+			`CREATE INDEX idx_completion_evidence_requirement ON completion_evidence(requirement_id,id)`,
+		},
+	},
+	{
+		Version: 11,
+		Name:    "session_bridges",
+		SQLite: []string{
+			`CREATE TABLE session_bridges (run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,controller TEXT NOT NULL,state TEXT NOT NULL,label TEXT NOT NULL DEFAULT '',can_open INTEGER NOT NULL DEFAULT 0,can_resume INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_session_bridges_task ON session_bridges(task_id,run_id)`,
+			`CREATE TABLE session_bridge_requests (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,controller TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,requested_by TEXT NOT NULL,outcome_note TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_session_requests_controller ON session_bridge_requests(controller,status,id)`,
+		},
+		Postgres: []string{
+			`CREATE TABLE session_bridges (run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,controller TEXT NOT NULL,state TEXT NOT NULL,label TEXT NOT NULL DEFAULT '',can_open BOOLEAN NOT NULL DEFAULT FALSE,can_resume BOOLEAN NOT NULL DEFAULT FALSE,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_session_bridges_task ON session_bridges(task_id,run_id)`,
+			`CREATE TABLE session_bridge_requests (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,controller TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,requested_by TEXT NOT NULL,outcome_note TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+			`CREATE INDEX idx_session_requests_controller ON session_bridge_requests(controller,status,id)`,
+		},
+	},
+	{Version: 12, Name: "task_dependencies", SQLite: []string{
+		`CREATE TABLE task_dependencies (task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,blocked_by_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,created_by TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(task_id,blocked_by_task_id),CHECK(task_id<>blocked_by_task_id))`,
+		`CREATE INDEX idx_task_dependencies_blocker ON task_dependencies(blocked_by_task_id,task_id)`,
+	}, Postgres: []string{
+		`CREATE TABLE task_dependencies (task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,blocked_by_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,created_by TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(task_id,blocked_by_task_id),CHECK(task_id<>blocked_by_task_id))`,
+		`CREATE INDEX idx_task_dependencies_blocker ON task_dependencies(blocked_by_task_id,task_id)`,
+	}},
+	{Version: 13, Name: "worker_matching", SQLite: []string{
+		`CREATE TABLE task_requirements (task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,requirement TEXT NOT NULL,created_by TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(task_id,requirement))`,
+		`CREATE INDEX idx_task_requirements_requirement ON task_requirements(requirement,task_id)`,
+		`CREATE TABLE worker_advertisements (principal TEXT PRIMARY KEY,capabilities_json TEXT NOT NULL,capacity INTEGER NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL)`,
+		`CREATE INDEX idx_worker_advertisements_expiry ON worker_advertisements(expires_at,principal)`,
+	}, Postgres: []string{
+		`CREATE TABLE task_requirements (task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,requirement TEXT NOT NULL,created_by TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(task_id,requirement))`,
+		`CREATE INDEX idx_task_requirements_requirement ON task_requirements(requirement,task_id)`,
+		`CREATE TABLE worker_advertisements (principal TEXT PRIMARY KEY,capabilities_json TEXT NOT NULL,capacity INTEGER NOT NULL,updated_at TEXT NOT NULL,expires_at TEXT NOT NULL)`,
+		`CREATE INDEX idx_worker_advertisements_expiry ON worker_advertisements(expires_at,principal)`,
+	}},
+	{Version: 14, Name: "usage_records", SQLite: []string{
+		`CREATE TABLE usage_records (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,provider TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',input_tokens INTEGER NOT NULL DEFAULT 0,output_tokens INTEGER NOT NULL DEFAULT 0,estimated_cost_micros INTEGER NOT NULL DEFAULT 0,recorded_by TEXT NOT NULL,created_at TEXT NOT NULL)`,
+		`CREATE INDEX idx_usage_records_created ON usage_records(created_at,id)`,
+		`CREATE INDEX idx_usage_records_task ON usage_records(task_id,id)`,
+	}, Postgres: []string{
+		`CREATE TABLE usage_records (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,provider TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',input_tokens BIGINT NOT NULL DEFAULT 0,output_tokens BIGINT NOT NULL DEFAULT 0,estimated_cost_micros BIGINT NOT NULL DEFAULT 0,recorded_by TEXT NOT NULL,created_at TEXT NOT NULL)`,
+		`CREATE INDEX idx_usage_records_created ON usage_records(created_at,id)`,
+		`CREATE INDEX idx_usage_records_task ON usage_records(task_id,id)`,
+	}},
 }
+
+var messagingSchema = map[string][]string{
+	"task_messages":    {"id", "task_id", "author", "author_run_id", "target_run_id", "kind", "body", "reply_to_id", "supersedes_id", "requires_ack", "created_at"},
+	"message_receipts": {"message_id", "run_id", "observer", "observed_at", "acknowledged_at"},
+}
+
+var messagingIndexes = []string{"idx_task_messages_task", "idx_task_messages_target", "idx_task_messages_supersedes", "idx_message_receipts_run"}
+
+var escalationSchema = map[string][]string{
+	"task_escalations": {"id", "task_id", "run_id", "question_message_id", "answer_message_id", "blocking", "options_json", "recommendation", "selected_option", "status", "resolved_by", "created_at", "resolved_at"},
+}
+
+var escalationIndexes = []string{"idx_task_escalations_task", "idx_task_escalations_open"}
+
+var runControlSchema = map[string][]string{
+	"run_control_requests": {"id", "task_id", "target_run_id", "target_agent", "kind", "status", "requested_by", "reason", "outcome_note", "task_version", "created_at", "updated_at", "expires_at", "acknowledged_at", "decided_at", "completed_at"},
+}
+
+var runControlIndexes = []string{"idx_run_controls_task", "idx_run_controls_agent_status"}
+
+var referenceSchema = map[string][]string{
+	"task_references": {"id", "task_id", "run_id", "kind", "label", "locator", "url", "created_by", "provenance", "created_at"},
+}
+
+var referenceIndexes = []string{"idx_task_references_task", "idx_task_references_run"}
+
+var handoffSchema = map[string][]string{
+	"run_handoffs": {"id", "task_id", "run_id", "kind", "last_completed_step", "worktree", "branch", "commits_json", "pull_requests_json", "validation_json", "review_findings_json", "blocker", "next_action", "created_by", "created_at"},
+}
+
+var handoffIndexes = []string{"idx_run_handoffs_task", "idx_run_handoffs_run"}
+
+var completionSchema = map[string][]string{
+	"completion_requirements": {"id", "task_id", "kind", "label", "required", "status", "created_by", "verified_by", "waiver_reason", "created_at", "updated_at", "verified_at"},
+	"completion_evidence":     {"id", "requirement_id", "task_id", "run_id", "reference_id", "note", "status", "submitted_by", "reviewed_by", "review_note", "submitted_at", "reviewed_at"},
+}
+var completionIndexes = []string{"idx_completion_requirements_task", "idx_completion_evidence_requirement"}
+
+var sessionBridgeSchema = map[string][]string{
+	"session_bridges":         {"run_id", "task_id", "controller", "state", "label", "can_open", "can_resume", "updated_at", "expires_at"},
+	"session_bridge_requests": {"id", "task_id", "run_id", "controller", "action", "status", "requested_by", "outcome_note", "created_at", "updated_at"},
+}
+var sessionBridgeIndexes = []string{"idx_session_bridges_task", "idx_session_requests_controller"}
+var dependencySchema = map[string][]string{"task_dependencies": {"task_id", "blocked_by_task_id", "created_by", "created_at"}}
+var dependencyIndexes = []string{"idx_task_dependencies_blocker"}
+
+var workerMatchingSchema = map[string][]string{
+	"task_requirements":     {"task_id", "requirement", "created_by", "created_at"},
+	"worker_advertisements": {"principal", "capabilities_json", "capacity", "updated_at", "expires_at"},
+}
+var workerMatchingIndexes = []string{"idx_task_requirements_requirement", "idx_worker_advertisements_expiry"}
+var usageSchema = map[string][]string{"usage_records": {"id", "task_id", "run_id", "provider", "model", "input_tokens", "output_tokens", "estimated_cost_micros", "recorded_by", "created_at"}}
+var usageIndexes = []string{"idx_usage_records_created", "idx_usage_records_task"}
 
 var requiredSchema = map[string][]string{
 	"tasks": {
@@ -228,6 +416,36 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := validateAgentRunIdentitySchema(ctx, tx, s.db.dialect); err != nil {
 		return err
 	}
+	if err := validateMessagingSchema(ctx, tx, s.db.dialect); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, escalationSchema, escalationIndexes, "escalation"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, runControlSchema, runControlIndexes, "run control"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, referenceSchema, referenceIndexes, "reference"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, handoffSchema, handoffIndexes, "handoff"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, completionSchema, completionIndexes, "completion contract"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, sessionBridgeSchema, sessionBridgeIndexes, "session bridge"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, dependencySchema, dependencyIndexes, "dependency"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, workerMatchingSchema, workerMatchingIndexes, "worker matching"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, usageSchema, usageIndexes, "usage"); err != nil {
+		return err
+	}
 	if s.db.dialect == DialectPostgres {
 		var notificationTriggerExists bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
@@ -323,6 +541,41 @@ func validateAgentRunIdentitySchema(ctx context.Context, tx *Tx, dialect Dialect
 	}
 	if !exists {
 		return fmt.Errorf("schema version %d is partial: required index idx_runs_active_callsign is missing", latestSchemaVersion)
+	}
+	return nil
+}
+
+func validateMessagingSchema(ctx context.Context, tx *Tx, dialect Dialect) error {
+	return validateSchemaParts(ctx, tx, dialect, messagingSchema, messagingIndexes, "messaging")
+}
+
+func validateSchemaParts(ctx context.Context, tx *Tx, dialect Dialect, schema map[string][]string, indexes []string, _ string) error {
+	for table, requiredColumns := range schema {
+		exists, err := tableExists(ctx, tx, dialect, table)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("schema version %d is partial: required table %s is missing", latestSchemaVersion, table)
+		}
+		columns, err := tableColumns(ctx, tx, dialect, table)
+		if err != nil {
+			return err
+		}
+		for _, column := range requiredColumns {
+			if !columns[column] {
+				return fmt.Errorf("schema version %d is partial: required column %s.%s is missing", latestSchemaVersion, table, column)
+			}
+		}
+	}
+	for _, index := range indexes {
+		exists, err := indexExists(ctx, tx, dialect, index)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("schema version %d is partial: required index %s is missing", latestSchemaVersion, index)
+		}
 	}
 	return nil
 }

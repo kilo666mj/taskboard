@@ -85,7 +85,7 @@ taskboard:
     memberGroups: []
     viewerGroups: []
   agentPolicy:
-    capabilities: ["task:read", "task:create", "task:claim", "task:update", "task:complete", "template:read", "template:manage"]
+    capabilities: ["task:read", "task:create", "task:claim", "task:update", "task:message", "task:escalate", "task:control", "task:reference", "task:handoff", "task:evidence", "task:session", "task:usage", "task:complete", "worker:advertise", "template:read", "template:manage"]
     maxConcurrentRuns: 4
     maxPickupsPerMinute: 30
     maxRunSeconds: 28800

@@ -350,6 +350,19 @@ func (s *Store) GetTask(ctx context.Context, id string) (model.Task, error) {
 	if task.Runs, err = s.listRuns(ctx, id); err != nil {
 		return model.Task{}, err
 	}
+	if task.Dependencies, err = s.ListTaskDependencies(ctx, id); err != nil {
+		return model.Task{}, err
+	}
+	task.Ready = true
+	for _, dependency := range task.Dependencies {
+		if !dependency.Satisfied {
+			task.Ready = false
+			break
+		}
+	}
+	if task.Requirements, err = s.ListTaskRequirements(ctx, id); err != nil {
+		return model.Task{}, err
+	}
 	return task, nil
 }
 
@@ -430,6 +443,21 @@ func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limi
 			return nil, err
 		}
 		tasks[index].Runs, err = s.listRuns(ctx, tasks[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		tasks[index].Dependencies, err = s.ListTaskDependencies(ctx, tasks[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		tasks[index].Ready = true
+		for _, dependency := range tasks[index].Dependencies {
+			if !dependency.Satisfied {
+				tasks[index].Ready = false
+				break
+			}
+		}
+		tasks[index].Requirements, err = s.ListTaskRequirements(ctx, tasks[index].ID)
 		if err != nil {
 			return nil, err
 		}

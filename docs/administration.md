@@ -28,7 +28,8 @@ offboarding remain revoked and must be replaced.
 
 ## Export, deletion, retention, and audit
 
-- `GET /api/v1/admin/export` exports all tasks, templates, task events, and the
+- `GET /api/v1/admin/export` exports all tasks, templates, task messages and
+  receipts, escalations, run-control requests, delivery references, run handoffs, completion contracts, numeric usage records, task events, and the
   administrative audit history as JSON.
 - `DELETE /api/v1/admin/tasks/{id}` requires `{ "confirm": "<task-id>" }`.
 - `POST /api/v1/admin/retention` requires `{ "confirm": "apply retention" }`
