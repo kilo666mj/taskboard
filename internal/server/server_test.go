@@ -66,7 +66,7 @@ func TestMCPToolSurfaceIsAnnotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"task_claim", "task_complete", "task_create", "task_get", "task_heartbeat", "task_list", "task_move", "task_start", "task_template_list", "task_template_save", "task_update"}
+	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_escalate", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
 	got := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		got = append(got, tool.Name)
@@ -156,6 +156,233 @@ func TestHumanCanRenameRunThroughAPIWithoutChangingAttribution(t *testing.T) {
 	}
 	if result.Task.Runs[0].Callsign != "Maple Fox" || result.Task.Runs[0].Agent != "agent:worker" {
 		t.Fatalf("renamed run = %+v", result.Task.Runs[0])
+	}
+}
+
+func TestHumanCanCancelQueuedTaskThroughAPI(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	operator := service.HumanPrincipal("operator@example.com")
+	task, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Cancel from task card", Visibility: model.VisibilityPrivate}, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"expected_version": task.Version,
+		"status":           model.TaskCancelled,
+		"current_note":     "Cancelled by user.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/task", bytes.NewReader(body))
+	request.SetPathValue("id", task.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, operator))
+	response := httptest.NewRecorder()
+	updateTask(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var result taskOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Task.Status != model.TaskCancelled || result.Task.CurrentNote != "Cancelled by user." {
+		t.Fatalf("cancelled task = status %q, note %q", result.Task.Status, result.Task.CurrentNote)
+	}
+}
+
+func TestTaskConversationRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	agent := service.AgentPrincipal("agent:worker")
+	operator := service.HumanPrincipal("operator@example.com")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Conversation API", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(model.AddMessageRequest{TargetRunID: started.Run.ID, Kind: model.MessageInstruction, Body: "Please verify the API"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/messages", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, operator))
+	response := httptest.NewRecorder()
+	addMessage(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("add status = %d: %s", response.Code, response.Body.String())
+	}
+	var added messageOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &added); err != nil {
+		t.Fatal(err)
+	}
+	if !added.Message.RequiresAck {
+		t.Fatalf("instruction does not require acknowledgement: %+v", added.Message)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task/messages?limit=10", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, operator))
+	response = httptest.NewRecorder()
+	listMessages(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d: %s", response.Code, response.Body.String())
+	}
+	var listed messagesOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil || len(listed.Messages) != 1 {
+		t.Fatalf("listed messages = %+v, %v", listed.Messages, err)
+	}
+
+	body, err = json.Marshal(model.MessageReceiptRequest{AcknowledgedMessageIDs: []string{added.Message.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/runs/run/message-receipts", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.SetPathValue("run", started.Run.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response = httptest.NewRecorder()
+	recordMessageReceipts(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("receipt status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTaskEscalationRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	agent := service.AgentPrincipal("agent:worker")
+	operator := service.HumanPrincipal("operator@example.com")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Escalation API", Checklist: []string{"Work"}, IdempotencyKey: "rest-escalation-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(model.CreateEscalationRequest{RunID: started.Run.ID, ExpectedVersion: started.Task.Version, Question: "Choose one", Options: []string{"A", "B"}, Blocking: true, IdempotencyKey: "rest-escalation-create"})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/escalations", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response := httptest.NewRecorder()
+	createEscalation(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
+	}
+	var created escalationOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := tasks.GetFor(t.Context(), started.Task.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(model.ResolveEscalationRequest{ExpectedVersion: waiting.Version, Answer: "Choose A", SelectedOption: "A"})
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/escalations/escalation/answer", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.SetPathValue("escalation", created.Escalation.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, operator))
+	response = httptest.NewRecorder()
+	resolveEscalation(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("answer status = %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task/escalations", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, operator))
+	response = httptest.NewRecorder()
+	listEscalations(tasks).ServeHTTP(response, request)
+	var listed escalationsOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Escalations) != 1 || listed.Escalations[0].Status != model.EscalationAnswered {
+		t.Fatalf("listed escalations = %d %+v: %s", response.Code, listed.Escalations, response.Body.String())
+	}
+}
+
+func TestRunControlRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	agent := service.AgentPrincipal("agent:worker")
+	human := service.HumanPrincipal("operator@example.com")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Control API", Checklist: []string{"Work"}, IdempotencyKey: "control-api-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(model.CreateRunControlRequest{TargetRunID: started.Run.ID, Kind: model.RunControlPause, ExpectedVersion: started.Task.Version})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/controls", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, human))
+	response := httptest.NewRecorder()
+	createTaskControl(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
+	}
+	var created controlOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/run-controls?limit=10", nil)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response = httptest.NewRecorder()
+	listPendingControls(tasks).ServeHTTP(response, request)
+	var pending controlsOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &pending) != nil || len(pending.Controls) != 1 {
+		t.Fatalf("pending controls = %d %+v: %s", response.Code, pending.Controls, response.Body.String())
+	}
+	body, _ = json.Marshal(model.UpdateRunControlRequest{Status: model.RunControlAcknowledged, IdempotencyKey: "control-api-ack"})
+	request = httptest.NewRequest(http.MethodPatch, "/api/v1/run-controls/control", bytes.NewReader(body))
+	request.SetPathValue("control", created.Control.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response = httptest.NewRecorder()
+	updateRunControl(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("ack status = %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task/controls", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, human))
+	response = httptest.NewRecorder()
+	listTaskControls(tasks).ServeHTTP(response, request)
+	var listed controlsOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Controls) != 1 || listed.Controls[0].Status != model.RunControlAcknowledged {
+		t.Fatalf("listed controls = %d %+v: %s", response.Code, listed.Controls, response.Body.String())
+	}
+}
+
+func TestTaskReferenceRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	agent := service.AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Reference API", Checklist: []string{"Work"}, IdempotencyKey: "reference-api-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(model.AddTaskReferenceRequest{RunID: started.Run.ID, Kind: model.ReferenceCIRun, Label: "CI #10", URL: "https://ci.example.com/runs/10", IdempotencyKey: "reference-api-add"})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/references", bytes.NewReader(body))
+	request.SetPathValue("id", started.Task.ID)
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response := httptest.NewRecorder()
+	addTaskReference(tasks).ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("add status = %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task/references", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, service.HumanPrincipal("operator@example.com")))
+	response = httptest.NewRecorder()
+	listTaskReferences(tasks).ServeHTTP(response, request)
+	var listed referencesOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.References) != 1 || listed.References[0].Kind != model.ReferenceCIRun {
+		t.Fatalf("listed references = %d %+v: %s", response.Code, listed.References, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task/delivery", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, service.HumanPrincipal("operator@example.com")))
+	response = httptest.NewRecorder()
+	getTaskDelivery(tasks).ServeHTTP(response, request)
+	var delivery deliveryOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &delivery) != nil || len(delivery.References) != 1 || len(delivery.Milestones) != 2 {
+		t.Fatalf("delivery = %d %+v: %s", response.Code, delivery, response.Body.String())
 	}
 }
 

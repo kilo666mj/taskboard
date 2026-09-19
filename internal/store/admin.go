@@ -327,7 +327,15 @@ func (s *Store) listAdminAudit(ctx context.Context, query string, args ...any) (
 }
 
 func (s *Store) ListAllEvents(ctx context.Context) ([]model.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,task_id,run_id,kind,actor,message,payload,created_at FROM events ORDER BY created_at,id`)
+	return s.listEvents(ctx, `SELECT id,task_id,run_id,kind,actor,message,payload,created_at FROM events ORDER BY created_at,id`)
+}
+
+func (s *Store) ListTaskEvents(ctx context.Context, taskID string) ([]model.Event, error) {
+	return s.listEvents(ctx, `SELECT id,task_id,run_id,kind,actor,message,payload,created_at FROM events WHERE task_id=? ORDER BY created_at,id`, taskID)
+}
+
+func (s *Store) listEvents(ctx context.Context, query string, args ...any) ([]model.Event, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

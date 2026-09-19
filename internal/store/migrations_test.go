@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func TestFreshSchemaRecordsSealedBaseline(t *testing.T) {
 	if err := database.DB().QueryRowContext(t.Context(), `SELECT version,name,checksum FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&version, &name, &checksum); err != nil {
 		t.Fatal(err)
 	}
-	if version != latestSchemaVersion || name != "agent_run_callsigns" || len(checksum) != 64 {
+	if version != latestSchemaVersion || name != schemaMigrations[len(schemaMigrations)-1].Name || len(checksum) != 64 {
 		t.Fatalf("migration metadata = %d, %q, %q", version, name, checksum)
 	}
 }
@@ -69,7 +70,7 @@ func TestMigrationRejectsUnknownChecksum(t *testing.T) {
 
 func TestMigrationRejectsNewerSchema(t *testing.T) {
 	path := createMigratedSQLite(t)
-	mutateSQLite(t, path, `INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(5,'future','future','2026-01-01T00:00:00Z')`)
+	mutateSQLite(t, path, fmt.Sprintf(`INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(%d,'future','future','2026-01-01T00:00:00Z')`, latestSchemaVersion+1))
 	if _, err := Open(t.Context(), path); err == nil || !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("Open error = %v, want newer schema error", err)
 	}

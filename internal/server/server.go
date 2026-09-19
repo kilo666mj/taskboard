@@ -53,6 +53,85 @@ type claimInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 	model.ClaimRequest
 }
+type messageListInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	Before string `json:"before,omitempty" jsonschema:"Optional message ULID cursor for older messages"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum messages, default 100 and maximum 200"`
+}
+type messageAddInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.AddMessageRequest
+}
+type messageReceiptInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	RunID  string `json:"run_id" jsonschema:"Agent run ULID"`
+	model.MessageReceiptRequest
+}
+type escalationCreateInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.CreateEscalationRequest
+}
+type escalationListInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+}
+type controlCreateInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.CreateRunControlRequest
+}
+type controlUpdateInput struct {
+	ControlID string `json:"control_id" jsonschema:"Run control ULID"`
+	model.UpdateRunControlRequest
+}
+type controlListInput struct {
+	Limit int `json:"limit,omitempty" jsonschema:"Maximum controls, default 100 and maximum 200"`
+}
+type referenceListInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+}
+type referenceAddInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.AddTaskReferenceRequest
+}
+type handoffListInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+}
+type handoffAddInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.AddRunHandoffRequest
+}
+type completionListInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+}
+type completionEvidenceInput struct {
+	TaskID        string `json:"task_id" jsonschema:"Task ULID"`
+	RequirementID string `json:"requirement_id" jsonschema:"Completion requirement ULID"`
+	model.SubmitCompletionEvidenceRequest
+}
+type sessionBridgeRegisterInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.RegisterSessionBridgeRequest
+}
+type sessionRequestListInput struct{}
+type sessionRequestUpdateInput struct {
+	RequestID string `json:"request_id" jsonschema:"Session request ULID"`
+	model.UpdateSessionBridgeRequest
+}
+type dependencyListInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+}
+type workerOutput struct {
+	Worker model.WorkerAdvertisement `json:"worker"`
+}
+type requirementsOutput struct {
+	Requirements []string `json:"requirements"`
+}
+type usageInput struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	model.RecordUsageRequest
+}
+type usageOutput struct {
+	Usage model.UsageRecord `json:"usage"`
+}
 type moveInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 	model.MoveRequest
@@ -61,7 +140,67 @@ type tasksOutput struct {
 	Tasks []model.Task `json:"tasks"`
 }
 type taskOutput struct {
-	Task model.Task `json:"task"`
+	Task     model.Task         `json:"task"`
+	Handoffs []model.RunHandoff `json:"handoffs,omitempty"`
+}
+type messagesOutput struct {
+	Messages []model.TaskMessage `json:"messages"`
+}
+type messageOutput struct {
+	Message model.TaskMessage `json:"message"`
+}
+type escalationsOutput struct {
+	Escalations []model.TaskEscalation `json:"escalations"`
+}
+type escalationOutput struct {
+	Escalation model.TaskEscalation `json:"escalation"`
+}
+type controlsOutput struct {
+	Controls []model.RunControlRequest `json:"controls"`
+}
+type controlOutput struct {
+	Control model.RunControlRequest `json:"control"`
+}
+type referencesOutput struct {
+	References []model.TaskReference `json:"references"`
+}
+type referenceOutput struct {
+	Reference model.TaskReference `json:"reference"`
+}
+type deliveryOutput struct {
+	References []model.TaskReference         `json:"references"`
+	Milestones []model.DeliveryMilestone     `json:"milestones"`
+	Handoffs   []model.RunHandoff            `json:"handoffs"`
+	Completion []model.CompletionRequirement `json:"completion"`
+}
+type handoffsOutput struct {
+	Handoffs []model.RunHandoff `json:"handoffs"`
+}
+type handoffOutput struct {
+	Handoff model.RunHandoff `json:"handoff"`
+}
+type completionOutput struct {
+	Requirements []model.CompletionRequirement `json:"requirements"`
+}
+type completionEvidenceOutput struct {
+	Evidence model.CompletionEvidence `json:"evidence"`
+}
+type sessionBridgesOutput struct {
+	Bridges  []model.SessionBridge        `json:"bridges"`
+	Requests []model.SessionBridgeRequest `json:"requests,omitempty"`
+}
+type sessionBridgeOutput struct {
+	Bridge model.SessionBridge `json:"bridge"`
+}
+type sessionRequestsOutput struct {
+	Requests []model.SessionBridgeRequest `json:"requests"`
+}
+type sessionRequestOutput struct {
+	Request model.SessionBridgeRequest `json:"request"`
+}
+type dependenciesOutput struct {
+	Dependencies []model.TaskDependency `json:"dependencies"`
+	Ready        bool                   `json:"ready"`
 }
 type templatesOutput struct {
 	Templates []model.Template `json:"templates"`
@@ -103,10 +242,36 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("POST /api/v1/tasks/capture", authenticated(http.HandlerFunc(createTask(service))))
 	mux.Handle("GET /api/v1/tasks/{id}", authenticated(http.HandlerFunc(getTask(service))))
 	mux.Handle("PATCH /api/v1/tasks/{id}", authenticated(http.HandlerFunc(updateTask(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/messages", authenticated(http.HandlerFunc(listMessages(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/messages", authenticated(http.HandlerFunc(addMessage(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/escalations", authenticated(http.HandlerFunc(listEscalations(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/escalations", authenticated(http.HandlerFunc(createEscalation(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/escalations/{escalation}/answer", authenticated(http.HandlerFunc(resolveEscalation(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/controls", authenticated(http.HandlerFunc(listTaskControls(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/controls", authenticated(http.HandlerFunc(createTaskControl(service))))
+	mux.Handle("GET /api/v1/run-controls", authenticated(http.HandlerFunc(listPendingControls(service))))
+	mux.Handle("PATCH /api/v1/run-controls/{control}", authenticated(http.HandlerFunc(updateRunControl(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/references", authenticated(http.HandlerFunc(listTaskReferences(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/references", authenticated(http.HandlerFunc(addTaskReference(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/delivery", authenticated(http.HandlerFunc(getTaskDelivery(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/handoffs", authenticated(http.HandlerFunc(listRunHandoffs(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/handoffs", authenticated(http.HandlerFunc(addRunHandoff(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/completion", authenticated(http.HandlerFunc(listCompletionRequirements(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/completion", authenticated(http.HandlerFunc(createCompletionRequirement(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/completion/{requirement}/evidence", authenticated(http.HandlerFunc(submitCompletionEvidence(service))))
+	mux.Handle("PATCH /api/v1/tasks/{id}/completion/{requirement}", authenticated(http.HandlerFunc(reviewCompletionRequirement(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/session-bridges", authenticated(http.HandlerFunc(listTaskSessionBridges(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/session-requests", authenticated(http.HandlerFunc(createSessionBridgeRequest(service))))
+	mux.Handle("GET /api/v1/tasks/{id}/dependencies", authenticated(http.HandlerFunc(listTaskDependencies(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/dependencies", authenticated(http.HandlerFunc(addTaskDependency(service))))
+	mux.Handle("DELETE /api/v1/tasks/{id}/dependencies/{blockedBy}", authenticated(http.HandlerFunc(removeTaskDependency(service))))
+	mux.Handle("PUT /api/v1/tasks/{id}/requirements", authenticated(http.HandlerFunc(setTaskRequirements(service))))
+	mux.Handle("GET /api/v1/analytics", authenticated(http.HandlerFunc(getAnalytics(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs", authenticated(http.HandlerFunc(claimTask(service))))
 	mux.Handle("PATCH /api/v1/tasks/{id}/runs/{run}", authenticated(http.HandlerFunc(renameRun(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/move", authenticated(http.HandlerFunc(moveTask(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs/{run}/heartbeat", authenticated(http.HandlerFunc(heartbeat(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/runs/{run}/message-receipts", authenticated(http.HandlerFunc(recordMessageReceipts(service))))
 	mux.Handle("GET /api/v1/events", authenticated(http.HandlerFunc(events(service, database, newEventStreamLimiter(128, 4)))))
 	mux.Handle("GET /api/v1/templates", authenticated(http.HandlerFunc(listTemplates(service))))
 	mux.Handle("POST /api/v1/templates", authenticated(http.HandlerFunc(saveTemplate(service))))
@@ -260,7 +425,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 	}
 	server := mcpkit.MustServer(mcpkit.ServerConfig{
 		Name: "taskboard", Version: Version, Logger: logger,
-		Instructions: "Use task_create to capture future work without beginning execution. Before substantive agent work, start or claim the task and keep its task and run IDs. As soon as one checklist item is finished, call task_update with that one complete_item_id and the next current_item_id; do not save completed checklist updates until the end. Heartbeat during long work, act on any stale-progress hint, record blockers immediately, and complete only after all required checklist items are done or skipped with a reason. Unattended clients should send a stable idempotency_key for each mutating task operation and reuse it only when retrying the identical request.",
+		Instructions: "Use task_create to capture future work without beginning execution. Before substantive agent work, start or claim the task and keep its task and run IDs. As soon as one checklist item is finished, call task_update with that one complete_item_id and the next current_item_id; do not save completed checklist updates until the end. Heartbeat during long work, act on stale-progress hints, process pending_messages, acknowledge them with task_message_ack, and process pending_controls through acknowledged, accepted or rejected, and completed states. Also poll task_control_list because ended runs cannot heartbeat. Add typed delivery references as branches, commits, PRs, CI runs, reviews, and deployments appear. Messages and references never change workflow or control state by themselves. Record blockers immediately, and complete only after all required checklist items are done or skipped with a reason. Unattended clients should send a stable idempotency_key for each mutating task operation and reuse it only when retrying the identical request.",
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_start", Description: "Register substantial work before beginning. Creates a durable task, checklist, and leased agent run; keep the returned task_id and run_id for updates.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.StartRequest) (*mcp.CallToolResult, model.StartResult, error) {
 		if input.Type == "" {
@@ -299,9 +464,111 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		result, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx))
 		return nil, result, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_message_list", Description: "List the append-only conversation for an owned task. Workflow transitions remain in task events rather than duplicate status messages.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input messageListInput) (*mcp.CallToolResult, messagesOutput, error) {
+		messages, err := tasks.ListMessagesFor(ctx, input.TaskID, input.Before, input.Limit, mcpPrincipal(ctx))
+		return nil, messagesOutput{Messages: messages}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_message_add", Description: "Append a note, question, or answer from the active agent run. Messages never change task status, checklist items, or control state. Agents cannot issue instructions or require acknowledgement.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input messageAddInput) (*mcp.CallToolResult, messageOutput, error) {
+		message, err := tasks.AddMessageFor(ctx, input.TaskID, input.AddMessageRequest, mcpPrincipal(ctx))
+		return nil, messageOutput{Message: message}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_message_ack", Description: "Record messages explicitly observed or acknowledged by this active run. Instructions requiring acknowledgement remain in heartbeat responses until acknowledged; fetching alone never changes receipt state.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input messageReceiptInput) (*mcp.CallToolResult, messagesOutput, error) {
+		pending, err := tasks.RecordMessageReceiptsFor(ctx, input.TaskID, input.RunID, input.MessageReceiptRequest, mcpPrincipal(ctx))
+		return nil, messagesOutput{Messages: pending}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_escalation_list", Description: "List structured questions, choices, recommendations, and recorded answers for an owned task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationListInput) (*mcp.CallToolResult, escalationsOutput, error) {
+		items, err := tasks.ListEscalationsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		return nil, escalationsOutput{Escalations: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_escalate", Description: "Ask a structured question from an active run. A blocking escalation atomically ends the run and waits the task; after a human answers, claim the queued task to create a replacement run.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationCreateInput) (*mcp.CallToolResult, escalationOutput, error) {
+		item, err := tasks.CreateEscalationFor(ctx, input.TaskID, input.CreateEscalationRequest, mcpPrincipal(ctx))
+		return nil, escalationOutput{Escalation: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_control_list", Description: "Poll actionable pause, cancel, resume, and retry requests addressed to this controller principal. This works even when the target run has ended.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input controlListInput) (*mcp.CallToolResult, controlsOutput, error) {
+		items, err := tasks.ListPendingRunControlsFor(ctx, input.Limit, mcpPrincipal(ctx))
+		return nil, controlsOutput{Controls: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_control_update", Description: "Acknowledge, accept, reject, complete, or expire a control addressed to this controller. Only completed controls mutate task/run state; completion requires the latest task version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input controlUpdateInput) (*mcp.CallToolResult, controlOutput, error) {
+		item, err := tasks.UpdateRunControlFor(ctx, input.ControlID, input.UpdateRunControlRequest, mcpPrincipal(ctx))
+		return nil, controlOutput{Control: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_reference_list", Description: "List immutable typed delivery references and their authenticated provenance for an owned task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input referenceListInput) (*mcp.CallToolResult, referencesOutput, error) {
+		items, err := tasks.ListTaskReferencesFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		return nil, referencesOutput{References: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_reference_add", Description: "Attach a typed Linear, repository, worktree, branch, commit, pull request, CI, deployment, screenshot, or review reference from the active run. URLs must be absolute HTTPS links without embedded credentials.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input referenceAddInput) (*mcp.CallToolResult, referenceOutput, error) {
+		item, err := tasks.AddTaskReferenceFor(ctx, input.TaskID, input.AddTaskReferenceRequest, mcpPrincipal(ctx))
+		return nil, referenceOutput{Reference: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_delivery_get", Description: "Get typed references together with the ordered delivery milestones derived from those references and selected Taskboard lifecycle events.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input referenceListInput) (*mcp.CallToolResult, deliveryOutput, error) {
+		references, err := tasks.ListTaskReferencesFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		if err != nil {
+			return nil, deliveryOutput{}, err
+		}
+		milestones, err := tasks.DeliveryMilestonesFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		if err != nil {
+			return nil, deliveryOutput{}, err
+		}
+		handoffs, err := tasks.ListRunHandoffsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		if err != nil {
+			return nil, deliveryOutput{}, err
+		}
+		completion, err := tasks.ListCompletionRequirementsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		return nil, deliveryOutput{References: references, Milestones: milestones, Handoffs: handoffs, Completion: completion}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_handoff_list", Description: "List append-only continuation snapshots from prior and current runs. Replacement runs should inspect these immediately after claiming work.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input handoffListInput) (*mcp.CallToolResult, handoffsOutput, error) {
+		items, err := tasks.ListRunHandoffsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		return nil, handoffsOutput{Handoffs: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_handoff_add", Description: "Append a concise structured checkpoint or final handoff for the active run. Do not include prompts, reasoning, credentials, or raw tool output.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input handoffAddInput) (*mcp.CallToolResult, handoffOutput, error) {
+		item, err := tasks.AddRunHandoffFor(ctx, input.TaskID, input.AddRunHandoffRequest, mcpPrincipal(ctx))
+		return nil, handoffOutput{Handoff: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_get", Description: "List the human-owned completion contract and submitted evidence for an owned task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionListInput) (*mcp.CallToolResult, completionOutput, error) {
+		items, err := tasks.ListCompletionRequirementsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		return nil, completionOutput{Requirements: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_evidence_submit", Description: "Submit concise evidence for one completion requirement from the active run. Evidence remains pending until a human verifies it.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionEvidenceInput) (*mcp.CallToolResult, completionEvidenceOutput, error) {
+		item, err := tasks.SubmitCompletionEvidenceFor(ctx, input.TaskID, input.RequirementID, input.SubmitCompletionEvidenceRequest, mcpPrincipal(ctx))
+		return nil, completionEvidenceOutput{Evidence: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_session_register", Description: "Advertise trusted open/resume availability for an active run. The controller retains the private run-to-session mapping; Taskboard stores no URL or session secret.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input sessionBridgeRegisterInput) (*mcp.CallToolResult, sessionBridgeOutput, error) {
+		item, err := tasks.RegisterSessionBridgeFor(ctx, input.TaskID, input.RegisterSessionBridgeRequest, mcpPrincipal(ctx))
+		return nil, sessionBridgeOutput{Bridge: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_session_request_list", Description: "Poll open/resume requests addressed to this controller principal.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input sessionRequestListInput) (*mcp.CallToolResult, sessionRequestsOutput, error) {
+		items, err := tasks.ListSessionBridgeRequestsFor(ctx, mcpPrincipal(ctx))
+		return nil, sessionRequestsOutput{Requests: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_session_request_update", Description: "Acknowledge, complete, or reject a trusted session action request addressed to this controller.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input sessionRequestUpdateInput) (*mcp.CallToolResult, sessionRequestOutput, error) {
+		item, err := tasks.UpdateSessionBridgeRequestFor(ctx, input.RequestID, input.UpdateSessionBridgeRequest, mcpPrincipal(ctx))
+		return nil, sessionRequestOutput{Request: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_dependency_list", Description: "List blocked_by edges and derived readiness for an owned task. Readiness is separate from execution status.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input dependencyListInput) (*mcp.CallToolResult, dependenciesOutput, error) {
+		items, err := tasks.ListTaskDependenciesFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		ready := true
+		for _, item := range items {
+			if !item.Satisfied {
+				ready = false
+			}
+		}
+		return nil, dependenciesOutput{Dependencies: items, Ready: ready}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "worker_advertise", Description: "Advertise this controller principal's short-lived operational capabilities and capacity for task matching. This does not grant security authorization.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.AdvertiseWorkerRequest) (*mcp.CallToolResult, workerOutput, error) {
+		item, err := tasks.AdvertiseWorkerFor(ctx, input, mcpPrincipal(ctx))
+		return nil, workerOutput{Worker: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_usage_record", Description: "Record numeric token and estimated-cost totals for the active run. Never include prompts, reasoning, credentials, or tool output.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input usageInput) (*mcp.CallToolResult, usageOutput, error) {
+		item, err := tasks.RecordUsageFor(ctx, input.TaskID, input.RecordUsageRequest, mcpPrincipal(ctx))
+		return nil, usageOutput{Usage: item}, err
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and agent runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input taskIDInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.GetFor(ctx, input.TaskID, mcpPrincipal(ctx))
-		return nil, taskOutput{Task: task}, err
+		if err != nil {
+			return nil, taskOutput{}, err
+		}
+		handoffs, err := tasks.ListRunHandoffsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		return nil, taskOutput{Task: task, Handoffs: handoffs}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
 		items, err := tasks.ListFor(ctx, input.Statuses, input.Limit, mcpPrincipal(ctx))
@@ -399,7 +666,8 @@ func getTask(tasks *service.Service) http.HandlerFunc {
 		if apiError(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusOK, taskOutput{Task: task})
+		handoffs, _ := tasks.ListRunHandoffsFor(r.Context(), task.ID, principal(r.Context()))
+		writeJSON(w, http.StatusOK, taskOutput{Task: task, Handoffs: handoffs})
 	}
 }
 func updateTask(tasks *service.Service) http.HandlerFunc {
@@ -413,6 +681,312 @@ func updateTask(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, taskOutput{Task: task})
+	}
+}
+func listMessages(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		messages, err := tasks.ListMessagesFor(r.Context(), r.PathValue("id"), r.URL.Query().Get("before"), limit, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, messagesOutput{Messages: messages})
+	}
+}
+func addMessage(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.AddMessageRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		message, err := tasks.AddMessageFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, messageOutput{Message: message})
+	}
+}
+func listEscalations(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListEscalationsFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, escalationsOutput{Escalations: items})
+	}
+}
+func createEscalation(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.CreateEscalationRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.CreateEscalationFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, escalationOutput{Escalation: item})
+	}
+}
+func resolveEscalation(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.ResolveEscalationRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.ResolveEscalationFor(r.Context(), r.PathValue("id"), r.PathValue("escalation"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, escalationOutput{Escalation: item})
+	}
+}
+func listTaskControls(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListTaskRunControlsFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, controlsOutput{Controls: items})
+	}
+}
+func createTaskControl(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.CreateRunControlRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.CreateRunControlFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, controlOutput{Control: item})
+	}
+}
+func listPendingControls(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		items, err := tasks.ListPendingRunControlsFor(r.Context(), limit, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, controlsOutput{Controls: items})
+	}
+}
+func updateRunControl(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.UpdateRunControlRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.UpdateRunControlFor(r.Context(), r.PathValue("control"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, controlOutput{Control: item})
+	}
+}
+func listTaskReferences(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListTaskReferencesFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, referencesOutput{References: items})
+	}
+}
+func addTaskReference(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.AddTaskReferenceRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.AddTaskReferenceFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, referenceOutput{Reference: item})
+	}
+}
+func getTaskDelivery(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		references, err := tasks.ListTaskReferencesFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		milestones, err := tasks.DeliveryMilestonesFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		handoffs, _ := tasks.ListRunHandoffsFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		completion, _ := tasks.ListCompletionRequirementsFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		writeJSON(w, http.StatusOK, deliveryOutput{References: references, Milestones: milestones, Handoffs: handoffs, Completion: completion})
+	}
+}
+func listRunHandoffs(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListRunHandoffsFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, handoffsOutput{Handoffs: items})
+	}
+}
+func addRunHandoff(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.AddRunHandoffRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.AddRunHandoffFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, handoffOutput{Handoff: item})
+	}
+}
+func listCompletionRequirements(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListCompletionRequirementsFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, completionOutput{Requirements: items})
+	}
+}
+func createCompletionRequirement(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.CreateCompletionRequirementRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.CreateCompletionRequirementFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"requirement": item})
+	}
+}
+func submitCompletionEvidence(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.SubmitCompletionEvidenceRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.SubmitCompletionEvidenceFor(r.Context(), r.PathValue("id"), r.PathValue("requirement"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, completionEvidenceOutput{Evidence: item})
+	}
+}
+func reviewCompletionRequirement(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.ReviewCompletionRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.ReviewCompletionRequirementFor(r.Context(), r.PathValue("id"), r.PathValue("requirement"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"requirement": item})
+	}
+}
+func listTaskSessionBridges(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListTaskSessionBridgesFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, sessionBridgesOutput{Bridges: items})
+	}
+}
+func createSessionBridgeRequest(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.CreateSessionBridgeRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.CreateSessionBridgeRequestFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusAccepted, sessionRequestOutput{Request: item})
+	}
+}
+func listTaskDependencies(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListTaskDependenciesFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		ready := true
+		for _, item := range items {
+			if !item.Satisfied {
+				ready = false
+			}
+		}
+		writeJSON(w, http.StatusOK, dependenciesOutput{Dependencies: items, Ready: ready})
+	}
+}
+func addTaskDependency(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.AddTaskDependencyRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		task, err := tasks.AddTaskDependencyFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, taskOutput{Task: task})
+	}
+}
+func removeTaskDependency(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		version, _ := strconv.ParseInt(r.URL.Query().Get("expected_version"), 10, 64)
+		task, err := tasks.RemoveTaskDependencyFor(r.Context(), r.PathValue("id"), r.PathValue("blockedBy"), version, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, taskOutput{Task: task})
+	}
+}
+func setTaskRequirements(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.SetTaskRequirementsRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		task, err := tasks.SetTaskRequirementsFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, taskOutput{Task: task})
+	}
+}
+func getAnalytics(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		summary, err := tasks.AnalyticsFor(r.Context(), days, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"analytics": summary})
+	}
+}
+func recordMessageReceipts(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.MessageReceiptRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		pending, err := tasks.RecordMessageReceiptsFor(r.Context(), r.PathValue("id"), r.PathValue("run"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, messagesOutput{Messages: pending})
 	}
 }
 func claimTask(tasks *service.Service) http.HandlerFunc {

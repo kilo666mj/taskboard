@@ -24,6 +24,7 @@
           <span id="notifyLabel" aria-hidden="true">…</span>
         </button>
         <button id="settingsButton" class="icon-button" type="button" title="Task settings" aria-label="Task settings">⚙</button>
+        <button id="analyticsButton" class="icon-button" type="button" title="Delivery analytics" aria-label="Delivery analytics">▦</button>
         <button id="logoutButton" class="text-button" type="button" hidden>Sign out</button>
         <button id="newTaskButton" class="icon-button new-task-button" type="button" title="Create task with details" aria-label="Create task with details"><span aria-hidden="true">+</span></button>
       </div>
@@ -109,7 +110,8 @@
         <label>Defer until<input id="taskDeferUntil" type="date"></label>
         <label>Repeat<select id="taskRecurrence"><option value="">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
       </div>
-      <label>Context<textarea id="taskSummary" maxlength="2000" rows="2" placeholder="A concise outcome or constraint"></textarea></label>
+      <label>Task context <span>(durable)</span><textarea id="taskSummary" maxlength="2000" rows="4" aria-describedby="taskContextHelp" placeholder="Describe the desired outcome, background, constraints, and important links"></textarea></label>
+      <p id="taskContextHelp" class="field-help">This stays with the task. Use Conversation for later updates and decisions; the status note remains a concise snapshot of current progress.</p>
       <fieldset>
         <legend>Checklist <span>(optional)</span></legend>
         <div id="checklistEditor" class="checklist-editor"></div>
@@ -136,6 +138,11 @@
       <div class="dialog-actions"><button class="primary" type="submit">Save settings</button></div>
     </form>
   </dialog>
+  <dialog id="analyticsDialog" class="modal analytics-modal" aria-labelledby="analyticsTitle">
+    <div class="dialog-heading"><div><p class="eyebrow">Operations</p><h2 id="analyticsTitle">Delivery analytics</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
+    <label>Window<select id="analyticsDays"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">365 days</option></select></label>
+    <p id="analyticsStatus" role="status"></p><div id="analyticsGrid" class="analytics-grid"></div>
+  </dialog>
 
   <template id="taskTemplate">
     <article class="task-card">
@@ -147,6 +154,15 @@
       <div class="task-detail">
         <div class="attention-note" hidden></div>
         <div class="task-meta" hidden></div>
+        <section class="task-context" aria-label="Task context" hidden><h3>Context</h3><p></p></section>
+        <section class="dependency-panel" aria-label="Task dependencies" hidden>
+          <div class="dependency-list"></div>
+          <form class="dependency-form"><label>Blocked by task ID<input name="blocked_by_task_id" required maxlength="26" placeholder="01…"></label><button class="secondary" type="submit">Add dependency</button></form>
+        </section>
+        <section class="requirements-panel" aria-label="Worker requirements" hidden>
+          <div class="requirements-list"></div>
+          <form class="requirements-form"><label>Worker requirements<input name="requirements" maxlength="2000" placeholder="repo:org/name, browser, kubernetes"></label><button class="secondary" type="submit">Save requirements</button></form>
+        </section>
         <ol class="checklist"></ol>
         <p class="empty-checklist" hidden>No checklist yet. Start it yourself or assign it to an agent.</p>
         <div class="task-actions" hidden>
@@ -162,11 +178,74 @@
           <summary>Agent sessions</summary>
           <div class="run-list"></div>
         </details>
+        <details class="delivery">
+          <summary>Delivery <span class="reference-count"></span></summary>
+          <div class="delivery-panel">
+            <p class="delivery-status" role="status">Open to load delivery details.</p>
+            <ol class="milestone-list" aria-label="Delivery milestones"></ol>
+            <section class="completion-contract" aria-label="Completion contract">
+              <div class="completion-list"></div>
+              <form class="completion-form">
+                <div class="reference-fields">
+                  <label>Gate<select name="kind"><option value="pull_request">Pull request</option><option value="green_ci">Green CI</option><option value="validation">Validation</option><option value="resolved_review">Resolved review</option><option value="deployment">Deployment</option><option value="human_approval">Human approval</option><option value="custom">Custom</option></select></label>
+                  <label>Acceptance criterion<input name="label" required maxlength="300" placeholder="Required before completion"></label>
+                </div>
+                <label class="inline-check"><input name="required" type="checkbox" checked> Required gate</label>
+                <button class="secondary add-completion" type="submit">Add completion gate</button>
+              </form>
+            </section>
+            <div class="handoff-list" aria-label="Run handoffs"></div>
+            <ul class="reference-list" aria-label="Delivery references"></ul>
+            <form class="reference-form">
+              <div class="reference-fields">
+                <label>Kind<select name="kind"><option value="linear">Linear</option><option value="repository">Repository</option><option value="worktree">Worktree</option><option value="branch">Branch</option><option value="commit">Commit</option><option value="pull_request">Pull request</option><option value="ci_run">CI run</option><option value="deployment">Deployment</option><option value="screenshot">Screenshot</option><option value="review">Review</option></select></label>
+                <label>Label<input name="label" maxlength="200" required placeholder="PR #42"></label>
+              </div>
+              <label>Locator<input name="locator" maxlength="2000" placeholder="org/repo#42, branch, SHA, or local path"></label>
+              <label>HTTPS URL<input name="url" type="url" inputmode="url" maxlength="2000" placeholder="https://…"></label>
+              <button class="secondary add-reference" type="submit">Add reference</button>
+            </form>
+          </div>
+        </details>
+        <details class="conversation">
+          <summary>Conversation <span class="message-count"></span></summary>
+          <div class="conversation-panel">
+            <p class="conversation-status" role="status"></p>
+            <section class="control-panel" aria-label="Run controls">
+              <div class="control-list"></div>
+              <form class="control-form" hidden>
+                <input name="target_run_id" type="hidden">
+                <div class="control-fields">
+                  <label>Request<select name="kind"></select></label>
+                  <label>Reason<input name="reason" maxlength="1000" placeholder="Optional context for the controller"></label>
+                </div>
+                <button class="secondary request-control" type="submit">Send request</button>
+              </form>
+            </section>
+            <div class="escalation-list" aria-label="Task decisions"></div>
+            <ol class="message-list" aria-label="Task conversation"></ol>
+            <form class="message-form">
+              <input name="reply_to_id" type="hidden">
+              <input name="supersedes_id" type="hidden">
+              <div class="message-context" hidden><span></span><button class="text-button clear-message-context" type="button">Clear</button></div>
+              <div class="message-controls">
+                <label>Kind<select name="kind"><option value="note">Note</option><option value="instruction">Instruction</option><option value="question">Question</option><option value="answer">Answer</option></select></label>
+                <label>Target<select name="target_run_id"><option value="">Task context</option></select></label>
+              </div>
+              <label>Message<textarea name="body" maxlength="4000" rows="3" required placeholder="Add context or give the active agent a direction"></textarea></label>
+              <div class="message-submit-row">
+                <label class="ack-option"><input name="requires_ack" type="checkbox"> Require acknowledgement</label>
+                <button class="primary send-message" type="submit">Send</button>
+              </div>
+            </form>
+          </div>
+        </details>
         <div class="task-management">
           <button class="text-button edit-task" type="button">Edit</button>
           <button class="text-button move-up" type="button" aria-label="Move task up">↑</button>
           <button class="text-button move-down" type="button" aria-label="Move task down">↓</button>
           <button class="text-button review-task" type="button">Reviewed</button>
+          <button class="text-button cancel-task" type="button">Cancel task</button>
         </div>
         <div class="task-footer"><span class="repository"></span><span class="run-state"></span></div>
       </div>

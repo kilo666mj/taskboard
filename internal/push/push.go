@@ -80,12 +80,12 @@ func (s *Service) Run(ctx context.Context) {
 func (s *Service) Wait() { s.wait.Wait() }
 
 func (s *Service) deliver(ctx context.Context, event model.Event) {
-	if event.Kind != "task.updated" {
+	if event.Kind != "task.updated" && event.Kind != "task.escalated" {
 		return
 	}
 	status := eventStatus(event)
 	completedItemIDs := eventCompletedItemIDs(event)
-	if len(completedItemIDs) == 0 && !notifiableStatus(status) {
+	if event.Kind == "task.updated" && len(completedItemIDs) == 0 && !notifiableStatus(status) {
 		return
 	}
 	task, err := s.tasks.Get(ctx, event.TaskID)
@@ -93,7 +93,19 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 		s.logger.Error("load task for push", "error", err)
 		return
 	}
-	notifications := notificationsFor(task, status, completedItemIDs)
+	var notifications []notification
+	if event.Kind == "task.escalated" {
+		questionID, _ := event.Payload["question_message_id"].(string)
+		question, err := s.database.GetTaskMessage(ctx, questionID)
+		if err != nil {
+			s.logger.Error("load escalation question for push", "error", err)
+			return
+		}
+		blocking, _ := event.Payload["blocking"].(bool)
+		notifications = []notification{notificationForEscalation(task, question.Body, blocking)}
+	} else {
+		notifications = notificationsFor(task, status, completedItemIDs)
+	}
 	subscriptions, err := s.database.ListPushSubscriptions(ctx)
 	if err != nil {
 		s.logger.Error("list push subscriptions", "error", err)
@@ -130,6 +142,14 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 			}
 		}
 	}
+}
+
+func notificationForEscalation(task model.Task, question string, blocking bool) notification {
+	title := task.Title + " · question"
+	if blocking {
+		title = task.Title + " · decision needed"
+	}
+	return notification{title: title, body: question, tag: "task-" + task.ID + "-escalation", urgent: blocking}
 }
 
 func eventStatus(event model.Event) model.TaskStatus {

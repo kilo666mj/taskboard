@@ -166,6 +166,18 @@ func TestFinalStepCombinesDoneNotification(t *testing.T) {
 	}
 }
 
+func TestEscalationNotificationUrgency(t *testing.T) {
+	task := model.Task{ID: "task-1", Title: "Choose API"}
+	quiet := notificationForEscalation(task, "Any preference?", false)
+	if quiet.urgent || quiet.body != "Any preference?" || quiet.title != "Choose API · question" {
+		t.Fatalf("quiet escalation notification = %+v", quiet)
+	}
+	blocking := notificationForEscalation(task, "REST or GraphQL?", true)
+	if !blocking.urgent || blocking.title != "Choose API · decision needed" {
+		t.Fatalf("blocking escalation notification = %+v", blocking)
+	}
+}
+
 func TestEventCompletedItemIDsAcceptsJSONShape(t *testing.T) {
 	event := model.Event{Payload: map[string]any{"completed_item_ids": []any{"step-1", 2, "step-2"}}}
 	ids := eventCompletedItemIDs(event)

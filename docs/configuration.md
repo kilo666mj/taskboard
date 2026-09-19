@@ -78,8 +78,10 @@ authorization model; automated-agent capabilities are configured separately.
 
 Service principals receive named capabilities instead of inheriting browser
 roles. The supported labels are `task:read`, `task:create`, `task:claim`,
-`task:update`, `task:complete`, `task:sensitive`, `template:read`, and
-`template:manage`. Cancelling a task or skipping checklist items requires the
+`task:update`, `task:message`, `task:escalate`, `task:control`, `task:reference`, `task:handoff`, `task:evidence`, `task:session`, `task:usage`, `task:complete`, `task:sensitive`, `worker:advertise`, `template:read`,
+and `template:manage`. `task:message` permits an owned active run to append
+conversation and record explicit receipts; it does not permit task mutation.
+Cancelling a task or skipping checklist items requires the
 separate `task:sensitive` capability. It is excluded from the default policy,
 so granting it is the operator approval gate for those irreversible actions.
 
