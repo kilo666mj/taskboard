@@ -2,10 +2,12 @@
 
 Taskboard separates authenticated identity from presentation. The `agent`
 field on a run is the trusted principal established by the server. `client` is
-self-reported diagnostic metadata. `callsign` is friendly display metadata
-assigned by Taskboard and may be renamed by a signed-in operator. Integrations
-must use the principal and run ID—not the callsign or client label—for audit,
-authorization, and resume decisions.
+self-reported diagnostic metadata. `session_id` is Taskboard's public identifier
+for one agent session, while `callsign` is its friendly display name. Controllers
+send an opaque `agent_session_key` on starts and claims; Taskboard stores only a
+hash of that key. Integrations must use the principal and task run ID—not the
+session ID, callsign, or client label—for audit, authorization, and resume
+decisions.
 
 ## Incremental checklist progress
 
@@ -223,16 +225,22 @@ completion rate is done divided by done plus cancelled. Deleted tasks cascade
 their usage and disappear from subsequent aggregates; ordinary retention uses
 the same deletion boundary.
 
-## Friendly run identity
+## Friendly agent-session identity
 
-Taskboard assigns each run a short callsign such as `Maple` or `Orbit`. Active
-runs cannot share a callsign, including names that differ only by case. The
-associated `tone` is a stable palette slot derived from the immutable run ID;
-interfaces must also show text or initials so color is never the only cue.
+Taskboard assigns each agent session a short callsign such as `Maple` or
+`Orbit`. A controller must reuse one opaque `agent_session_key` across all task
+starts and claims performed by that session. Taskboard hashes the key before
+storage and returns a server-issued `session_id`; neither value is an authority
+or a controller thread reference. Separate sessions cannot share a callsign,
+including names that differ only by case. The associated `tone` is a stable
+palette slot derived from the server-issued session ID; interfaces must also
+show text or initials so color is never the only cue. Clients that omit the key
+retain the legacy behavior of receiving a new identity for every task run.
 
-Operators can rename a run through the task interface. Renaming changes only
-display metadata, increments the task version, and writes an audit event. The
-authenticated principal, MCP client metadata, and run ID remain unchanged and
+Operators can rename an agent session through any of its task runs. The rename
+applies to every run in that session, changes only display metadata, increments
+the selected task's version, and writes an audit event. The authenticated
+principal, MCP client metadata, session ID, and run IDs remain unchanged and
 available in agent details.
 
 Opening the corresponding agent session remains a controller concern. The

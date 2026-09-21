@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 14
+const latestSchemaVersion = 15
 
 type schemaMigration struct {
 	Version  int
@@ -225,6 +225,21 @@ var schemaMigrations = []schemaMigration{
 		`CREATE INDEX idx_usage_records_created ON usage_records(created_at,id)`,
 		`CREATE INDEX idx_usage_records_task ON usage_records(task_id,id)`,
 	}},
+	{Version: 15, Name: "agent_sessions", SQLite: []string{
+		`DROP INDEX idx_runs_active_callsign`,
+		`CREATE TABLE agent_sessions (id TEXT PRIMARY KEY,agent TEXT NOT NULL,client TEXT NOT NULL DEFAULT '',key_hash TEXT NOT NULL,callsign TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX idx_agent_sessions_agent_key ON agent_sessions(agent,key_hash)`,
+		`CREATE UNIQUE INDEX idx_agent_sessions_callsign ON agent_sessions(lower(callsign))`,
+		`ALTER TABLE agent_runs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX idx_runs_session ON agent_runs(session_id)`,
+	}, Postgres: []string{
+		`DROP INDEX idx_runs_active_callsign`,
+		`CREATE TABLE agent_sessions (id TEXT PRIMARY KEY,agent TEXT NOT NULL,client TEXT NOT NULL DEFAULT '',key_hash TEXT NOT NULL,callsign TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX idx_agent_sessions_agent_key ON agent_sessions(agent,key_hash)`,
+		`CREATE UNIQUE INDEX idx_agent_sessions_callsign ON agent_sessions(lower(callsign))`,
+		`ALTER TABLE agent_runs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX idx_runs_session ON agent_runs(session_id)`,
+	}},
 }
 
 var messagingSchema = map[string][]string{
@@ -279,6 +294,10 @@ var workerMatchingSchema = map[string][]string{
 var workerMatchingIndexes = []string{"idx_task_requirements_requirement", "idx_worker_advertisements_expiry"}
 var usageSchema = map[string][]string{"usage_records": {"id", "task_id", "run_id", "provider", "model", "input_tokens", "output_tokens", "estimated_cost_micros", "recorded_by", "created_at"}}
 var usageIndexes = []string{"idx_usage_records_created", "idx_usage_records_task"}
+var agentSessionSchema = map[string][]string{
+	"agent_sessions": {"id", "agent", "client", "key_hash", "callsign", "created_at", "updated_at"},
+}
+var agentSessionIndexes = []string{"idx_agent_sessions_agent_key", "idx_agent_sessions_callsign", "idx_runs_session"}
 
 var requiredSchema = map[string][]string{
 	"tasks": {
@@ -404,6 +423,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := backfillRunCallsigns(ctx, tx); err != nil {
 		return err
 	}
+	if err := backfillAgentSessions(ctx, tx); err != nil {
+		return err
+	}
 	if err := validateCurrentSchema(ctx, tx, s.db.dialect); err != nil {
 		return err
 	}
@@ -414,6 +436,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := validateAgentRunIdentitySchema(ctx, tx, s.db.dialect); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, agentSessionSchema, agentSessionIndexes, "agent session"); err != nil {
 		return err
 	}
 	if err := validateMessagingSchema(ctx, tx, s.db.dialect); err != nil {
@@ -527,20 +552,70 @@ func backfillRunCallsigns(ctx context.Context, tx *Tx) error {
 	return nil
 }
 
+func backfillAgentSessions(ctx context.Context, tx *Tx) error {
+	columns, err := tableColumns(ctx, tx, tx.dialect, "agent_runs")
+	if err != nil || !columns["session_id"] {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,agent,client,callsign,started_at FROM agent_runs WHERE session_id='' ORDER BY started_at,id`)
+	if err != nil {
+		return fmt.Errorf("load agent runs for session backfill: %w", err)
+	}
+	type run struct{ id, agent, client, callsign, startedAt string }
+	var runs []run
+	for rows.Next() {
+		var item run
+		if err := rows.Scan(&item.id, &item.agent, &item.client, &item.callsign, &item.startedAt); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		runs = append(runs, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range runs {
+		sum := sha256.Sum256([]byte("legacy-run\x00" + item.id))
+		keyHash := hex.EncodeToString(sum[:])
+		candidates := append([]string{item.callsign}, agentidentity.Candidates(item.id)...)
+		created := false
+		for _, callsign := range candidates {
+			if callsign == "" {
+				continue
+			}
+			result, insertErr := tx.ExecContext(ctx, `INSERT INTO agent_sessions(id,agent,client,key_hash,callsign,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`, item.id, item.agent, item.client, keyHash, callsign, item.startedAt, item.startedAt)
+			if insertErr != nil {
+				return fmt.Errorf("backfill agent session for run %s: %w", item.id, insertErr)
+			}
+			if count, _ := result.RowsAffected(); count == 1 {
+				created = true
+				break
+			}
+		}
+		if !created {
+			return fmt.Errorf("no friendly callsign is available for agent session %s", item.id)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_runs SET session_id=? WHERE id=? AND session_id=''`, item.id, item.id); err != nil {
+			return fmt.Errorf("link agent session for run %s: %w", item.id, err)
+		}
+	}
+	return nil
+}
+
 func validateAgentRunIdentitySchema(ctx context.Context, tx *Tx, dialect Dialect) error {
 	columns, err := tableColumns(ctx, tx, dialect, "agent_runs")
 	if err != nil {
 		return err
 	}
-	if !columns["callsign"] {
-		return fmt.Errorf("schema version %d is partial: required column agent_runs.callsign is missing", latestSchemaVersion)
+	if !columns["callsign"] || !columns["session_id"] {
+		return fmt.Errorf("schema version %d is partial: required agent run identity columns are missing", latestSchemaVersion)
 	}
-	exists, err := indexExists(ctx, tx, dialect, "idx_runs_active_callsign")
+	exists, err := indexExists(ctx, tx, dialect, "idx_runs_session")
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("schema version %d is partial: required index idx_runs_active_callsign is missing", latestSchemaVersion)
+		return fmt.Errorf("schema version %d is partial: required index idx_runs_session is missing", latestSchemaVersion)
 	}
 	return nil
 }

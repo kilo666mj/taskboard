@@ -130,6 +130,25 @@ func TestMCPClientNameCannotSpoofCanonicalActor(t *testing.T) {
 	}
 }
 
+func TestMCPAgentSessionKeyGroupsIndependentRuns(t *testing.T) {
+	tasks, _, logger := serverFixture(t)
+	session := connectMCPAs(t, newMCPServer(tasks, model.TaskWork, logger), "switchboard", "dev")
+	for _, title := range []string{"First task", "Second task"} {
+		if _, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_start", Arguments: map[string]any{
+			"title": title, "checklist": []string{"Work"}, "agent_session_key": "upstream-session-1",
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := tasks.List(t.Context(), nil, 10)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("list tasks = %+v, %v", items, err)
+	}
+	if items[0].Runs[0].SessionID == "" || items[0].Runs[0].SessionID != items[1].Runs[0].SessionID || items[0].Runs[0].Callsign != items[1].Runs[0].Callsign {
+		t.Fatalf("MCP runs do not share agent identity: %+v / %+v", items[0].Runs[0], items[1].Runs[0])
+	}
+}
+
 func TestHumanCanRenameRunThroughAPIWithoutChangingAttribution(t *testing.T) {
 	tasks, _, _ := serverFixture(t)
 	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Named session", Checklist: []string{"Work"}}, service.AgentPrincipal("agent:worker"))

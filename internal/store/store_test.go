@@ -68,6 +68,9 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	if _, err := legacy.Exec(`INSERT INTO tasks(id,title,status,created_at,updated_at) VALUES(?,?,?,?,?)`, "legacy", "Existing task", "queued", stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := legacy.Exec(`INSERT INTO agent_runs(id,task_id,agent,client,status,lease_expires_at,last_heartbeat_at,started_at) VALUES(?,?,?,?,?,?,?,?)`, "legacy-run", "legacy", "agent:legacy", "legacy-client", "active", stamp, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +99,9 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	}
 	if task.SortOrder <= 0 || task.Priority != "normal" {
 		t.Fatalf("migrated planning defaults = %+v", task)
+	}
+	if len(task.Runs) != 1 || task.Runs[0].SessionID == "" || task.Runs[0].Callsign == "" {
+		t.Fatalf("migrated agent run identity = %+v", task.Runs)
 	}
 	code := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	confirmation := "migration-browser-confirmation-secret"
@@ -130,8 +136,8 @@ func TestSchemaCreatesQueryIndexes(t *testing.T) {
 	for rows.Next() {
 		count++
 	}
-	if count != 36 {
-		t.Fatalf("application indexes = %d, want 36", count)
+	if count != 38 {
+		t.Fatalf("application indexes = %d, want 38", count)
 	}
 }
 

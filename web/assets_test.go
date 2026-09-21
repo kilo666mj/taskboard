@@ -22,7 +22,7 @@ func TestAgentIdentityUIKeepsTextAndTrustedDetails(t *testing.T) {
 			t.Errorf("index.html missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`run.callsign`, `'Principal',run.agent`, `'Client',run.client`, `'Run ID',run.id`, `setAttribute('aria-label',`} {
+	for _, expected := range []string{`run.callsign`, `'Principal',run.agent`, `'Client',run.client`, `'Agent session ID',run.session_id`, `'Task run ID',run.id`, `setAttribute('aria-label',`} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
 		}

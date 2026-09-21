@@ -171,6 +171,7 @@ type ChecklistItem struct {
 type AgentRun struct {
 	ID            string     `json:"id"`
 	TaskID        string     `json:"task_id"`
+	SessionID     string     `json:"session_id,omitempty"`
 	Agent         string     `json:"agent"`
 	Client        string     `json:"client,omitempty"`
 	Callsign      string     `json:"callsign"`
@@ -619,6 +620,7 @@ type StartRequest struct {
 	Checklist       []string       `json:"checklist"`
 	Agent           string         `json:"agent,omitempty"`
 	Client          string         `json:"client,omitempty"`
+	AgentSessionKey string         `json:"agent_session_key,omitempty" jsonschema:"Opaque stable identifier for this agent session; reuse it across task starts and claims in the same session"`
 	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
 	IdempotencyHash string         `json:"-"`
 }
@@ -680,6 +682,7 @@ type ClaimRequest struct {
 	ExpectedVersion int64  `json:"expected_version"`
 	Agent           string `json:"agent,omitempty"`
 	Client          string `json:"client,omitempty"`
+	AgentSessionKey string `json:"agent_session_key,omitempty" jsonschema:"Opaque stable identifier for this agent session; reuse it across task starts and claims in the same session"`
 	IdempotencyKey  string `json:"idempotency_key,omitempty"`
 	IdempotencyHash string `json:"-"`
 }

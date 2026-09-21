@@ -504,6 +504,62 @@ func TestAgentRunCallsignsAreFriendlyUniqueAndOperatorRenameIsDisplayOnly(t *tes
 	}
 }
 
+func TestAgentSessionReusesCallsignAcrossTaskRuns(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	first, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "First task", Checklist: []string{"Work"}, AgentSessionKey: "switchboard-session-1"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Second task", Checklist: []string{"Work"}, AgentSessionKey: "switchboard-session-1"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Run.ID == second.Run.ID || first.Run.TaskID == second.Run.TaskID {
+		t.Fatalf("task runs were not independent: first=%+v second=%+v", first.Run, second.Run)
+	}
+	if first.Run.SessionID == "" || first.Run.SessionID != second.Run.SessionID {
+		t.Fatalf("agent session IDs = %q / %q", first.Run.SessionID, second.Run.SessionID)
+	}
+	if first.Run.Callsign != second.Run.Callsign || first.Run.Tone != second.Run.Tone {
+		t.Fatalf("agent session presentation differs: first=%+v second=%+v", first.Run, second.Run)
+	}
+
+	third, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Other session", Checklist: []string{"Work"}, AgentSessionKey: "switchboard-session-2"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Run.SessionID == first.Run.SessionID || strings.EqualFold(third.Run.Callsign, first.Run.Callsign) {
+		t.Fatalf("distinct agent sessions were conflated: first=%+v third=%+v", first.Run, third.Run)
+	}
+	otherPrincipal, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Other principal", Checklist: []string{"Work"}, AgentSessionKey: "switchboard-session-1"}, AgentPrincipal("agent:other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherPrincipal.Run.SessionID == first.Run.SessionID {
+		t.Fatalf("session key crossed authenticated principals: first=%+v other=%+v", first.Run, otherPrincipal.Run)
+	}
+	var storedKeyHash string
+	if err := tasks.store.DB().QueryRowContext(t.Context(), `SELECT key_hash FROM agent_sessions WHERE id=?`, first.Run.SessionID).Scan(&storedKeyHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedKeyHash == "switchboard-session-1" || len(storedKeyHash) != 64 {
+		t.Fatalf("stored session key hash = %q", storedKeyHash)
+	}
+
+	renamed, err := tasks.RenameRunFor(t.Context(), first.Task.ID, first.Run.ID, model.RenameRunRequest{ExpectedVersion: first.Task.Version, Callsign: "North Star"}, HumanPrincipal("operator@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTask, err := tasks.Get(t.Context(), second.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Runs[0].Callsign != "North Star" || otherTask.Runs[0].Callsign != "North Star" {
+		t.Fatalf("session rename did not propagate: renamed=%q other=%q", renamed.Runs[0].Callsign, otherTask.Runs[0].Callsign)
+	}
+}
+
 func TestCreateQueuesTitleOnlyTaskWithoutRun(t *testing.T) {
 	service := testService(t, time.Minute)
 	task, err := service.Create(t.Context(), model.CreateRequest{Title: "  Buy groceries  "}, "person@example.com")

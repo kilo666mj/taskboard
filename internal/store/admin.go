@@ -139,6 +139,9 @@ func (s *Store) RevokeAgentCredential(ctx context.Context, id, actor string) err
 	if count, _ := result.RowsAffected(); count != 1 {
 		return ErrNotFound
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_sessions WHERE NOT EXISTS (SELECT 1 FROM agent_runs WHERE agent_runs.session_id=agent_sessions.id)`); err != nil {
+		return err
+	}
 	if err := insertAdminAudit(ctx, tx, actor, "credential.revoked", strings.TrimSpace(id), nil); err != nil {
 		return err
 	}
@@ -414,6 +417,9 @@ func (s *Store) ApplyRetention(ctx context.Context, before time.Time, actor stri
 	}
 	count, err := result.RowsAffected()
 	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_sessions WHERE NOT EXISTS (SELECT 1 FROM agent_runs WHERE agent_runs.session_id=agent_sessions.id)`); err != nil {
 		return 0, err
 	}
 	if err := insertAdminAudit(ctx, tx, actor, "retention.applied", "workspace", map[string]any{"before": before.UTC(), "deleted_tasks": count}); err != nil {
