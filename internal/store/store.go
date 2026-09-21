@@ -487,7 +487,7 @@ func (s *Store) listItems(ctx context.Context, taskID string) ([]model.Checklist
 }
 
 func (s *Store) listRuns(ctx context.Context, taskID string) ([]model.AgentRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,task_id,agent,client,callsign,status,lease_expires_at,last_heartbeat_at,started_at,ended_at FROM agent_runs WHERE task_id=? ORDER BY started_at DESC`, taskID)
+	rows, err := s.db.QueryContext(ctx, `SELECT run.id,run.task_id,run.session_id,run.agent,run.client,COALESCE(agent_session.callsign,run.callsign),run.status,run.lease_expires_at,run.last_heartbeat_at,run.started_at,run.ended_at FROM agent_runs run LEFT JOIN agent_sessions agent_session ON agent_session.id=run.session_id WHERE run.task_id=? ORDER BY run.started_at DESC`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -497,10 +497,14 @@ func (s *Store) listRuns(ctx context.Context, taskID string) ([]model.AgentRun, 
 		var run model.AgentRun
 		var lease, heartbeat, started string
 		var ended sql.NullString
-		if err := rows.Scan(&run.ID, &run.TaskID, &run.Agent, &run.Client, &run.Callsign, &run.Status, &lease, &heartbeat, &started, &ended); err != nil {
+		if err := rows.Scan(&run.ID, &run.TaskID, &run.SessionID, &run.Agent, &run.Client, &run.Callsign, &run.Status, &lease, &heartbeat, &started, &ended); err != nil {
 			return nil, err
 		}
-		run.Tone = agentidentity.Tone(run.ID)
+		toneSeed := run.SessionID
+		if toneSeed == "" {
+			toneSeed = run.ID
+		}
+		run.Tone = agentidentity.Tone(toneSeed)
 		run.LeaseExpires, _ = time.Parse(time.RFC3339Nano, lease)
 		run.LastHeartbeat, _ = time.Parse(time.RFC3339Nano, heartbeat)
 		run.StartedAt, _ = time.Parse(time.RFC3339Nano, started)

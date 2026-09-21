@@ -281,20 +281,55 @@ func mergePayload(base, extra map[string]any) map[string]any {
 	return base
 }
 
-func insertAgentRun(ctx context.Context, tx *store.Tx, run model.AgentRun) (model.AgentRun, error) {
-	for _, callsign := range agentidentity.Candidates(run.ID) {
-		result, err := tx.ExecContext(ctx, `INSERT INTO agent_runs(id,task_id,agent,client,callsign,status,lease_expires_at,last_heartbeat_at,started_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-			run.ID, run.TaskID, run.Agent, run.Client, callsign, run.Status, stamp(run.LeaseExpires), stamp(run.LastHeartbeat), stamp(run.StartedAt))
-		if err != nil {
-			return model.AgentRun{}, err
+func insertAgentRun(ctx context.Context, tx *store.Tx, run model.AgentRun, sessionKey string) (model.AgentRun, error) {
+	keyMaterial := "session\x00" + sessionKey
+	if sessionKey == "" {
+		keyMaterial = "run\x00" + run.ID
+	}
+	sum := sha256.Sum256([]byte(keyMaterial))
+	keyHash := hex.EncodeToString(sum[:])
+
+	var sessionID, callsign string
+	err := tx.QueryRowContext(ctx, `SELECT id,callsign FROM agent_sessions WHERE agent=? AND key_hash=?`, run.Agent, keyHash).Scan(&sessionID, &callsign)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return model.AgentRun{}, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		sessionID = newID(run.StartedAt)
+		for _, candidate := range agentidentity.Candidates(sessionID) {
+			result, insertErr := tx.ExecContext(ctx, `INSERT INTO agent_sessions(id,agent,client,key_hash,callsign,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`, sessionID, run.Agent, run.Client, keyHash, candidate, stamp(run.StartedAt), stamp(run.StartedAt))
+			if insertErr != nil {
+				return model.AgentRun{}, insertErr
+			}
+			if count, _ := result.RowsAffected(); count == 1 {
+				callsign = candidate
+				break
+			}
+			if queryErr := tx.QueryRowContext(ctx, `SELECT id,callsign FROM agent_sessions WHERE agent=? AND key_hash=?`, run.Agent, keyHash).Scan(&sessionID, &callsign); queryErr == nil {
+				break
+			} else if !errors.Is(queryErr, sql.ErrNoRows) {
+				return model.AgentRun{}, queryErr
+			}
 		}
-		if count, _ := result.RowsAffected(); count == 1 {
-			run.Callsign = callsign
-			run.Tone = agentidentity.Tone(run.ID)
-			return run, nil
+		if callsign == "" {
+			return model.AgentRun{}, errors.New("no friendly callsign is available for this agent session")
 		}
 	}
-	return model.AgentRun{}, errors.New("no friendly callsign is available for this agent run")
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_sessions SET client=?,updated_at=? WHERE id=?`, run.Client, stamp(run.StartedAt), sessionID); err != nil {
+		return model.AgentRun{}, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO agent_runs(id,task_id,session_id,agent,client,callsign,status,lease_expires_at,last_heartbeat_at,started_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+		run.ID, run.TaskID, sessionID, run.Agent, run.Client, callsign, run.Status, stamp(run.LeaseExpires), stamp(run.LastHeartbeat), stamp(run.StartedAt))
+	if err != nil {
+		return model.AgentRun{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return model.AgentRun{}, errors.New("agent run ID already exists")
+	}
+	run.SessionID = sessionID
+	run.Callsign = callsign
+	run.Tone = agentidentity.Tone(sessionID)
+	return run, nil
 }
 
 type Service struct {
@@ -447,6 +482,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	request.Recurrence = normalizedRecurrence(request.Recurrence)
 	request.Agent = strings.TrimSpace(request.Agent)
 	request.Client = strings.TrimSpace(request.Client)
+	request.AgentSessionKey = strings.TrimSpace(request.AgentSessionKey)
 	if request.Title == "" {
 		return model.StartResult{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
@@ -456,7 +492,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	if !model.IsTaskVisibility(request.Visibility) {
 		return model.StartResult{}, fmt.Errorf("%w: visibility must be private, team, or agent", ErrValidation)
 	}
-	if len(request.Title) > 200 || len(request.Summary) > 2000 || len(request.Section) > 80 || len(request.Project) > 120 || len(request.Repository) > 300 || len(request.Agent) > 100 || len(request.Client) > 100 {
+	if len(request.Title) > 200 || len(request.Summary) > 2000 || len(request.Section) > 80 || len(request.Project) > 120 || len(request.Repository) > 300 || len(request.Agent) > 100 || len(request.Client) > 100 || len(request.AgentSessionKey) > 200 {
 		return model.StartResult{}, fmt.Errorf("%w: task text is too long", ErrValidation)
 	}
 	if err := validatePlanning(request.Priority, request.DueDate, request.DeferUntil, request.Recurrence); err != nil {
@@ -508,7 +544,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 		}
 	}
 	lease := now.Add(s.leaseDuration)
-	if _, err = insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}); err != nil {
+	if _, err = insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}, request.AgentSessionKey); err != nil {
 		return model.StartResult{}, err
 	}
 	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.started", Actor: request.Agent, Message: request.Title, Payload: idempotencyPayload("task_start", request.IdempotencyKey, request.IdempotencyHash), CreatedAt: now}
@@ -929,11 +965,15 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	taskID = strings.TrimSpace(taskID)
 	request.Agent = strings.TrimSpace(request.Agent)
 	request.Client = strings.TrimSpace(request.Client)
+	request.AgentSessionKey = strings.TrimSpace(request.AgentSessionKey)
 	if taskID == "" || request.ExpectedVersion < 1 {
 		return model.StartResult{}, fmt.Errorf("%w: task_id and expected_version are required", ErrValidation)
 	}
 	if request.Agent == "" {
 		request.Agent = defaultActor(actor, "unassigned")
+	}
+	if len(request.AgentSessionKey) > 200 {
+		return model.StartResult{}, fmt.Errorf("%w: agent_session_key is limited to 200 characters", ErrValidation)
 	}
 
 	now := time.Now().UTC()
@@ -966,7 +1006,7 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	}
 	runID := newID(now)
 	lease := now.Add(s.leaseDuration)
-	if _, err := insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}); err != nil {
+	if _, err := insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}, request.AgentSessionKey); err != nil {
 		return model.StartResult{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE tasks SET status=?,owner=?,version=version+1,updated_at=?,completed_at=NULL WHERE id=? AND version=?`, model.TaskActive, request.Agent, stamp(now), taskID, request.ExpectedVersion)
@@ -1635,28 +1675,23 @@ func (s *Service) renameRun(ctx context.Context, taskID, runID string, request m
 	if current.Version != request.ExpectedVersion {
 		return model.Task{}, ErrConflict
 	}
-	var previous string
-	var status model.TaskStatus
-	var ended sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT callsign,status,ended_at FROM agent_runs WHERE id=? AND task_id=?`, runID, taskID).Scan(&previous, &status, &ended); errors.Is(err, sql.ErrNoRows) {
+	var previous, sessionID string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(agent_session.callsign,run.callsign),run.session_id FROM agent_runs run LEFT JOIN agent_sessions agent_session ON agent_session.id=run.session_id WHERE run.id=? AND run.task_id=?`, runID, taskID).Scan(&previous, &sessionID); errors.Is(err, sql.ErrNoRows) {
 		return model.Task{}, store.ErrNotFound
 	} else if err != nil {
 		return model.Task{}, err
 	}
-	if status == model.TaskActive && !ended.Valid {
-		var collision int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE lower(callsign)=lower(?) AND id<>? AND status=? AND ended_at IS NULL`, callsign, runID, model.TaskActive).Scan(&collision); err != nil {
-			return model.Task{}, err
-		}
-		if collision > 0 {
-			return model.Task{}, fmt.Errorf("%w: callsign is already used by an active agent", ErrConflict)
-		}
+	var updateErr error
+	if sessionID != "" {
+		_, updateErr = tx.ExecContext(ctx, `UPDATE agent_sessions SET callsign=?,updated_at=? WHERE id=?`, callsign, stamp(now), sessionID)
+	} else {
+		_, updateErr = tx.ExecContext(ctx, `UPDATE agent_runs SET callsign=? WHERE id=? AND task_id=?`, callsign, runID, taskID)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_runs SET callsign=? WHERE id=? AND task_id=?`, callsign, runID, taskID); err != nil {
-		if message := strings.ToLower(err.Error()); strings.Contains(message, "unique") || strings.Contains(message, "duplicate") {
-			return model.Task{}, fmt.Errorf("%w: callsign is already used by an active agent", ErrConflict)
+	if updateErr != nil {
+		if message := strings.ToLower(updateErr.Error()); strings.Contains(message, "unique") || strings.Contains(message, "duplicate") {
+			return model.Task{}, fmt.Errorf("%w: callsign is already used by another agent session", ErrConflict)
 		}
-		return model.Task{}, err
+		return model.Task{}, updateErr
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, request.ExpectedVersion)
 	if err != nil {
@@ -1665,7 +1700,7 @@ func (s *Service) renameRun(ctx context.Context, taskID, runID string, request m
 	if count, _ := result.RowsAffected(); count != 1 {
 		return model.Task{}, ErrConflict
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "run.callsign_updated", Actor: actor, Message: "Agent callsign renamed", Payload: map[string]any{"previous_callsign": previous, "callsign": callsign, "version": request.ExpectedVersion + 1}, CreatedAt: now}
+	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "run.callsign_updated", Actor: actor, Message: "Agent callsign renamed", Payload: map[string]any{"previous_callsign": previous, "callsign": callsign, "session_id": sessionID, "version": request.ExpectedVersion + 1, "reload": true}, CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.Task{}, err
 	}

@@ -45,8 +45,9 @@ and audit history.*
 - Blocked and waiting states require an explanation.
 - Optimistic versions prevent agents from overwriting one another.
 - Agent runs have renewable leases; missed heartbeats become stale.
-- Every run receives a friendly, collision-free callsign while the authenticated
-  principal and run ID remain authoritative audit identity.
+- Every agent session receives a friendly, collision-free callsign that stays
+  stable across its task runs, while the authenticated principal and immutable
+  run IDs remain the authoritative audit identity.
 - Agents report each completed checklist item immediately; heartbeat responses
   warn when checklist progress is stale, return pending task messages, and never
   infer completion.

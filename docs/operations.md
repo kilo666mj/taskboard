@@ -126,12 +126,14 @@ SQLite records the version as a compatibility no-op. PostgreSQL startup also
 verifies that the trigger exists and rejects a partially modified schema.
 
 Versions 3 and 4 add administrative lifecycle records and friendly agent-run
-callsigns. Taskboard v0.6.0 advances the schema from version 4 to version 14:
+callsigns. Taskboard advances the schema from version 4 through version 15:
 version 5 adds task messages, 6 structured escalations, 7 acknowledged run
 controls, 8 typed delivery references, 9 run handoffs, 10 completion contracts,
 11 trusted session bridges, 12 task dependencies, 13 worker matching, and 14
-numeric usage records. A v0.6.0 binary upgrades any complete supported schema
-from version 1 through 13 directly and transactionally.
+numeric usage records. Version 15 groups independent task runs under a hashed,
+opaque agent-session key so they share one callsign. A current binary upgrades
+any complete supported schema from version 1 through 14 directly and
+transactionally.
 
 Back up the database before upgrading to v0.6.0. The new tables are additive,
 but a v0.5.x binary rejects schema version 14 as newer than it supports. Rolling
