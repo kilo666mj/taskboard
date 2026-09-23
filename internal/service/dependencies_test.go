@@ -26,6 +26,9 @@ func TestDependenciesGatePickupPreventCyclesAndDeriveReadiness(t *testing.T) {
 	if dependent.Ready || len(dependent.Dependencies) != 1 {
 		t.Fatalf("dependent = %+v", dependent)
 	}
+	if dependent.LastEditedBy != human.ID {
+		t.Fatalf("dependency editor = %q, want %q", dependent.LastEditedBy, human.ID)
+	}
 	if _, err = tasks.ClaimFor(t.Context(), dependent.ID, model.ClaimRequest{ExpectedVersion: dependent.Version, IdempotencyKey: "blocked-claim"}, agent); !errors.Is(err, ErrValidation) {
 		t.Fatalf("claim error = %v", err)
 	}
@@ -50,5 +53,10 @@ func TestDependenciesGatePickupPreventCyclesAndDeriveReadiness(t *testing.T) {
 	}
 	if _, err = tasks.RemoveTaskDependencyFor(t.Context(), dependent.ID, blocker.ID, dependent.Version-1, human); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale remove error = %v", err)
+	}
+	other := HumanPrincipal("human:reviewer")
+	dependent, err = tasks.RemoveTaskDependencyFor(t.Context(), dependent.ID, blocker.ID, dependent.Version, other)
+	if err != nil || dependent.LastEditedBy != other.ID {
+		t.Fatalf("removed dependency provenance = %+v, %v", dependent, err)
 	}
 }

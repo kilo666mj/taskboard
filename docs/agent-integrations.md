@@ -194,6 +194,32 @@ Dependency edits are human-owned, task-versioned, and cycle-safe. Deleting a
 task removes its incident edges through referential integrity. Controllers
 should not reinterpret an unmet dependency as the execution `blocked` status.
 
+## Shared-task edit provenance
+
+Every task response includes immutable `created_by` and server-controlled
+`last_edited_by` principals. New tasks initialize both fields to the
+authenticated creator. An authenticated `task_update` changes only
+`last_edited_by`; callers cannot supply or spoof either value. Atomic claims,
+heartbeats, lease expiry, and other automatic runtime bookkeeping do not replace
+the recorded editor. Human changes to dependencies, worker requirements, and
+completion gates do update it, as do human reviews that satisfy or waive a
+completion gate. Agent-submitted runtime evidence does not claim edit
+provenance.
+
+Team and agent-pickup tasks remain collaboratively editable. A privileged
+runner should therefore admit a queued task only when both provenance fields
+are non-empty and belong to its own operator allowlist. Existing tasks upgraded
+from schema version 15 retain an empty `last_edited_by` until an authenticated
+edit, allowing runners to reject unknown historical provenance by default.
+
+Lease expiry remains fail-closed: it marks the task and run stale without
+changing provenance or automatically retrying the work. A Taskboard owner or
+administrator may use the browser's **Review & requeue** action after inspecting
+the current task details. The action is version-checked and audited, records
+that human principal in `last_edited_by`, closes any open retry control for the
+stale run, clears agent-pickup ownership, and queues the task for a fresh claim.
+It is intentionally unavailable through the agent MCP surface.
+
 ## Worker matching
 
 Task requirements are human-maintained lowercase tokens such as

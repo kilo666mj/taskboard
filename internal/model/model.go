@@ -55,6 +55,7 @@ type Task struct {
 	Type         TaskType         `json:"type"`
 	Visibility   TaskVisibility   `json:"visibility"`
 	CreatedBy    string           `json:"created_by"`
+	LastEditedBy string           `json:"last_edited_by"`
 	Summary      string           `json:"summary,omitempty"`
 	Section      string           `json:"section"`
 	Project      string           `json:"project,omitempty"`
@@ -353,6 +354,12 @@ type UpdateRunControlRequest struct {
 	ExpectedVersion int64            `json:"expected_version"`
 	IdempotencyKey  string           `json:"idempotency_key,omitempty"`
 	IdempotencyHash string           `json:"-"`
+}
+
+type ReviewRequeueRequest struct {
+	TargetRunID     string `json:"target_run_id"`
+	ExpectedVersion int64  `json:"expected_version"`
+	ReviewNote      string `json:"review_note"`
 }
 
 type ReferenceKind string

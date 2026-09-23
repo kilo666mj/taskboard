@@ -155,14 +155,16 @@
         <div class="attention-note" hidden></div>
         <div class="task-meta" hidden></div>
         <section class="task-context" aria-label="Task context" hidden><h3>Context</h3><p></p></section>
-        <section class="dependency-panel" aria-label="Task dependencies" hidden>
+        <details class="dependency-panel" hidden>
+          <summary>Blocked by</summary>
           <div class="dependency-list"></div>
           <form class="dependency-form"><label>Blocked by task ID<input name="blocked_by_task_id" required maxlength="26" placeholder="01…"></label><button class="secondary" type="submit">Add dependency</button></form>
-        </section>
-        <section class="requirements-panel" aria-label="Worker requirements" hidden>
+        </details>
+        <details class="requirements-panel" hidden>
+          <summary>Worker requirements</summary>
           <div class="requirements-list"></div>
           <form class="requirements-form"><label>Worker requirements<input name="requirements" maxlength="2000" placeholder="repo:org/name, browser, kubernetes"></label><button class="secondary" type="submit">Save requirements</button></form>
-        </section>
+        </details>
         <ol class="checklist"></ol>
         <p class="empty-checklist" hidden>No checklist yet. Start it yourself or assign it to an agent.</p>
         <div class="task-actions" hidden>
@@ -216,10 +218,11 @@
               <form class="control-form" hidden>
                 <input name="target_run_id" type="hidden">
                 <div class="control-fields">
-                  <label>Request<select name="kind"></select></label>
-                  <label>Reason<input name="reason" maxlength="1000" placeholder="Optional context for the controller"></label>
+                  <label><span class="control-kind-label">Request</span><select name="kind"></select></label>
+                  <label><span class="control-reason-label">Reason</span><input name="reason" maxlength="1000" placeholder="Optional context for the controller"></label>
                 </div>
                 <button class="secondary request-control" type="submit">Send request</button>
+                <p class="requeue-help field-help" hidden>Review the task details and provenance first. Requeueing records your identity as the last editor and makes the task eligible for a fresh claim.</p>
               </form>
             </section>
             <div class="escalation-list" aria-label="Task decisions"></div>

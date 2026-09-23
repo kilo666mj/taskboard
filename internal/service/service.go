@@ -74,7 +74,7 @@ func DefaultAgentPolicy() AgentPolicy {
 		capabilities[capability] = true
 	}
 	delete(capabilities, CapabilityTaskSensitive)
-	return AgentPolicy{Capabilities: capabilities, MaxConcurrentRuns: 4, MaxPickupsPerMinute: 30, MaxRunDuration: 8 * time.Hour}
+	return AgentPolicy{Capabilities: capabilities, MaxConcurrentRuns: 8, MaxPickupsPerMinute: 30, MaxRunDuration: 8 * time.Hour}
 }
 
 type Role string
@@ -529,8 +529,8 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 		return model.StartResult{}, err
 	}
 	creator := defaultActor(actor, "user")
-	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,owner,version,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskActive, request.Agent, stamp(now), stamp(now))
+	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,owner,version,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskActive, request.Agent, stamp(now), stamp(now))
 	if err != nil {
 		return model.StartResult{}, err
 	}
@@ -666,8 +666,8 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 		return model.Task{}, err
 	}
 	creator := defaultActor(actor, "user")
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
 		return model.Task{}, err
 	}
 	for index, label := range request.Checklist {
@@ -1389,7 +1389,8 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.Reviewed {
 		reviewed = stamp(now)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE tasks SET title=?,summary=?,task_type=?,visibility=?,status=?,owner=?,section=?,project=?,repository=?,priority=?,due_date=?,defer_until=?,recurrence=?,sort_order=?,reviewed_at=?,current_note=?,blocker=?,waiting_for=?,version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`, title, summary, taskType, visibility, status, owner, section, project, repository, priority, dueDate, deferUntil, recurrence, sortOrder, reviewed, currentNote, blocker, waitingFor, stamp(now), completed, taskID, request.ExpectedVersion)
+	editor := defaultActor(actor, current.CreatedBy)
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET title=?,summary=?,task_type=?,visibility=?,status=?,owner=?,section=?,project=?,repository=?,priority=?,due_date=?,defer_until=?,recurrence=?,sort_order=?,reviewed_at=?,current_note=?,blocker=?,waiting_for=?,last_edited_by=?,version=version+1,updated_at=?,completed_at=? WHERE id=? AND version=?`, title, summary, taskType, visibility, status, owner, section, project, repository, priority, dueDate, deferUntil, recurrence, sortOrder, reviewed, currentNote, blocker, waitingFor, editor, stamp(now), completed, taskID, request.ExpectedVersion)
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -1407,8 +1408,8 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		if err != nil {
 			return model.Task{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, nextID, title, summary, taskType, visibility, current.CreatedBy, section, project, repository, priority, nextDue, "", recurrence, nextOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, nextID, title, summary, taskType, visibility, current.CreatedBy, editor, section, project, repository, priority, nextDue, "", recurrence, nextOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
 			return model.Task{}, err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT label,required FROM checklist_items WHERE task_id=? ORDER BY position`, taskID)

@@ -108,7 +108,16 @@ Every task has an independent visibility lane:
 Existing databases migrate tasks to the team lane. New browser tasks default to
 private, while MCP-created work defaults to agent pickup. A task keeps its
 immutable creator when published; that creator may later make it private again.
-Visibility cannot change during an active agent run.
+Visibility cannot change during an active agent run. Task responses expose the
+immutable `created_by` principal and the server-maintained `last_edited_by`
+principal. Shared team and agent-pickup work remains collaboratively editable,
+so external runners can require both principals to belong to their operator
+allowlist before admitting work. Claims and automatic lease maintenance do not
+overwrite edit provenance. Legacy tasks keep an empty last editor until their
+first authenticated edit so consumers can fail closed instead of trusting an
+invented history. When an agent run goes stale, an owner or administrator can
+explicitly review and requeue it; that audited recovery records the reviewer as
+the last editor before the task becomes eligible for a fresh claim.
 
 Every task has a `personal` or `work` type. Existing tasks and browser-created
 tasks default to `personal`; set `TASKBOARD_MCP_DEFAULT_TYPE=work` to classify

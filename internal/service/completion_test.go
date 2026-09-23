@@ -24,6 +24,9 @@ func TestCompletionContractGatesDoneAndRequiresHumanVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if current.LastEditedBy != human.ID {
+		t.Fatalf("completion gate editor = %q, want %q", current.LastEditedBy, human.ID)
+	}
 	_, err = tasks.UpdateFor(t.Context(), current.ID, model.UpdateRequest{ExpectedVersion: current.Version, RunID: started.Run.ID, Status: model.TaskDone, CompleteItemIDs: []string{current.Items[0].ID}, IdempotencyKey: "blocked-completion"}, agent)
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("completion error = %v", err)
@@ -47,6 +50,9 @@ func TestCompletionContractGatesDoneAndRequiresHumanVerification(t *testing.T) {
 	current, err = tasks.GetFor(t.Context(), current.ID, agent)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if current.LastEditedBy != human.ID {
+		t.Fatalf("completion review editor = %q, want %q", current.LastEditedBy, human.ID)
 	}
 	done, err := tasks.UpdateFor(t.Context(), current.ID, model.UpdateRequest{ExpectedVersion: current.Version, RunID: started.Run.ID, Status: model.TaskDone, CompleteItemIDs: []string{current.Items[0].ID}, IdempotencyKey: "accepted-completion"}, agent)
 	if err != nil || done.Status != model.TaskDone {

@@ -161,6 +161,10 @@ type controlsOutput struct {
 type controlOutput struct {
 	Control model.RunControlRequest `json:"control"`
 }
+type reviewRequeueOutput struct {
+	Task    model.Task              `json:"task"`
+	Control model.RunControlRequest `json:"control"`
+}
 type referencesOutput struct {
 	References []model.TaskReference `json:"references"`
 }
@@ -249,6 +253,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("POST /api/v1/tasks/{id}/escalations/{escalation}/answer", authenticated(http.HandlerFunc(resolveEscalation(service))))
 	mux.Handle("GET /api/v1/tasks/{id}/controls", authenticated(http.HandlerFunc(listTaskControls(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/controls", authenticated(http.HandlerFunc(createTaskControl(service))))
+	mux.Handle("POST /api/v1/tasks/{id}/review-requeue", authenticated(http.HandlerFunc(reviewAndRequeueTask(service))))
 	mux.Handle("GET /api/v1/run-controls", authenticated(http.HandlerFunc(listPendingControls(service))))
 	mux.Handle("PATCH /api/v1/run-controls/{control}", authenticated(http.HandlerFunc(updateRunControl(service))))
 	mux.Handle("GET /api/v1/tasks/{id}/references", authenticated(http.HandlerFunc(listTaskReferences(service))))
@@ -761,6 +766,19 @@ func createTaskControl(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, controlOutput{Control: item})
+	}
+}
+func reviewAndRequeueTask(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.ReviewRequeueRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		result, err := tasks.ReviewAndRequeueFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, reviewRequeueOutput{Task: result.Task, Control: result.Control})
 	}
 }
 func listPendingControls(tasks *service.Service) http.HandlerFunc {

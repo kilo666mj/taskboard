@@ -26,6 +26,10 @@ import (
 )
 
 func serverFixture(t *testing.T) (*service.Service, *store.Store, *slog.Logger) {
+	return serverFixtureWithLease(t, time.Minute)
+}
+
+func serverFixtureWithLease(t *testing.T, leaseDuration time.Duration) (*service.Service, *store.Store, *slog.Logger) {
 	t.Helper()
 	database, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "taskboard.db"))
 	if err != nil {
@@ -36,7 +40,7 @@ func serverFixture(t *testing.T) (*service.Service, *store.Store, *slog.Logger) 
 			t.Errorf("close test database: %v", err)
 		}
 	})
-	return service.New(database, time.Minute), database, slog.New(slog.NewTextHandler(io.Discard, nil))
+	return service.New(database, leaseDuration), database, slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func connectMCPAs(t *testing.T, server *mcp.Server, name, version string) *mcp.ClientSession {
@@ -365,6 +369,37 @@ func TestRunControlRESTSurface(t *testing.T) {
 	var listed controlsOutput
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Controls) != 1 || listed.Controls[0].Status != model.RunControlAcknowledged {
 		t.Fatalf("listed controls = %d %+v: %s", response.Code, listed.Controls, response.Body.String())
+	}
+}
+
+func TestReviewRequeueRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixtureWithLease(t, -time.Second)
+	agent := service.AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Recovery API", Checklist: []string{"Work"}, IdempotencyKey: "recovery-api-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SweepStale(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := tasks.GetFor(t.Context(), started.Task.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(model.ReviewRequeueRequest{TargetRunID: started.Run.ID, ExpectedVersion: stale.Version, ReviewNote: "Reviewed through the REST recovery path"})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/review-requeue", bytes.NewReader(body))
+	request.SetPathValue("id", stale.ID)
+	request.Header.Set("Content-Type", "application/json")
+	operator := service.HumanPrincipalWithRole("operator@example.com", service.RoleOwner)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, operator))
+	response := httptest.NewRecorder()
+	reviewAndRequeueTask(tasks).ServeHTTP(response, request)
+	var output reviewRequeueOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &output) != nil {
+		t.Fatalf("recovery status = %d: %s", response.Code, response.Body.String())
+	}
+	if output.Task.Status != model.TaskQueued || output.Task.LastEditedBy != operator.ID || output.Control.Status != model.RunControlCompleted {
+		t.Fatalf("recovery output = %+v", output)
 	}
 }
 
