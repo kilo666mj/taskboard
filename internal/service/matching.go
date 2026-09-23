@@ -84,7 +84,7 @@ func (s *Service) SetTaskRequirementsFor(ctx context.Context, taskID string, req
 			return model.Task{}, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, request.ExpectedVersion); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=?`, principal.ID, stamp(now), taskID, request.ExpectedVersion); err != nil {
 		return model.Task{}, err
 	}
 	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.requirements_updated", Actor: principal.ID, Message: "Operational requirements updated", Payload: map[string]any{"requirements": items, "version": request.ExpectedVersion + 1}, CreatedAt: now}

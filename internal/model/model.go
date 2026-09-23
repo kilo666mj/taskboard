@@ -356,6 +356,12 @@ type UpdateRunControlRequest struct {
 	IdempotencyHash string           `json:"-"`
 }
 
+type ReviewRequeueRequest struct {
+	TargetRunID     string `json:"target_run_id"`
+	ExpectedVersion int64  `json:"expected_version"`
+	ReviewNote      string `json:"review_note"`
+}
+
 type ReferenceKind string
 type ReferenceProvenance string
 

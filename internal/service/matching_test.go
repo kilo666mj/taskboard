@@ -9,14 +9,18 @@ import (
 
 func TestWorkerMatchingIsSeparateFromAuthorization(t *testing.T) {
 	tasks := testService(t, time.Minute)
-	human := HumanPrincipal("human:owner")
-	task, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Kubernetes work", Visibility: model.VisibilityAgent}, human)
+	creator := HumanPrincipal("human:owner")
+	reviewer := HumanPrincipal("human:reviewer")
+	task, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Kubernetes work", Visibility: model.VisibilityAgent}, creator)
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err = tasks.SetTaskRequirementsFor(t.Context(), task.ID, model.SetTaskRequirementsRequest{Requirements: []string{"repo:org/app", "kubernetes"}, ExpectedVersion: task.Version}, human)
+	task, err = tasks.SetTaskRequirementsFor(t.Context(), task.ID, model.SetTaskRequirementsRequest{Requirements: []string{"repo:org/app", "kubernetes"}, ExpectedVersion: task.Version}, reviewer)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if task.LastEditedBy != reviewer.ID {
+		t.Fatalf("requirements editor = %q, want %q", task.LastEditedBy, reviewer.ID)
 	}
 	worker := AgentPrincipal("agent:worker")
 	items, err := tasks.ListFor(t.Context(), []model.TaskStatus{model.TaskQueued}, 10, worker)

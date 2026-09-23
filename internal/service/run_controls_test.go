@@ -94,6 +94,60 @@ func TestRetryControlQueuesStaleTaskForFreshClaim(t *testing.T) {
 	}
 }
 
+func TestOperatorReviewRequeuesStaleTaskAndClaimsEditProvenance(t *testing.T) {
+	tasks := testService(t, -time.Second)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Recover stale work", Checklist: []string{"Work"}, IdempotencyKey: "review-requeue-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SweepStale(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := tasks.GetFor(t.Context(), started.Task.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := HumanPrincipalWithRole("human:member", RoleMember)
+	control, err := tasks.CreateRunControlFor(t.Context(), stale.ID, model.CreateRunControlRequest{TargetRunID: started.Run.ID, Kind: model.RunControlRetry, ExpectedVersion: stale.Version}, member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := model.ReviewRequeueRequest{TargetRunID: started.Run.ID, ExpectedVersion: stale.Version, ReviewNote: "Reviewed the partial work and remaining checklist"}
+	if _, err := tasks.ReviewAndRequeueFor(t.Context(), stale.ID, request, member); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("member recovery error = %v, want forbidden", err)
+	}
+	if _, err := tasks.ReviewAndRequeueFor(t.Context(), stale.ID, request, agent); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("agent recovery error = %v, want forbidden", err)
+	}
+	operator := HumanPrincipalWithRole("human:operator", RoleAdmin)
+	recovered, err := tasks.ReviewAndRequeueFor(t.Context(), stale.ID, request, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Task.Status != model.TaskQueued || recovered.Task.Owner != "" || recovered.Task.Version != stale.Version+1 {
+		t.Fatalf("requeued task = %+v", recovered.Task)
+	}
+	if recovered.Task.CreatedBy != started.Task.CreatedBy || recovered.Task.LastEditedBy != operator.ID || recovered.Task.CurrentNote != request.ReviewNote {
+		t.Fatalf("requeue provenance = creator %q editor %q note %q", recovered.Task.CreatedBy, recovered.Task.LastEditedBy, recovered.Task.CurrentNote)
+	}
+	if recovered.Control.ID != control.ID || recovered.Control.Status != model.RunControlCompleted || recovered.Control.CompletedAt == nil {
+		t.Fatalf("completed recovery control = %+v", recovered.Control)
+	}
+	if len(recovered.Task.Runs) != 1 || recovered.Task.Runs[0].Status != model.TaskStale || recovered.Task.Runs[0].EndedAt == nil {
+		t.Fatalf("stale run history changed = %+v", recovered.Task.Runs)
+	}
+	var events int
+	if err := tasks.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM events WHERE task_id=? AND kind='task.reviewed_requeued' AND actor=?`, stale.ID, operator.ID).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("recovery events = %d, %v", events, err)
+	}
+	replacement := AgentPrincipal("agent:replacement")
+	claimed, err := tasks.ClaimFor(t.Context(), stale.ID, model.ClaimRequest{ExpectedVersion: recovered.Task.Version, IdempotencyKey: "review-requeue-claim"}, replacement)
+	if err != nil || claimed.Run.ID == started.Run.ID {
+		t.Fatalf("fresh claim = %+v, %v", claimed, err)
+	}
+}
+
 func TestControlCompletionConflictsAfterReplacementAndDoesNotTransfer(t *testing.T) {
 	tasks := testService(t, -time.Second)
 	agent := AgentPrincipal("agent:worker")

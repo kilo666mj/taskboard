@@ -62,7 +62,7 @@ func (s *Service) AddTaskDependencyFor(ctx context.Context, taskID string, reque
 	if count, _ := result.RowsAffected(); count != 1 {
 		return model.Task{}, fmt.Errorf("%w: dependency already exists", ErrValidation)
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, request.ExpectedVersion); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=?`, principal.ID, stamp(now), taskID, request.ExpectedVersion); err != nil {
 		return model.Task{}, err
 	}
 	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.dependency_added", Actor: principal.ID, Message: "Task dependency added", Payload: map[string]any{"blocked_by_task_id": request.BlockedByTaskID, "version": request.ExpectedVersion + 1}, CreatedAt: now}
@@ -106,7 +106,7 @@ func (s *Service) RemoveTaskDependencyFor(ctx context.Context, taskID, blockedBy
 	if count, _ := result.RowsAffected(); count != 1 {
 		return model.Task{}, store.ErrNotFound
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, expectedVersion); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=?`, principal.ID, stamp(now), taskID, expectedVersion); err != nil {
 		return model.Task{}, err
 	}
 	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.dependency_removed", Actor: principal.ID, Message: "Task dependency removed", Payload: map[string]any{"blocked_by_task_id": blockedBy, "version": expectedVersion + 1}, CreatedAt: now}

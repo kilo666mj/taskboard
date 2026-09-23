@@ -86,6 +86,21 @@ func TestRunControlUIShowsRequestsAsAcknowledgedWorkflow(t *testing.T) {
 	}
 }
 
+func TestStaleRecoveryIsOperatorOnlyAndRecordsReview(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	for _, expected := range []string{`class="requeue-help field-help"`, `Review & requeue`, `records your identity as the last editor`} {
+		if !strings.Contains(html, expected) && !strings.Contains(javascript, expected) {
+			t.Errorf("recovery UI missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`function canOperateTasks`, `/review-requeue`, `review_note:`, `task.status==='stale'`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+}
+
 func TestDeliveryUIUsesTypedReferencesAndHTTPSLinks(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
@@ -114,8 +129,10 @@ func TestControlPlaneExpansionUIIsWiredAndResponsive(t *testing.T) {
 	for _, expected := range []string{
 		`class="handoff-list"`,
 		`class="completion-contract"`,
-		`class="dependency-panel"`,
-		`class="requirements-panel"`,
+		`<details class="dependency-panel" hidden>`,
+		`<summary>Blocked by</summary>`,
+		`<details class="requirements-panel" hidden>`,
+		`<summary>Worker requirements</summary>`,
 		`id="analyticsDialog"`,
 	} {
 		if !strings.Contains(html, expected) {

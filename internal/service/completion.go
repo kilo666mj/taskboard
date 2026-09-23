@@ -57,7 +57,7 @@ func (s *Service) CreateCompletionRequirementFor(ctx context.Context, taskID str
 	if err = store.InsertCompletionRequirement(ctx, tx, item); err != nil {
 		return item, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, request.ExpectedVersion); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=?`, principal.ID, stamp(now), taskID, request.ExpectedVersion); err != nil {
 		return item, err
 	}
 	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.completion_requirement_added", Actor: principal.ID, Message: "Completion requirement added", Payload: map[string]any{"requirement_id": item.ID, "kind": item.Kind, "required": item.Required, "version": request.ExpectedVersion + 1}, CreatedAt: now}
@@ -226,7 +226,7 @@ func (s *Service) ReviewCompletionRequirementFor(ctx context.Context, taskID, re
 	if _, err = tx.ExecContext(ctx, `UPDATE completion_requirements SET status=?,verified_by=?,waiver_reason=?,updated_at=?,verified_at=? WHERE id=?`, request.Status, verifiedBy, waiver, stamp(now), verifiedAt, requirementID); err != nil {
 		return requirement, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE tasks SET version=version+1,updated_at=? WHERE id=? AND version=?`, stamp(now), taskID, request.ExpectedVersion)
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=?`, principal.ID, stamp(now), taskID, request.ExpectedVersion)
 	if err != nil {
 		return requirement, err
 	}
