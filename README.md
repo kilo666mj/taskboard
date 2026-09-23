@@ -255,9 +255,18 @@ install it elsewhere. The macOS build requires `cargo-tauri`, installable with
 `cargo install tauri-cli --locked`. On Linux the script installs the binary and
 desktop entry beneath the user's XDG directories.
 
-On first launch, enter the HTTPS origin of your Taskboard service. The shell
-stores only that origin, enables user-session autostart, and keeps authentication
-inside the server webview.
+On first launch, give your server a name and enter its HTTPS address (HTTP is
+allowed for localhost and loopback addresses). Use the tray's **Servers** menu
+to switch servers or open **Add Server…** and **Manage Servers…**. The selected
+server is checked in the menu and named in the window title.
+
+The shell saves server names, addresses, and the last selection, and migrates
+the older single-server setting automatically. Only the selected server stays
+connected and can send native alerts. Authentication stays in the server
+webview; switching back retains that server's session. If a server cannot be
+reached, use **Manage Servers…** to edit its address or select another server.
+Removing the selected server opens the next saved server; removing the final
+server returns to setup. User-session autostart remains enabled.
 
 ## Agent policy
 
