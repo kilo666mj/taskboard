@@ -7,7 +7,10 @@
   "app": {
     "withGlobalTauri": true,
     "enableGTKAppId": true,
-    "windows": [{"label":"main","title":"Taskboard","width":1120,"height":800,"minWidth":620,"minHeight":480,"backgroundColor":"#090d16","visible":true}],
+    "windows": [
+      {"label":"main","title":"Taskboard","width":1120,"height":800,"minWidth":620,"minHeight":480,"backgroundColor":"#090d16","visible":true},
+      {"label":"servers","title":"Taskboard Servers","url":"index.html","width":620,"height":720,"minWidth":420,"minHeight":520,"backgroundColor":"#090d16","visible":false}
+    ],
     "security": {"csp":"default-src 'self'; base-uri 'none'; connect-src ipc: http://ipc.localhost; frame-ancestors 'none'; img-src 'self' asset: http://asset.localhost data:; object-src 'none'; script-src 'self'; style-src 'self'"}
   },
   "bundle": {

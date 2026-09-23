@@ -1,13 +1,42 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up Taskboard</title><link rel="stylesheet" href="style.css"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Taskboard Servers</title>
+  <link rel="stylesheet" href="style.css">
+</head>
 <body>
   <main>
-    <div class="mark"><i></i><i></i><i></i></div>
-    <p class="eyebrow">Desktop setup</p>
-    <h1>Connect Taskboard</h1>
-    <p class="copy">Enter the origin of your Taskboard service. This app will keep its live status stream running in the Plasma system tray.</p>
-    <form id="setup"><label>Taskboard origin<input id="origin" type="url" required placeholder="https://taskboard.example.com" autocomplete="url"></label><p id="error" role="alert"></p><button type="submit">Connect</button></form>
+    <header>
+      <div class="mark" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div>
+        <p class="eyebrow">Desktop setup</p>
+        <h1>Taskboard servers</h1>
+      </div>
+    </header>
+    <p class="copy">Save the Taskboard services you use. Only the selected server stays connected and sends desktop alerts.</p>
+
+    <section aria-labelledby="saved-heading">
+      <h2 id="saved-heading">Saved servers</h2>
+      <div id="empty" class="empty" hidden>No servers yet. Add one below to connect.</div>
+      <ul id="servers" aria-live="polite"></ul>
+    </section>
+
+    <section class="editor" aria-labelledby="editor-heading">
+      <h2 id="editor-heading">Add server</h2>
+      <form id="server-form">
+        <input id="previous-origin" type="hidden">
+        <label>Server name<input id="name" required maxlength="80" autocomplete="organization" placeholder="Work"></label>
+        <label>Taskboard address<input id="origin" type="url" required autocomplete="url" placeholder="https://taskboard.example.com"></label>
+        <p class="hint">HTTPS is required except for localhost and loopback addresses.</p>
+        <p id="error" role="alert"></p>
+        <div class="form-actions">
+          <button id="save" type="submit">Add server</button>
+          <button id="cancel" class="secondary" type="button" hidden>Cancel edit</button>
+        </div>
+      </form>
+    </section>
   </main>
   <script src="app.js"></script>
 </body>
