@@ -1492,10 +1492,15 @@ func safeMethod(method string) bool {
 }
 
 func safeBrowserMutation(r *http.Request) bool {
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+	fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
+	if fetchSite == "cross-site" {
 		return false
 	}
-	return sameOrigin(r.Header.Get("Origin"), r.Host)
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin != "" && !strings.EqualFold(origin, "null") {
+		return sameOrigin(origin, r.Host)
+	}
+	return fetchSite == "same-origin"
 }
 func requireAllowedHost(allowed []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
