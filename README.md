@@ -260,6 +260,11 @@ allowed for localhost and loopback addresses). Use the tray's **Servers** menu
 to switch servers or open **Add Server…** and **Manage Servers…**. The selected
 server is checked in the menu and named in the window title.
 
+In the desktop app, the top-bar server dropdown switches between saved servers.
+Open **Task settings → Manage Servers…** to add, edit, or remove them. These
+controls are hidden in regular browsers. Both the server UI and desktop app
+must be updated to use them; the tray menu remains available on older servers.
+
 The shell saves server names, addresses, and the last selection, and migrates
 the older single-server setting automatically. Only the selected server stays
 connected and can send native alerts. Authentication stays in the server

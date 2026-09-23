@@ -182,7 +182,7 @@ fn allow_origin(app: &AppHandle, origin: &str) -> Result<(), String> {
         "identifier":"taskboard-remote-{}",
         "windows":["main"],
         "remote":{{"urls":["{}/*"]}},
-        "permissions":["allow-set-attention","allow-alert","allow-begin-oidc-login","core:event:default","core:window:allow-set-focus"]
+        "permissions":["allow-set-attention","allow-alert","allow-begin-oidc-login","allow-open-server-manager","allow-desktop-server-state","allow-select-desktop-server","core:event:default","core:window:allow-set-focus"]
     }}"#,
         encoded_origin, origin
     );
@@ -453,6 +453,33 @@ fn switch_server(app: AppHandle, origin: String) -> Result<ServerState, String> 
 }
 
 #[tauri::command]
+fn desktop_server_state(app: AppHandle, window: WebviewWindow) -> Result<ServerState, String> {
+    requesting_active_server(&window, &app)?;
+    load_server_state(&app)
+}
+
+#[tauri::command]
+fn select_desktop_server(
+    app: AppHandle,
+    window: WebviewWindow,
+    origin: String,
+) -> Result<ServerState, String> {
+    requesting_active_server(&window, &app)?;
+    switch_server(app, origin)
+}
+
+#[tauri::command]
+fn open_server_manager(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    requesting_active_server(&window, &app)?;
+    let manager = app
+        .get_webview_window(MANAGER_WINDOW)
+        .ok_or("server manager is unavailable")?;
+    manager.show().map_err(|error| error.to_string())?;
+    manager.unminimize().map_err(|error| error.to_string())?;
+    manager.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn begin_oidc_login(app: AppHandle, window: WebviewWindow, handoff: String) -> Result<(), String> {
     if handoff.len() != 64
         || !handoff
@@ -605,6 +632,9 @@ fn main() {
             save_server,
             remove_server,
             switch_server,
+            open_server_manager,
+            desktop_server_state,
+            select_desktop_server,
             begin_oidc_login,
             set_attention,
             alert

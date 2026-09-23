@@ -97,6 +97,10 @@ button,input,textarea,select{font:inherit}
 .cancel-task{margin-left:auto;color:#ffaaa3}.cancel-task:hover{color:#ffd0cc}.cancel-task:focus-visible{outline:2px solid var(--red);outline-offset:2px}
 html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .cancel-task,.task-card[data-status=cancelled] .cancel-task{display:none}
 .settings-options{display:grid;gap:.8rem;margin:1rem 0}
+.settings-options[hidden]{display:none}
+.desktop-server-picker{max-width:180px;min-width:0;min-height:42px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--ink);padding:0 10px;font:inherit;text-overflow:ellipsis}
+.desktop-server-picker[hidden]{display:none}
+@media(max-width:720px){html[data-runtime="desktop"] .topbar{height:auto}html[data-runtime="desktop"] .topbar-inner{height:auto;min-height:64px;flex-wrap:wrap;gap:8px;padding-block:10px}html[data-runtime="desktop"] .top-actions{flex-wrap:wrap}.desktop-server-picker{max-width:140px}}
 .settings-options label{display:flex;align-items:center;gap:.65rem}
 .settings-options input{width:auto}
 .task-card[data-priority=urgent]{border-left:4px solid #d14343}

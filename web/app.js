@@ -88,6 +88,34 @@ $('#loginForm').addEventListener('submit',async event=>{event.preventDefault();$
 $('#logoutButton').addEventListener('click',async()=>{if(state.logoutURL){window.location.assign(state.logoutURL);return}await fetch('/api/v1/session',{method:'DELETE'});disconnectEvents();state.tasks=[];state.authenticated=false;$('#logoutButton').hidden=true;render();await initializeSession()});
 $('#newTaskButton').addEventListener('click',()=>{if(!canWriteTasks())return;resetTaskForm();taskDialog.showModal()});
 $('#settingsButton').addEventListener('click',()=>{loadSettings();settingsDialog.showModal()});
+function initializeDesktopServers(){
+  const invoke=window.__TAURI__?.core?.invoke,picker=$('#desktopServerPicker'),button=$('#manageServersButton'),error=$('#manageServersError');
+  $('#desktopServersSettings').hidden=!invoke;
+  if(!invoke)return;
+  let selected='';
+  async function refresh(){
+    try{
+      const state=await invoke('desktop_server_state');
+      picker.replaceChildren(...state.servers.map(server=>{const item=document.createElement('option');item.value=server.origin;item.textContent=server.name;return item}));
+      selected=state.selected_origin||'';picker.value=selected;picker.hidden=!state.servers.length;
+    }catch{picker.hidden=true}
+  }
+  button.addEventListener('click',async()=>{
+    button.disabled=true;error.hidden=true;error.textContent='';
+    try{await invoke('open_server_manager')}
+    catch{error.textContent='Could not open server settings. Use Servers → Manage Servers… in the desktop tray menu, or update the desktop app.';error.hidden=false}
+    finally{button.disabled=false}
+  });
+  picker.addEventListener('change',async()=>{
+    picker.disabled=true;notificationMessage();
+    try{await invoke('select_desktop_server',{origin:picker.value});selected=picker.value}
+    catch{picker.value=selected;notificationMessage('Could not switch servers. Try again or use Servers → Manage Servers… in the desktop tray menu.')}
+    finally{picker.disabled=false}
+  });
+  window.__TAURI__?.event?.listen('taskboard://servers-changed',refresh).catch(console.warn);
+  refresh();
+}
+initializeDesktopServers();
 $('#analyticsButton').addEventListener('click',()=>{analyticsDialog.showModal();loadAnalytics()});
 $('#analyticsDays').addEventListener('change',loadAnalytics);
 function metricValue(value,kind){if(kind==='rate')return `${(Number(value||0)*100).toFixed(1)}%`;if(kind==='duration'){const seconds=Number(value||0);return seconds>=86400?`${(seconds/86400).toFixed(1)}d`:seconds>=3600?`${(seconds/3600).toFixed(1)}h`:`${Math.round(seconds/60)}m`}if(kind==='cost')return `$${(Number(value||0)/1000000).toFixed(2)}`;return Number(value||0).toLocaleString()}
