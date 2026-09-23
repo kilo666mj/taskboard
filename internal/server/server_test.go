@@ -459,6 +459,36 @@ func TestSameOriginUsesExactHost(t *testing.T) {
 	}
 }
 
+func TestSafeBrowserMutationUsesFetchMetadataWhenOriginIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		origin    string
+		fetchSite string
+		want      bool
+	}{
+		{"exact origin", "https://taskboard.example.com", "", true},
+		{"missing origin same origin", "", "same-origin", true},
+		{"opaque origin same origin", "null", "same-origin", true},
+		{"missing origin cross site", "", "cross-site", false},
+		{"matching origin cross site", "https://taskboard.example.com", "cross-site", false},
+		{"mismatched origin same origin metadata", "https://evil.example", "same-origin", false},
+		{"missing metadata", "", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/tasks", nil)
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			if test.fetchSite != "" {
+				request.Header.Set("Sec-Fetch-Site", test.fetchSite)
+			}
+			if got := safeBrowserMutation(request); got != test.want {
+				t.Fatalf("safeBrowserMutation() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAllowedHostUsesExactHostname(t *testing.T) {
 	allowed := []string{"taskboard.example.com", "127.0.0.1:8095", "[2001:db8::1]:8095"}
 	for _, test := range []struct {
@@ -1150,7 +1180,8 @@ func TestDesktopSessionExchangeIsSingleUseAndSameOrigin(t *testing.T) {
 		t.Fatalf("confirmation page status/body = %d/%s", confirmationResponse.Code, confirmationResponse.Body.String())
 	}
 	confirm := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/api/v1/auth/desktop/confirm", nil)
-	confirm.Header.Set("Origin", "https://taskboard.example.com")
+	confirm.Header.Set("Origin", "null")
+	confirm.Header.Set("Sec-Fetch-Site", "same-origin")
 	confirm.AddCookie(confirmationCookie)
 	confirmed := httptest.NewRecorder()
 	handler.ServeHTTP(confirmed, confirm)

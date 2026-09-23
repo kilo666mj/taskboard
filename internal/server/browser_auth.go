@@ -129,7 +129,7 @@ func validDesktopHandoff(value string) bool {
 
 func desktopSessionExchange(sessions *browserSessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r.Header.Get("Origin"), r.Host) {
+		if !safeBrowserMutation(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
 			return
 		}
@@ -181,7 +181,7 @@ func desktopLoginComplete(sessions *browserSessions) http.HandlerFunc {
 
 func desktopConfirm(sessions *browserSessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r.Header.Get("Origin"), r.Host) {
+		if !safeBrowserMutation(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
 			return
 		}
@@ -205,7 +205,7 @@ func desktopConfirm(sessions *browserSessions) http.HandlerFunc {
 
 func desktopCancel(sessions *browserSessions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sameOrigin(r.Header.Get("Origin"), r.Host) {
+		if !safeBrowserMutation(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request rejected"})
 			return
 		}
