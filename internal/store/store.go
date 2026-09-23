@@ -318,8 +318,8 @@ func LoadTask(ctx context.Context, q interface {
 	var created, updated string
 	var completed sql.NullString
 	var reviewed sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks WHERE id=?`, id).
-		Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed)
+	err := q.QueryRowContext(ctx, `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks WHERE id=?`, id).
+		Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Task{}, ErrNotFound
 	}
@@ -381,7 +381,7 @@ func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limi
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	query := `SELECT id,title,summary,task_type,visibility,created_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks`
+	query := `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks`
 	args := make([]any, 0, len(statuses)+len(visibilityArgs)+1)
 	where := ""
 	if visibilityClause != "" {
@@ -416,7 +416,7 @@ func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limi
 		var task model.Task
 		var created, updated string
 		var reviewed, completed sql.NullString
-		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed); err != nil {
+		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed); err != nil {
 			return nil, err
 		}
 		task.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

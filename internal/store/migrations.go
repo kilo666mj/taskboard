@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 15
+const latestSchemaVersion = 16
 
 type schemaMigration struct {
 	Version  int
@@ -240,6 +240,11 @@ var schemaMigrations = []schemaMigration{
 		`ALTER TABLE agent_runs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX idx_runs_session ON agent_runs(session_id)`,
 	}},
+	{Version: 16, Name: "task_edit_provenance", SQLite: []string{
+		`SELECT 1`,
+	}, Postgres: []string{
+		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_edited_by TEXT NOT NULL DEFAULT ''`,
+	}},
 }
 
 var messagingSchema = map[string][]string{
@@ -301,7 +306,7 @@ var agentSessionIndexes = []string{"idx_agent_sessions_agent_key", "idx_agent_se
 
 var requiredSchema = map[string][]string{
 	"tasks": {
-		"id", "title", "summary", "task_type", "visibility", "created_by", "section", "project", "repository",
+		"id", "title", "summary", "task_type", "visibility", "created_by", "last_edited_by", "section", "project", "repository",
 		"priority", "due_date", "defer_until", "recurrence", "sort_order", "reviewed_at", "status", "owner",
 		"current_note", "blocker", "waiting_for", "version", "created_at", "updated_at", "completed_at",
 	},
@@ -413,6 +418,11 @@ func (s *Store) migrate(ctx context.Context) error {
 
 	for index := len(applied); index < len(schemaMigrations); index++ {
 		migration := schemaMigrations[index]
+		if migration.Version == 16 && s.db.dialect == DialectSQLite {
+			if err := ensureSQLiteColumn(ctx, tx, "tasks", "last_edited_by", `TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("apply migration %d %s: %w", migration.Version, migration.Name, err)
+			}
+		}
 		if err := executeStatements(ctx, tx, statementsFor(migration, s.db.dialect)); err != nil {
 			return fmt.Errorf("apply migration %d %s: %w", migration.Version, migration.Name, err)
 		}
@@ -825,6 +835,7 @@ func upgradeLegacySQLite(ctx context.Context, tx *Tx) error {
 			{"task_type", `TEXT NOT NULL DEFAULT 'personal'`},
 			{"visibility", `TEXT NOT NULL DEFAULT 'team'`},
 			{"created_by", `TEXT NOT NULL DEFAULT ''`},
+			{"last_edited_by", `TEXT NOT NULL DEFAULT ''`},
 			{"project", `TEXT NOT NULL DEFAULT ''`},
 			{"priority", `TEXT NOT NULL DEFAULT 'normal'`},
 			{"due_date", `TEXT NOT NULL DEFAULT ''`},
@@ -868,6 +879,7 @@ func upgradeLegacyPostgres(ctx context.Context, tx *Tx) error {
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type TEXT NOT NULL DEFAULT 'personal'`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'team'`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_edited_by TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal'`,
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date TEXT NOT NULL DEFAULT ''`,
@@ -1034,7 +1046,7 @@ func sqliteBaselineStatements() []string {
 	statements := []string{
 		`CREATE TABLE tasks (
 			id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT 'personal',
-			visibility TEXT NOT NULL DEFAULT 'team', created_by TEXT NOT NULL DEFAULT '', section TEXT NOT NULL DEFAULT 'General',
+			visibility TEXT NOT NULL DEFAULT 'team', created_by TEXT NOT NULL DEFAULT '', last_edited_by TEXT NOT NULL DEFAULT '', section TEXT NOT NULL DEFAULT 'General',
 			project TEXT NOT NULL DEFAULT '', repository TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT 'normal',
 			due_date TEXT NOT NULL DEFAULT '', defer_until TEXT NOT NULL DEFAULT '', recurrence TEXT NOT NULL DEFAULT '',
 			sort_order INTEGER NOT NULL DEFAULT 0, reviewed_at TEXT, status TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '',
@@ -1081,7 +1093,7 @@ func postgresBaselineStatements() []string {
 	statements := []string{
 		`CREATE TABLE tasks (
 			id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', task_type TEXT NOT NULL DEFAULT 'personal',
-			visibility TEXT NOT NULL DEFAULT 'team', created_by TEXT NOT NULL DEFAULT '', section TEXT NOT NULL DEFAULT 'General',
+			visibility TEXT NOT NULL DEFAULT 'team', created_by TEXT NOT NULL DEFAULT '', last_edited_by TEXT NOT NULL DEFAULT '', section TEXT NOT NULL DEFAULT 'General',
 			project TEXT NOT NULL DEFAULT '', repository TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT 'normal',
 			due_date TEXT NOT NULL DEFAULT '', defer_until TEXT NOT NULL DEFAULT '', recurrence TEXT NOT NULL DEFAULT '',
 			sort_order BIGINT NOT NULL DEFAULT 0, reviewed_at TEXT, status TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '',

@@ -97,6 +97,9 @@ func TestMigrationAddsGeneralSectionToExistingTasks(t *testing.T) {
 	if task.Visibility != "team" {
 		t.Fatalf("migrated visibility = %q, want team", task.Visibility)
 	}
+	if task.LastEditedBy != "" {
+		t.Fatalf("migrated legacy last editor = %q, want unknown", task.LastEditedBy)
+	}
 	if task.SortOrder <= 0 || task.Priority != "normal" {
 		t.Fatalf("migrated planning defaults = %+v", task)
 	}

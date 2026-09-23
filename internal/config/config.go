@@ -107,7 +107,7 @@ func Load() (Config, error) {
 		MemberGroups:             split(os.Getenv("TASKBOARD_MEMBER_GROUPS")),
 		ViewerGroups:             split(os.Getenv("TASKBOARD_VIEWER_GROUPS")),
 		AgentCapabilities:        split(env("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:create,task:claim,task:update,task:message,task:escalate,task:control,task:reference,task:handoff,task:evidence,task:session,task:usage,task:complete,worker:advertise,template:read,template:manage")),
-		AgentMaxConcurrentRuns:   envInt("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", 4),
+		AgentMaxConcurrentRuns:   envInt("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", 8),
 		AgentMaxPickupsPerMinute: envInt("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", 30),
 		AgentMaxRunDuration:      time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
 		AgentRequireIdempotency:  envBool("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", false),

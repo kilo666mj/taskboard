@@ -666,6 +666,41 @@ func TestPrivateTaskIsVisibleOnlyToItsCreator(t *testing.T) {
 	}
 }
 
+func TestSharedTaskEditsRecordAuthenticatedPrincipal(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	alice := HumanPrincipal("alice@example.com")
+	bob := HumanPrincipal("bob@example.com")
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{
+		Title: "Pickup", Visibility: model.VisibilityAgent, Checklist: []string{"Do it"},
+	}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.CreatedBy != alice.ID || created.LastEditedBy != alice.ID {
+		t.Fatalf("creation provenance = creator %q editor %q", created.CreatedBy, created.LastEditedBy)
+	}
+
+	summary := "Updated by a teammate"
+	edited, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{
+		ExpectedVersion: created.Version,
+		Summary:         &summary,
+	}, bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.CreatedBy != alice.ID || edited.LastEditedBy != bob.ID {
+		t.Fatalf("edit provenance = creator %q editor %q", edited.CreatedBy, edited.LastEditedBy)
+	}
+
+	claimed, err := tasks.ClaimFor(t.Context(), edited.ID, model.ClaimRequest{ExpectedVersion: edited.Version}, AgentPrincipal("codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Task.LastEditedBy != bob.ID {
+		t.Fatalf("claim changed last editor to %q", claimed.Task.LastEditedBy)
+	}
+}
+
 func TestCreatorCanPublishAndReprivatizeTask(t *testing.T) {
 	tasks := testService(t, time.Minute)
 	alice := HumanPrincipal("alice@example.com")

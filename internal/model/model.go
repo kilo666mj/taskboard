@@ -55,6 +55,7 @@ type Task struct {
 	Type         TaskType         `json:"type"`
 	Visibility   TaskVisibility   `json:"visibility"`
 	CreatedBy    string           `json:"created_by"`
+	LastEditedBy string           `json:"last_edited_by"`
 	Summary      string           `json:"summary,omitempty"`
 	Section      string           `json:"section"`
 	Project      string           `json:"project,omitempty"`

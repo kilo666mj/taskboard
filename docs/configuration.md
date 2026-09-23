@@ -38,7 +38,7 @@ disable their feature.
 | `TASKBOARD_MEMBER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `member`. |
 | `TASKBOARD_VIEWER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `viewer`. |
 | `TASKBOARD_AGENT_CAPABILITIES` | safe task/template capabilities | Comma-separated default capabilities for service principals. `task:sensitive` is deliberately excluded. |
-| `TASKBOARD_AGENT_MAX_CONCURRENT_RUNS` | `4` | Maximum live leased runs per service principal (1-100). |
+| `TASKBOARD_AGENT_MAX_CONCURRENT_RUNS` | `8` | Maximum live leased runs per service principal (1-100). |
 | `TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE` | `30` | Maximum task starts and claims per service principal per minute (1-1000). |
 | `TASKBOARD_AGENT_MAX_RUN_SECONDS` | `28800` | Maximum run age that may be extended by heartbeat (60-604800 seconds). |
 | `TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY` | `false` | Require `idempotency_key` on mutating task operations for service principals. |

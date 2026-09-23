@@ -40,7 +40,7 @@
       - task:complete
       - template:read
       - template:manage
-    taskboard_agent_max_concurrent_runs: 4
+    taskboard_agent_max_concurrent_runs: 8
     taskboard_agent_max_pickups_per_minute: 30
     taskboard_agent_max_run_seconds: 28800
     taskboard_agent_require_idempotency: false
