@@ -18,6 +18,7 @@
         <span>Taskboard</span>
       </a>
       <div class="top-actions">
+        <select id="desktopServerPicker" class="desktop-server-picker" aria-label="Taskboard server" title="Switch Taskboard server" hidden></select>
         <span id="connection" class="connection" data-state="loading">Connecting</span>
         <button id="notifyButton" class="icon-button notification-button" type="button" data-state="checking" title="Checking notifications" aria-label="Checking notifications" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/><path class="notification-check" d="m14 10 3 3 6-7"/><path class="notification-off" d="m3 3 18 18"/></svg>
@@ -134,6 +135,10 @@
         <label><input id="notifyProgress" type="checkbox" checked> Agent progress and status changes</label>
         <label><input id="notifyReminders" type="checkbox" checked> Due-date reminders</label>
         <label><input id="notifySummaries" type="checkbox"> Optional daily summaries</label>
+      </fieldset>
+      <fieldset id="desktopServersSettings" class="settings-options" hidden><legend>Servers</legend>
+        <button id="manageServersButton" class="secondary" type="button">Manage Servers…</button>
+        <p id="manageServersError" class="error" role="alert" hidden></p>
       </fieldset>
       <div class="dialog-actions"><button class="primary" type="submit">Save settings</button></div>
     </form>

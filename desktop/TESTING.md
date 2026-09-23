@@ -41,3 +41,12 @@ titles, per-host fixture cookies, unavailable-server recovery, restart
 persistence, 420-pixel layout, inactive-origin rejection, and final removal.
 The Taskboard task records the preceding Linux runtime and static checks as
 passed. No production identity-provider login was performed in this macOS run.
+
+For the in-app controls, verify that Settings offers Manage Servers and the
+top bar shows the current server in a dropdown only inside the desktop app.
+Test keyboard activation, a failed native command, restoring the prior dropdown
+selection after a failed switch, server-list refresh after an edit, and narrow
+layouts. The Settings action must open the existing native manager without
+saving or discarding notification preferences. Older desktop builds should
+show recovery guidance if the command is unavailable. Only the active remote
+server may read the saved server list, switch servers, or open the manager.

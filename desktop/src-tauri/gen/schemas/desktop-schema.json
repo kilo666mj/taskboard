@@ -201,6 +201,18 @@
           "markdownDescription": "Enables the configured_origin command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_server_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-server-state",
+          "markdownDescription": "Enables the desktop_server_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_server_manager command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-server-manager",
+          "markdownDescription": "Enables the open_server_manager command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_server command without any pre-configured scope.",
           "type": "string",
           "const": "allow-remove-server",
@@ -211,6 +223,12 @@
           "type": "string",
           "const": "allow-save-server",
           "markdownDescription": "Enables the save_server command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the select_desktop_server command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-desktop-server",
+          "markdownDescription": "Enables the select_desktop_server command without any pre-configured scope."
         },
         {
           "description": "Enables the server_state command without any pre-configured scope.",
@@ -255,6 +273,18 @@
           "markdownDescription": "Denies the configured_origin command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_server_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-server-state",
+          "markdownDescription": "Denies the desktop_server_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_server_manager command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-server-manager",
+          "markdownDescription": "Denies the open_server_manager command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_server command without any pre-configured scope.",
           "type": "string",
           "const": "deny-remove-server",
@@ -265,6 +295,12 @@
           "type": "string",
           "const": "deny-save-server",
           "markdownDescription": "Denies the save_server command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_desktop_server command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-desktop-server",
+          "markdownDescription": "Denies the select_desktop_server command without any pre-configured scope."
         },
         {
           "description": "Denies the server_state command without any pre-configured scope.",
