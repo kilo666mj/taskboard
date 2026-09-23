@@ -53,7 +53,7 @@ func (s *browserSessions) IssueDesktop(w http.ResponseWriter, r *http.Request, i
 	if err := s.store.CreateDesktopHandoff(r.Context(), handoff, confirmation.BrowserSecret, confirmation.VerificationCode, storeIdentity(identity), desktopHandoffLife); err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: desktopConfirmCookie, Value: confirmation.BrowserSecret, Path: "/api/v1/auth/desktop", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteStrictMode, MaxAge: int(desktopHandoffLife.Seconds())})
+	http.SetCookie(w, &http.Cookie{Name: desktopConfirmCookie, Value: confirmation.BrowserSecret, Path: "/api/v1/auth/desktop", HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode, MaxAge: int(desktopHandoffLife.Seconds())})
 	return nil
 }
 

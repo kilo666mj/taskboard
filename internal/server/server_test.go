@@ -1196,7 +1196,7 @@ func TestIssueDesktopKeepsBrowserConfirmationSecretSeparate(t *testing.T) {
 		t.Fatal(err)
 	}
 	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != desktopConfirmCookie || cookies[0].Value == code || !cookies[0].HttpOnly || !cookies[0].Secure {
+	if len(cookies) != 1 || cookies[0].Name != desktopConfirmCookie || cookies[0].Value == code || !cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode {
 		t.Fatalf("desktop confirmation cookie = %#v", cookies)
 	}
 	if verification, err := database.PendingDesktopHandoff(t.Context(), cookies[0].Value); err != nil || verification != desktopVerificationCode(code) {
