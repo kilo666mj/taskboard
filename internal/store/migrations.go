@@ -411,7 +411,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 			continue
 		}
-		if record.Name != migration.Name || record.Checksum != expected {
+		if record.Name != migration.Name || (record.Checksum != expected && !isReleasedBaselineChecksum(record, s.db.dialect)) {
 			return fmt.Errorf("schema migration %d metadata does not match the immutable %q migration", record.Version, migration.Name)
 		}
 	}
@@ -779,6 +779,24 @@ func migrationChecksum(migration schemaMigration, dialect Dialect) string {
 	content := fmt.Sprintf("%d\n%s\n%s\n%s", migration.Version, migration.Name, dialect, strings.Join(statementsFor(migration, dialect), "\n-- statement --\n"))
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
+}
+
+// The edit-provenance release accidentally added last_edited_by to migration 1
+// as well as migration 16. Accept the exact earlier released baseline without
+// rewriting its audit metadata. Migration 16 and full schema validation still
+// run normally; all other unknown checksums remain errors.
+func isReleasedBaselineChecksum(record appliedMigration, dialect Dialect) bool {
+	if record.Version != 1 || record.Name != "baseline" {
+		return false
+	}
+	switch dialect {
+	case DialectSQLite:
+		return record.Checksum == "9b02436acc5f77fc8f43d198e93ad0947bb5d8d0bc5c54dd32cb17e307fec79c"
+	case DialectPostgres:
+		return record.Checksum == "8f97b6dc1bcb4e44d22eaec5d4303a971f0212fe47cd69fb19cfd5a0023eda58"
+	default:
+		return false
+	}
 }
 
 func statementsFor(migration schemaMigration, dialect Dialect) []string {

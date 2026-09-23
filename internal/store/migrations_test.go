@@ -68,6 +68,33 @@ func TestMigrationRejectsUnknownChecksum(t *testing.T) {
 	}
 }
 
+func TestUpgradeReleasedBaselineBeforeEditProvenance(t *testing.T) {
+	path := createMigratedSQLite(t)
+	const released = "9b02436acc5f77fc8f43d198e93ad0947bb5d8d0bc5c54dd32cb17e307fec79c"
+	mutateSQLite(t, path, `ALTER TABLE tasks DROP COLUMN last_edited_by`)
+	mutateSQLite(t, path, `DELETE FROM schema_migrations WHERE version=16`)
+	mutateSQLite(t, path, `UPDATE schema_migrations SET checksum='`+released+`' WHERE version=1`)
+	mutateSQLite(t, path, `INSERT INTO tasks(id,title,status,created_at,updated_at) VALUES('existing','Keep this task','queued','2026-09-23T00:00:00Z','2026-09-23T00:00:00Z')`)
+	database, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	var title, editedBy, checksum string
+	if err := database.DB().QueryRowContext(t.Context(), `SELECT title,last_edited_by FROM tasks WHERE id='existing'`).Scan(&title, &editedBy); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Keep this task" || editedBy != "" {
+		t.Fatalf("existing task changed: %q, %q", title, editedBy)
+	}
+	if err := database.DB().QueryRowContext(t.Context(), `SELECT checksum FROM schema_migrations WHERE version=1`).Scan(&checksum); err != nil {
+		t.Fatal(err)
+	}
+	if checksum != released {
+		t.Fatalf("baseline metadata rewritten: %q", checksum)
+	}
+}
+
 func TestMigrationRejectsNewerSchema(t *testing.T) {
 	path := createMigratedSQLite(t)
 	mutateSQLite(t, path, fmt.Sprintf(`INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(%d,'future','future','2026-01-01T00:00:00Z')`, latestSchemaVersion+1))
