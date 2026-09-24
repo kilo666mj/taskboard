@@ -78,12 +78,16 @@ authorization model; automated-agent capabilities are configured separately.
 
 Service principals receive named capabilities instead of inheriting browser
 roles. The supported labels are `task:read`, `task:create`, `task:claim`,
-`task:update`, `task:message`, `task:escalate`, `task:control`, `task:reference`, `task:handoff`, `task:evidence`, `task:session`, `task:usage`, `task:complete`, `task:sensitive`, `worker:advertise`, `template:read`,
+`task:update`, `task:message`, `task:escalate`, `task:control`, `task:reference`, `task:handoff`, `task:evidence`, `task:validate`, `task:session`, `task:usage`, `task:complete`, `task:sensitive`, `worker:advertise`, `template:read`,
 and `template:manage`. `task:message` permits an owned active run to append
 conversation and record explicit receipts; it does not permit task mutation.
 Cancelling a task or skipping checklist items requires the
 separate `task:sensitive` capability. It is excluded from the default policy,
 so granting it is the operator approval gate for those irreversible actions.
+`task:validate` is also excluded by default. Grant it only to validator
+principals; Taskboard additionally rejects validation by any principal recorded
+in the task's builder provenance. Owners and admins may make an explicit
+override, but must record a reason in the review request.
 
 Per-principal policies use the canonical authenticated actor ID. For example,
 this policy gives a Cloudflare service token read/claim access, one concurrent

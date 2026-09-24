@@ -55,6 +55,7 @@ const (
 	CapabilityTaskReference   = "task:reference"
 	CapabilityTaskHandoff     = "task:handoff"
 	CapabilityTaskEvidence    = "task:evidence"
+	CapabilityTaskValidate    = "task:validate"
 	CapabilityTaskSession     = "task:session"
 	CapabilityTaskComplete    = "task:complete"
 	CapabilityTaskSensitive   = "task:sensitive"
@@ -66,7 +67,7 @@ const (
 
 var KnownAgentCapabilities = []string{
 	CapabilityTaskRead, CapabilityTaskCreate, CapabilityTaskClaim, CapabilityTaskUpdate,
-	CapabilityTaskMessage, CapabilityTaskEscalate, CapabilityTaskControl, CapabilityTaskReference, CapabilityTaskHandoff, CapabilityTaskEvidence, CapabilityTaskSession, CapabilityTaskUsage, CapabilityTaskComplete, CapabilityTaskSensitive, CapabilityWorkerAdvertise, CapabilityTemplateRead, CapabilityTemplateManage,
+	CapabilityTaskMessage, CapabilityTaskEscalate, CapabilityTaskControl, CapabilityTaskReference, CapabilityTaskHandoff, CapabilityTaskEvidence, CapabilityTaskValidate, CapabilityTaskSession, CapabilityTaskUsage, CapabilityTaskComplete, CapabilityTaskSensitive, CapabilityWorkerAdvertise, CapabilityTemplateRead, CapabilityTemplateManage,
 }
 
 func DefaultAgentPolicy() AgentPolicy {
@@ -75,6 +76,7 @@ func DefaultAgentPolicy() AgentPolicy {
 		capabilities[capability] = true
 	}
 	delete(capabilities, CapabilityTaskSensitive)
+	delete(capabilities, CapabilityTaskValidate)
 	return AgentPolicy{Capabilities: capabilities, MaxConcurrentRuns: 8, MaxPickupsPerMinute: 30, MaxRunDuration: 8 * time.Hour}
 }
 

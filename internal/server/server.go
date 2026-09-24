@@ -109,6 +109,11 @@ type completionEvidenceInput struct {
 	RequirementID string `json:"requirement_id" jsonschema:"Completion requirement ULID"`
 	model.SubmitCompletionEvidenceRequest
 }
+type completionReviewInput struct {
+	TaskID        string `json:"task_id" jsonschema:"Task ULID"`
+	RequirementID string `json:"requirement_id" jsonschema:"Completion requirement ULID"`
+	model.ReviewCompletionRequest
+}
 type sessionBridgeRegisterInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 	model.RegisterSessionBridgeRequest
@@ -191,6 +196,9 @@ type completionOutput struct {
 }
 type completionEvidenceOutput struct {
 	Evidence model.CompletionEvidence `json:"evidence"`
+}
+type completionRequirementOutput struct {
+	Requirement model.CompletionRequirement `json:"requirement"`
 }
 type sessionBridgesOutput struct {
 	Bridges  []model.SessionBridge        `json:"bridges"`
@@ -532,13 +540,17 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		item, err := tasks.AddRunHandoffFor(ctx, input.TaskID, input.AddRunHandoffRequest, mcpPrincipal(ctx))
 		return nil, handoffOutput{Handoff: item}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_get", Description: "List the human-owned completion contract and submitted evidence for an owned task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionListInput) (*mcp.CallToolResult, completionOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_get", Description: "List the completion contract and submitted evidence for an owned or validator-visible task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionListInput) (*mcp.CallToolResult, completionOutput, error) {
 		items, err := tasks.ListCompletionRequirementsFor(ctx, input.TaskID, mcpPrincipal(ctx))
 		return nil, completionOutput{Requirements: items}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_evidence_submit", Description: "Submit concise evidence for one completion requirement from the active run. Evidence remains pending until a human verifies it.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionEvidenceInput) (*mcp.CallToolResult, completionEvidenceOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_evidence_submit", Description: "Submit concise evidence for one completion requirement from the active run. Evidence remains pending until a separate authorized principal verifies it.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionEvidenceInput) (*mcp.CallToolResult, completionEvidenceOutput, error) {
 		item, err := tasks.SubmitCompletionEvidenceFor(ctx, input.TaskID, input.RequirementID, input.SubmitCompletionEvidenceRequest, mcpPrincipal(ctx))
 		return nil, completionEvidenceOutput{Evidence: item}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_completion_review", Description: "Validate submitted completion evidence. Requires task:validate, rejects principals recorded in the task's builder provenance, and supports idempotent retries.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input completionReviewInput) (*mcp.CallToolResult, completionRequirementOutput, error) {
+		item, err := tasks.ReviewCompletionRequirementFor(ctx, input.TaskID, input.RequirementID, input.ReviewCompletionRequest, mcpPrincipal(ctx))
+		return nil, completionRequirementOutput{Requirement: item}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_session_register", Description: "Advertise trusted open/resume availability for an active run. The controller retains the private run-to-session mapping; Taskboard stores no URL or session secret.", Annotations: mcpkit.Mutating(true, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input sessionBridgeRegisterInput) (*mcp.CallToolResult, sessionBridgeOutput, error) {
 		item, err := tasks.RegisterSessionBridgeFor(ctx, input.TaskID, input.RegisterSessionBridgeRequest, mcpPrincipal(ctx))

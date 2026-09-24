@@ -71,7 +71,7 @@ func TestMCPToolSurfaceIsAnnotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_escalate", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
+	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_completion_review", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_escalate", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
 	got := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		got = append(got, tool.Name)

@@ -289,7 +289,7 @@ func envInt(name string, fallback int) int {
 func validateAgentPolicies(cfg Config) error {
 	known := map[string]bool{
 		"task:read": true, "task:create": true, "task:claim": true, "task:update": true,
-		"task:message": true, "task:escalate": true, "task:control": true, "task:reference": true, "task:handoff": true, "task:evidence": true, "task:session": true, "task:usage": true, "task:complete": true, "task:sensitive": true, "worker:advertise": true, "template:read": true, "template:manage": true,
+		"task:message": true, "task:escalate": true, "task:control": true, "task:reference": true, "task:handoff": true, "task:evidence": true, "task:validate": true, "task:session": true, "task:usage": true, "task:complete": true, "task:sensitive": true, "worker:advertise": true, "template:read": true, "template:manage": true,
 	}
 	validateCapabilities := func(name string, capabilities []string) error {
 		for _, capability := range capabilities {

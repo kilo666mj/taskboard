@@ -140,7 +140,7 @@ func TestIdentityProviderRequiresAllowlistOrExplicitPolicyTrust(t *testing.T) {
 }
 
 func TestAgentSafetyPolicyConfiguration(t *testing.T) {
-	t.Setenv("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:claim,task:update")
+	t.Setenv("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:claim,task:update,task:validate")
 	t.Setenv("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", "2")
 	t.Setenv("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", "12")
 	t.Setenv("TASKBOARD_AGENT_MAX_RUN_SECONDS", "3600")
