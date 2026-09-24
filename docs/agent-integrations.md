@@ -176,8 +176,21 @@ custom gate. Agents can read the contract with `task_completion_get` and submit
 concise evidence with `task_completion_evidence_submit`; evidence tied to a
 provider must reference an existing typed task reference of the expected kind.
 
-Submitted evidence is not self-certifying. A human verifies or rejects it, or
-explicitly waives a requirement with a reason. `task_complete` returns a
+Submitted evidence is not self-certifying. A human, or a validator agent
+granted the non-default `task:validate` capability, verifies or rejects it
+with `task_completion_review`, or explicitly waives a requirement with a
+reason. Validator agents should send an `idempotency_key` so retries are safe;
+it is required when the agent's policy sets `require_idempotency`.
+
+Taskboard enforces builder-validator separation when a requirement is
+satisfied. The builders are every principal that ran the task, the principal
+that submitted the selected evidence, and the principal that created the task
+reference it cites. A reviewer who appears among them is rejected, and the
+attempt is recorded as a `task.completion_review_rejected` event with a reason
+code. This applies to humans as well as agents. Only an owner or administrator
+may override a real conflict, by setting `separation_override` with a
+`separation_override_reason`; both are recorded on the review event with the
+builder list. `task_complete` returns a
 validation error naming every required gate that is neither satisfied nor
 waived. Controllers must treat that rejection as durable workflow state and
 must not emit a final success response until Taskboard accepts completion.

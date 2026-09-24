@@ -41,20 +41,29 @@ func (s *Store) listCompletionRequirements(ctx context.Context, query string, ar
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 	items := []model.CompletionRequirement{}
 	for rows.Next() {
 		item, scanErr := scanCompletionRequirement(rows)
 		if scanErr != nil {
-			return nil, scanErr
-		}
-		item.Evidence, scanErr = s.listCompletionEvidence(ctx, item.ID)
-		if scanErr != nil {
+			_ = rows.Close()
 			return nil, scanErr
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range items {
+		items[index].Evidence, err = s.listCompletionEvidence(ctx, items[index].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 type completionScanner interface{ Scan(...any) error }

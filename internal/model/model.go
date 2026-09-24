@@ -530,10 +530,14 @@ type SubmitCompletionEvidenceRequest struct {
 }
 
 type ReviewCompletionRequest struct {
-	Status          CompletionRequirementStatus `json:"status"`
-	EvidenceID      string                      `json:"evidence_id,omitempty"`
-	Note            string                      `json:"note,omitempty"`
-	ExpectedVersion int64                       `json:"expected_version"`
+	Status                   CompletionRequirementStatus `json:"status"`
+	EvidenceID               string                      `json:"evidence_id,omitempty"`
+	Note                     string                      `json:"note,omitempty"`
+	SeparationOverride       bool                        `json:"separation_override,omitempty"`
+	SeparationOverrideReason string                      `json:"separation_override_reason,omitempty"`
+	IdempotencyKey           string                      `json:"idempotency_key,omitempty"`
+	IdempotencyHash          string                      `json:"-"`
+	ExpectedVersion          int64                       `json:"expected_version"`
 }
 
 type SessionBridgeState string
