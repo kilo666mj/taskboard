@@ -366,58 +366,100 @@ func (s *Store) GetTask(ctx context.Context, id string) (model.Task, error) {
 	return task, nil
 }
 
-func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limit int) ([]model.Task, error) {
-	return s.listTasks(ctx, statuses, limit, "", nil)
-}
+// taskRankSQL mirrors TaskStatusRank so keyset cursors compare the same value the ORDER BY sorts on.
+const taskRankSQL = `CASE status WHEN 'blocked' THEN 0 WHEN 'active' THEN 1 WHEN 'waiting' THEN 2 WHEN 'queued' THEN 3 ELSE 4 END`
 
-func (s *Store) ListVisibleTasks(ctx context.Context, statuses []model.TaskStatus, limit int, viewer string, agent bool) ([]model.Task, error) {
-	if agent {
-		return s.listTasks(ctx, statuses, limit, `(visibility=? OR (visibility=? AND owner=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer})
+// TaskStatusRank returns the primary sort rank used by task listings.
+func TaskStatusRank(status model.TaskStatus) int {
+	switch status {
+	case model.TaskBlocked:
+		return 0
+	case model.TaskActive:
+		return 1
+	case model.TaskWaiting:
+		return 2
+	case model.TaskQueued:
+		return 3
+	default:
+		return 4
 	}
-	return s.listTasks(ctx, statuses, limit, `(visibility IN (?,?) OR (visibility=? AND created_by=?))`, []any{model.VisibilityTeam, model.VisibilityAgent, model.VisibilityPrivate, viewer})
 }
 
-func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limit int, visibilityClause string, visibilityArgs []any) ([]model.Task, error) {
+// TaskCursor is the full sort key of a listed task. Listing after a cursor
+// resumes strictly after that task, even if other tasks changed meanwhile.
+type TaskCursor struct {
+	Rank      int    `json:"r"`
+	Section   string `json:"s"`
+	SortOrder int64  `json:"o"`
+	UpdatedAt string `json:"u"`
+	ID        string `json:"i"`
+}
+
+// TaskQuery selects one page of tasks. An empty Visibility matches every
+// visibility the viewer may see.
+type TaskQuery struct {
+	Statuses   []model.TaskStatus
+	Visibility model.TaskVisibility
+	Limit      int
+	After      *TaskCursor
+}
+
+func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limit int) ([]model.Task, error) {
+	tasks, _, err := s.listTasks(ctx, TaskQuery{Statuses: statuses, Limit: limit}, "", nil)
+	return tasks, err
+}
+
+// ListVisibleTasks returns tasks the viewer may see, in listing order, with the cursor of each returned task.
+func (s *Store) ListVisibleTasks(ctx context.Context, query TaskQuery, viewer string, agent bool) ([]model.Task, []TaskCursor, error) {
+	if agent {
+		return s.listTasks(ctx, query, `(visibility=? OR (visibility=? AND owner=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer})
+	}
+	return s.listTasks(ctx, query, `(visibility IN (?,?) OR (visibility=? AND created_by=?))`, []any{model.VisibilityTeam, model.VisibilityAgent, model.VisibilityPrivate, viewer})
+}
+
+func (s *Store) listTasks(ctx context.Context, filter TaskQuery, visibilityClause string, visibilityArgs []any) ([]model.Task, []TaskCursor, error) {
+	limit := filter.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	query := `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks`
-	args := make([]any, 0, len(statuses)+len(visibilityArgs)+1)
-	where := ""
+	var conditions []string
+	args := make([]any, 0, len(filter.Statuses)+len(visibilityArgs)+12)
 	if visibilityClause != "" {
-		where = visibilityClause
+		conditions = append(conditions, visibilityClause)
 		args = append(args, visibilityArgs...)
 	}
-	if len(statuses) > 0 {
-		if where != "" {
-			where += " AND "
-		}
-		where += "status IN ("
-		for i, status := range statuses {
-			if i > 0 {
-				where += ","
-			}
-			where += "?"
+	if filter.Visibility != "" {
+		conditions = append(conditions, "visibility=?")
+		args = append(args, filter.Visibility)
+	}
+	if len(filter.Statuses) > 0 {
+		conditions = append(conditions, "status IN ("+strings.TrimSuffix(strings.Repeat("?,", len(filter.Statuses)), ",")+")")
+		for _, status := range filter.Statuses {
 			args = append(args, status)
 		}
-		where += ")"
 	}
-	if where != "" {
-		query += " WHERE " + where
+	if after := filter.After; after != nil {
+		conditions = append(conditions, `(`+taskRankSQL+` > ? OR (`+taskRankSQL+` = ? AND (section > ? OR (section = ? AND (sort_order > ? OR (sort_order = ? AND (updated_at < ? OR (updated_at = ? AND id > ?))))))))`)
+		args = append(args, after.Rank, after.Rank, after.Section, after.Section, after.SortOrder, after.SortOrder, after.UpdatedAt, after.UpdatedAt, after.ID)
 	}
-	query += " ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'active' THEN 1 WHEN 'waiting' THEN 2 WHEN 'queued' THEN 3 ELSE 4 END, section, sort_order, updated_at DESC LIMIT ?"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY " + taskRankSQL + ", section, sort_order, updated_at DESC, id LIMIT ?"
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var tasks []model.Task
+	var cursors []TaskCursor
 	for rows.Next() {
 		var task model.Task
 		var created, updated string
 		var reviewed, completed sql.NullString
 		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		task.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		task.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
@@ -430,25 +472,26 @@ func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limi
 			task.ReviewedAt = &value
 		}
 		tasks = append(tasks, task)
+		cursors = append(cursors, TaskCursor{Rank: TaskStatusRank(task.Status), Section: task.Section, SortOrder: task.SortOrder, UpdatedAt: updated, ID: task.ID})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, errors.Join(err, rows.Close())
+		return nil, nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for index := range tasks {
 		tasks[index].Items, err = s.listItems(ctx, tasks[index].ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		tasks[index].Runs, err = s.listRuns(ctx, tasks[index].ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		tasks[index].Dependencies, err = s.ListTaskDependencies(ctx, tasks[index].ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		tasks[index].Ready = true
 		for _, dependency := range tasks[index].Dependencies {
@@ -459,10 +502,10 @@ func (s *Store) listTasks(ctx context.Context, statuses []model.TaskStatus, limi
 		}
 		tasks[index].Requirements, err = s.ListTaskRequirements(ctx, tasks[index].ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return tasks, nil
+	return tasks, cursors, nil
 }
 
 func (s *Store) listItems(ctx context.Context, taskID string) ([]model.ChecklistItem, error) {

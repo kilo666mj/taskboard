@@ -23,8 +23,8 @@ func TestWorkerMatchingIsSeparateFromAuthorization(t *testing.T) {
 		t.Fatalf("requirements editor = %q, want %q", task.LastEditedBy, reviewer.ID)
 	}
 	worker := AgentPrincipal("agent:worker")
-	items, err := tasks.ListFor(t.Context(), []model.TaskStatus{model.TaskQueued}, 10, worker)
-	if err != nil || len(items) != 0 {
+	items, err := tasks.ListFor(t.Context(), model.ListTasksRequest{Statuses: []model.TaskStatus{model.TaskQueued}, Limit: 10}, worker)
+	if err != nil || len(items.Tasks) != 0 {
 		t.Fatalf("unadvertised items = %+v, %v", items, err)
 	}
 	if _, err = tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{"repo:org/app"}, Capacity: 2, TTLSeconds: 60}, worker); err != nil {
@@ -36,8 +36,8 @@ func TestWorkerMatchingIsSeparateFromAuthorization(t *testing.T) {
 	if _, err = tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{"repo:org/app", "kubernetes", "task:claim"}, Capacity: 2, TTLSeconds: 60}, worker); err != nil {
 		t.Fatal(err)
 	}
-	items, err = tasks.ListFor(t.Context(), []model.TaskStatus{model.TaskQueued}, 10, worker)
-	if err != nil || len(items) != 1 {
+	items, err = tasks.ListFor(t.Context(), model.ListTasksRequest{Statuses: []model.TaskStatus{model.TaskQueued}, Limit: 10}, worker)
+	if err != nil || len(items.Tasks) != 1 {
 		t.Fatalf("matched items = %+v, %v", items, err)
 	}
 	policy := DefaultAgentPolicy()

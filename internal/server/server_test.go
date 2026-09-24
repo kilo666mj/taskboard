@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -814,6 +815,60 @@ func TestRESTCreatesAndListsMultipleTasks(t *testing.T) {
 	}
 	if len(payload.Tasks) != 2 {
 		t.Fatalf("tasks = %d, want 2", len(payload.Tasks))
+	}
+}
+
+func TestRESTListFiltersVisibilityAndFollowsCursor(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	notifications := push.New(database, tasks, "", "", "", logger)
+	handler, err := New(config.Config{AllowInsecure: true, DefaultRole: "member", LeaseDuration: time.Minute}, database, tasks, notifications, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, visibility := range []string{"agent", "team", "team"} {
+		body, _ := json.Marshal(map[string]any{"title": visibility + " task", "visibility": visibility, "checklist": []string{"One"}})
+		request := httptest.NewRequest(http.MethodPost, "http://taskboard/api/v1/tasks", bytes.NewReader(body))
+		request.Header.Set("Origin", "http://taskboard")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create status = %d, body=%s", response.Code, response.Body.String())
+		}
+	}
+	list := func(query string) (tasksOutput, int) {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://taskboard/api/v1/tasks?"+query, nil))
+		var payload tasksOutput
+		if response.Code == http.StatusOK {
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return payload, response.Code
+	}
+	if payload, code := list("visibility=agent"); code != http.StatusOK || len(payload.Tasks) != 1 || payload.Tasks[0].Visibility != model.VisibilityAgent || payload.NextCursor != "" {
+		t.Fatalf("agent lane = %d %+v", code, payload)
+	}
+	if _, code := list("visibility=everyone"); code != http.StatusBadRequest {
+		t.Fatalf("invalid visibility status = %d", code)
+	}
+	seen := map[string]bool{}
+	for query, pages := "limit=2", 0; ; pages++ {
+		payload, code := list(query)
+		if code != http.StatusOK || pages > 2 {
+			t.Fatalf("page %d status = %d", pages, code)
+		}
+		for _, task := range payload.Tasks {
+			seen[task.ID] = true
+		}
+		if payload.NextCursor == "" {
+			break
+		}
+		query = "limit=2&cursor=" + url.QueryEscape(payload.NextCursor)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("paged tasks = %d, want 3", len(seen))
 	}
 }
 

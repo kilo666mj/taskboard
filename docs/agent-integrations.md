@@ -234,6 +234,24 @@ capacity. Security capabilities such as `task:claim` remain an independent
 server policy: advertising an operational token never grants permission, and
 having permission never implies that the worker can perform required work.
 
+## Listing pickup work
+
+`task_list` (and `GET /api/v1/tasks`) returns at most `limit` tasks per page,
+default 100 and maximum 200. Pass `visibility: "agent"` (`?visibility=agent`)
+to list only the pickup lane rather than filtering locally. Team tasks owned by
+the agent then cannot use up the page. Readiness and worker matching are applied
+before the page limit, so unrunnable queued work cannot hide runnable tasks
+that sort after it.
+
+When a response includes `next_cursor`, more tasks may follow. Pass it back as
+`cursor` (`?cursor=`) with the same filters, and repeat until `next_cursor` is
+absent. A page can be short or even empty while `next_cursor` is set, because
+one call examines a bounded number of candidate tasks. Controllers must follow
+the cursor rather than treating a short page as the end. Cursors resume
+strictly after the last examined task in listing order. A task that changes
+status or position mid-scan may be listed twice or missed until the
+next poll, but never blocks later tasks.
+
 ## Usage accounting and analytics
 
 Controllers may call `task_usage_record` during an active owned run with only
