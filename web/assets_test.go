@@ -206,3 +206,18 @@ func TestTaskContextExplainsDurableDescriptionAndConversation(t *testing.T) {
 		t.Error("app.js does not render the full task context")
 	}
 }
+
+func TestTaskViewsAndSortControlAreWired(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	for _, expected := range []string{`<option value="mine">My tasks</option>`, `<option value="active">Active</option>`, `<option value="agents">Agents running</option>`, `<select id="sortOrder"`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`function isMine`, `function compareTasks`, `sort(compareTasks)`, `task.visibility==='agent'&&task.ready`, `!manualOrder`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+}

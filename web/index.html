@@ -48,13 +48,15 @@
               <option value="agent">Agent pickup</option>
             </optgroup>
             <optgroup label="Focus">
+              <option value="mine">My tasks</option>
+              <option value="active">Active</option>
               <option value="inbox">Inbox</option>
               <option value="today">Today</option>
               <option value="upcoming">Upcoming</option>
               <option value="waiting">Waiting</option>
             </optgroup>
             <optgroup label="Operations">
-              <option value="agents">Active agents</option>
+              <option value="agents">Agents running</option>
             </optgroup>
             <optgroup label="Reviews">
               <option value="review">Daily review</option>
@@ -64,6 +66,15 @@
               <option value="done">Completed</option>
               <option value="all">All tasks</option>
             </optgroup>
+          </select>
+        </label>
+        <label class="view-picker sort-picker">
+          <span class="visually-hidden">Sort tasks</span>
+          <select id="sortOrder" aria-label="Sort tasks">
+            <option value="manual" selected>Manual order</option>
+            <option value="priority">Priority</option>
+            <option value="due">Due date</option>
+            <option value="updated">Recently updated</option>
           </select>
         </label>
         <label class="search-box"><span class="visually-hidden">Search all tasks</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search tasks"></label>
