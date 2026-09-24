@@ -656,12 +656,12 @@ func TestPrivateTaskIsVisibleOnlyToItsCreator(t *testing.T) {
 	if _, err := tasks.GetFor(t.Context(), created.ID, AgentPrincipal("codex")); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("agent get error = %v, want not found", err)
 	}
-	visible, err := tasks.ListFor(t.Context(), nil, 100, HumanPrincipal("alice@example.com"))
-	if err != nil || len(visible) != 1 || visible[0].ID != created.ID {
+	visible, err := tasks.ListFor(t.Context(), model.ListTasksRequest{Limit: 100}, HumanPrincipal("alice@example.com"))
+	if err != nil || len(visible.Tasks) != 1 || visible.Tasks[0].ID != created.ID {
 		t.Fatalf("creator list = %+v, %v", visible, err)
 	}
-	hidden, err := tasks.ListFor(t.Context(), nil, 100, HumanPrincipal("bob@example.com"))
-	if err != nil || len(hidden) != 0 {
+	hidden, err := tasks.ListFor(t.Context(), model.ListTasksRequest{Limit: 100}, HumanPrincipal("bob@example.com"))
+	if err != nil || len(hidden.Tasks) != 0 {
 		t.Fatalf("other user list = %+v, %v", hidden, err)
 	}
 }

@@ -38,8 +38,10 @@ type taskIDInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 }
 type listInput struct {
-	Statuses []model.TaskStatus `json:"statuses,omitempty" jsonschema:"Optional task statuses to include"`
-	Limit    int                `json:"limit,omitempty" jsonschema:"Maximum tasks, default 100 and maximum 200"`
+	Statuses   []model.TaskStatus   `json:"statuses,omitempty" jsonschema:"Optional task statuses to include"`
+	Visibility model.TaskVisibility `json:"visibility,omitempty" jsonschema:"Optional visibility to include: agent (the pickup lane), team, or private"`
+	Limit      int                  `json:"limit,omitempty" jsonschema:"Maximum tasks per page, default 100 and maximum 200"`
+	Cursor     string               `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page; repeat the same filters when following it"`
 }
 type updateInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
@@ -137,7 +139,8 @@ type moveInput struct {
 	model.MoveRequest
 }
 type tasksOutput struct {
-	Tasks []model.Task `json:"tasks"`
+	Tasks      []model.Task `json:"tasks"`
+	NextCursor string       `json:"next_cursor,omitempty" jsonschema:"Present when more tasks may follow; pass it back as cursor. A page can be short or empty while this is set."`
 }
 type taskOutput struct {
 	Task     model.Task         `json:"task"`
@@ -575,9 +578,9 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		handoffs, err := tasks.ListRunHandoffsFor(ctx, input.TaskID, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task, Handoffs: handoffs}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
-		items, err := tasks.ListFor(ctx, input.Statuses, input.Limit, mcpPrincipal(ctx))
-		return nil, tasksOutput{Tasks: items}, err
+	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status and visibility. Queued and stale tasks appear only when ready and matching this worker's advertised capabilities. Follow next_cursor until it is absent to see every task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
+		page, err := tasks.ListFor(ctx, model.ListTasksRequest{Statuses: input.Statuses, Visibility: input.Visibility, Limit: input.Limit, Cursor: input.Cursor}, mcpPrincipal(ctx))
+		return nil, tasksOutput{Tasks: page.Tasks, NextCursor: page.NextCursor}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_template_list", Description: "List reusable Taskboard task and checklist templates.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, templatesOutput, error) {
 		items, err := tasks.ListTemplatesFor(ctx, mcpPrincipal(ctx))
@@ -632,11 +635,11 @@ func listTasks(tasks *service.Service) http.HandlerFunc {
 			}
 		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		items, err := tasks.ListFor(r.Context(), statuses, limit, principal(r.Context()))
+		page, err := tasks.ListFor(r.Context(), model.ListTasksRequest{Statuses: statuses, Visibility: model.TaskVisibility(r.URL.Query().Get("visibility")), Limit: limit, Cursor: r.URL.Query().Get("cursor")}, principal(r.Context()))
 		if apiError(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusOK, tasksOutput{Tasks: items})
+		writeJSON(w, http.StatusOK, tasksOutput{Tasks: page.Tasks, NextCursor: page.NextCursor})
 	}
 }
 func startTask(tasks *service.Service) http.HandlerFunc {

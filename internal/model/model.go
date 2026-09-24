@@ -755,6 +755,22 @@ func IsTaskType(value TaskType) bool {
 	}
 }
 
+// ListTasksRequest selects one page of tasks. Cursor is the NextCursor of the
+// previous page; callers keep the same filters while following it.
+type ListTasksRequest struct {
+	Statuses   []TaskStatus
+	Visibility TaskVisibility
+	Limit      int
+	Cursor     string
+}
+
+// TaskPage is one page of a task listing. An empty NextCursor means the listing
+// is exhausted; a page may hold fewer than Limit tasks while NextCursor is set.
+type TaskPage struct {
+	Tasks      []Task
+	NextCursor string
+}
+
 func IsTaskVisibility(value TaskVisibility) bool {
 	switch value {
 	case VisibilityPrivate, VisibilityTeam, VisibilityAgent:

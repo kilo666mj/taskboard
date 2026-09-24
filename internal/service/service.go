@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -868,27 +869,85 @@ func (s *Service) List(ctx context.Context, statuses []model.TaskStatus, limit i
 	return s.store.ListTasks(ctx, statuses, limit)
 }
 
-func (s *Service) ListFor(ctx context.Context, statuses []model.TaskStatus, limit int, principal Principal) ([]model.Task, error) {
+// maxListScan bounds how many candidate rows one agent listing call examines,
+// so a board full of unrunnable pickup work returns a short page with a cursor
+// instead of scanning without limit.
+var maxListScan = 1000
+
+func (s *Service) ListFor(ctx context.Context, request model.ListTasksRequest, principal Principal) (model.TaskPage, error) {
 	if !principal.Can(PermissionTaskRead) {
-		return nil, ErrForbidden
+		return model.TaskPage{}, ErrForbidden
 	}
-	for _, status := range statuses {
+	for _, status := range request.Statuses {
 		if !model.IsTaskStatus(status) {
-			return nil, fmt.Errorf("%w: unknown status %q", ErrValidation, status)
+			return model.TaskPage{}, fmt.Errorf("%w: unknown status %q", ErrValidation, status)
 		}
 	}
-	items, err := s.store.ListVisibleTasks(ctx, statuses, limit, principal.ID, principal.Agent)
-	if err != nil || !principal.Agent {
-		return items, err
+	if request.Visibility != "" && !model.IsTaskVisibility(request.Visibility) {
+		return model.TaskPage{}, fmt.Errorf("%w: unknown visibility %q", ErrValidation, request.Visibility)
 	}
-	filtered := items[:0]
-	advertisement, _ := s.store.GetWorkerAdvertisement(ctx, principal.ID)
-	for _, item := range items {
-		if item.Status != model.TaskQueued && item.Status != model.TaskStale || item.Ready && workerMatches(item.Requirements, advertisement.Capabilities) {
-			filtered = append(filtered, item)
+	after, err := decodeTaskCursor(request.Cursor)
+	if err != nil {
+		return model.TaskPage{}, err
+	}
+	limit := request.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	var advertisement model.WorkerAdvertisement
+	if principal.Agent {
+		advertisement, _ = s.store.GetWorkerAdvertisement(ctx, principal.ID)
+	}
+	// Filter before the page limit: unready or unmatched pickup tasks must not
+	// fill a page and hide runnable work that sorts after them.
+	page := model.TaskPage{Tasks: []model.Task{}}
+	for scanned := 0; ; {
+		items, cursors, err := s.store.ListVisibleTasks(ctx, store.TaskQuery{Statuses: request.Statuses, Visibility: request.Visibility, Limit: limit, After: after}, principal.ID, principal.Agent)
+		if err != nil {
+			return model.TaskPage{}, err
+		}
+		for index, item := range items {
+			after = &cursors[index]
+			scanned++
+			if principal.Agent && (item.Status == model.TaskQueued || item.Status == model.TaskStale) && !(item.Ready && workerMatches(item.Requirements, advertisement.Capabilities)) {
+				continue
+			}
+			page.Tasks = append(page.Tasks, item)
+			if len(page.Tasks) == limit {
+				if index < len(items)-1 || len(items) == limit {
+					page.NextCursor = encodeTaskCursor(after)
+				}
+				return page, nil
+			}
+		}
+		if len(items) < limit {
+			return page, nil
+		}
+		if scanned >= maxListScan {
+			page.NextCursor = encodeTaskCursor(after)
+			return page, nil
 		}
 	}
-	return filtered, nil
+}
+
+func encodeTaskCursor(cursor *store.TaskCursor) string {
+	data, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeTaskCursor(value string) (*store.TaskCursor, error) {
+	if value == "" {
+		return nil, nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(value)
+	var cursor store.TaskCursor
+	if err == nil {
+		err = json.Unmarshal(data, &cursor)
+	}
+	if err != nil || cursor.ID == "" {
+		return nil, fmt.Errorf("%w: invalid cursor", ErrValidation)
+	}
+	return &cursor, nil
 }
 
 func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.ClaimRequest, principal Principal) (model.StartResult, error) {
