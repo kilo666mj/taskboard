@@ -76,7 +76,7 @@ body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;back
 button,input,textarea,select{font:inherit}
 .modal select{width:100%;padding:.7rem .8rem;border:1px solid var(--line);border-radius:.65rem;background:#0b101b;color:var(--ink)}
 .modal select:focus{outline:2px solid var(--cyan);outline-offset:2px}
-.view-toolbar{display:grid;grid-template-columns:10.5rem minmax(13rem,26rem);align-items:center;justify-content:start;gap:.55rem;padding-top:.75rem;margin-bottom:.7rem}
+.view-toolbar{display:grid;grid-template-columns:10.5rem 10.5rem minmax(13rem,26rem);align-items:center;justify-content:start;gap:.55rem;padding-top:.75rem;margin-bottom:.7rem}
 .view-picker select{width:100%;padding:.42rem 1.9rem .42rem .65rem;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);cursor:pointer}
 .view-picker select:focus{outline:2px solid var(--cyan);outline-offset:2px}
 .search-box input{width:100%;min-width:13rem;max-width:26rem;padding:.42rem .65rem;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink)}
@@ -107,7 +107,8 @@ html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .can
 .task-card[data-priority=high]{border-left:4px solid #db8b1f}
 .task-card[data-priority=low]{border-left:4px solid #7f8c9d}
 @media(max-width:720px){
-  .view-toolbar{grid-template-columns:minmax(8.5rem,9.5rem) minmax(0,1fr);align-items:stretch;padding-top:.55rem;margin-bottom:.55rem}
+  .view-toolbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch;padding-top:.55rem;margin-bottom:.55rem}
+  .search-box{grid-column:1/-1}
   .view-picker,.search-box,.view-picker select,.search-box input{min-width:0;max-width:none;width:100%}
   .planning-row{grid-template-columns:1fr}
   .template-controls{grid-template-columns:1fr}
