@@ -15,6 +15,8 @@ taskboard_oidc_allowed_emails:
 taskboard_oidc_allowed_groups: []
 taskboard_oidc_trust_provider_policy: false
 taskboard_default_role: member
+# personal or work fixes every task's type and hides the type selector.
+taskboard_task_type: ""
 taskboard_owner_groups: []
 taskboard_admin_groups: []
 taskboard_member_groups: []
@@ -28,3 +30,4 @@ taskboard_cf_access_allowed_subjects: []
 taskboard_cf_access_allowed_emails: []
 taskboard_cf_access_allowed_groups: []
 taskboard_cf_access_trust_policy: false
+taskboard_mcp_human_delegation: false
