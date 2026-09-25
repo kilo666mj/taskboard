@@ -171,6 +171,11 @@ cannot bypass Access. Keep the Taskboard MCP bearer secret configured even when
 browser authentication uses Access; non-loopback startup fails closed without
 it. Service-token assertions can identify automated MCP workloads individually.
 
+When people connect their own MCP clients through Access, set
+`taskboard.agentPolicy.humanDelegation: true` so that tasks they capture with
+`task_create` are recorded as theirs and private by default. See
+[MCP human delegation](configuration.md#mcp-human-delegation).
+
 ## Upgrades
 
 Back up PostgreSQL first and review the release's migration notes. Pin an image

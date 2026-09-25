@@ -156,6 +156,14 @@ actor. Do not also send `Authorization: Bearer` on that request. A deployment
 may keep the Taskboard bearer for a separate private or explicitly bypassed MCP
 route, but the public Access route should use one credential source per request.
 
+When people sign in to MCP through the Access OAuth flow, their assertions carry
+a person's subject rather than a service token. Set
+`TASKBOARD_MCP_HUMAN_DELEGATION=true` (Ansible
+`taskboard_mcp_human_delegation`) if tasks they capture through `task_create`
+should belong to them instead of the agent pickup lane. Service tokens are
+never delegated. See
+[MCP human delegation](configuration.md#mcp-human-delegation).
+
 For service tokens, the audit actor is
 `cloudflare_access:service_token:<common_name>` because Cloudflare intentionally
 leaves the assertion's `sub` and `email` claims empty.
