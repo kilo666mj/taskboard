@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/taskboard/internal/config"
+	"github.com/kilo666mj/taskboard/internal/service"
 )
 
 type fakeCloudflareAccessVerifier struct {
@@ -155,3 +156,45 @@ func TestCloudflareServiceTokenCannotAuthenticateHumanEndpoint(t *testing.T) {
 }
 
 var _ cloudflareAccessVerifier = fakeCloudflareAccessVerifier{}
+
+func TestCloudflareAccessMCPHumanDelegation(t *testing.T) {
+	_, database, _ := serverFixture(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sessions := newBrowserSessions(database, true, logger)
+	for _, test := range []struct {
+		name       string
+		enabled    bool
+		identity   cloudflareAccessIdentity
+		wantPerson string
+	}{
+		{name: "disabled", identity: cloudflareAccessIdentity{Subject: "person", Email: "person@example.com"}},
+		{name: "person", enabled: true, identity: cloudflareAccessIdentity{Subject: "person", Email: "person@example.com", Groups: []string{"members"}}, wantPerson: "cloudflare_access:person"},
+		{name: "service token", enabled: true, identity: cloudflareAccessIdentity{Subject: "service_token:build.access", Service: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			access := &cloudflareAccess{verifier: fakeCloudflareAccessVerifier{identity: test.identity}}
+			cfg := config.Config{AuthToken: strings.Repeat("test-token-", 4), DefaultRole: "viewer", MemberGroups: []string{"members"}, LeaseDuration: time.Minute, MCPHumanDelegation: test.enabled}
+			var got service.Principal
+			handler := auth(cfg, sessions, access, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = mcpPrincipal(r.Context())
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/mcp", nil)
+			request.Header.Set(cloudflareAccessJWTHeader, "assertion")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent || !got.Agent {
+				t.Fatalf("status/principal = %d/%+v", response.Code, got)
+			}
+			if test.wantPerson == "" {
+				if got.OnBehalfOf != nil {
+					t.Fatalf("unexpected delegation: %+v", got.OnBehalfOf)
+				}
+				return
+			}
+			if got.OnBehalfOf == nil || got.OnBehalfOf.ID != test.wantPerson || got.OnBehalfOf.Agent || got.OnBehalfOf.Role != service.RoleMember {
+				t.Fatalf("delegated person = %+v", got.OnBehalfOf)
+			}
+		})
+	}
+}

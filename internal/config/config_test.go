@@ -161,6 +161,24 @@ func TestAgentSafetyPolicyConfiguration(t *testing.T) {
 	}
 }
 
+func TestMCPHumanDelegationConfiguration(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCPHumanDelegation {
+		t.Fatal("MCP human delegation is enabled by default")
+	}
+	t.Setenv("TASKBOARD_MCP_HUMAN_DELEGATION", "true")
+	if cfg, err = Load(); err != nil || !cfg.MCPHumanDelegation {
+		t.Fatalf("enabled delegation = %v, %v", cfg.MCPHumanDelegation, err)
+	}
+	t.Setenv("TASKBOARD_MCP_HUMAN_DELEGATION", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid MCP human delegation value was accepted")
+	}
+}
+
 func TestAdministrativeLifecycleConfiguration(t *testing.T) {
 	t.Setenv("TASKBOARD_RETENTION_DAYS", "90")
 	t.Setenv("TASKBOARD_WEBHOOK_URL", "https://hooks.example.com/taskboard")

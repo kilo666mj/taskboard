@@ -647,6 +647,9 @@ type CreateRequest struct {
 	Checklist       []string       `json:"checklist,omitempty"`
 	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
 	IdempotencyHash string         `json:"-"`
+	// DelegatedVia is set by the service, never by clients, when an agent
+	// creates the task on behalf of the person operating it.
+	DelegatedVia string `json:"-"`
 }
 
 type UpdateRequest struct {

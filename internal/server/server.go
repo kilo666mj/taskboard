@@ -443,7 +443,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		result, err := tasks.StartFor(ctx, input, mcpPrincipal(ctx))
 		return nil, result, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_create", Description: "Capture future work without starting execution. Creates a queued task with no agent run; title is the only required field.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.CreateRequest) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_create", Description: "Capture future work without starting execution. Creates a queued task with no agent run; title is the only required field. When the caller is a person delegating through Cloudflare Access, the task is created as that person (private unless visibility is set); pass visibility \"agent\" only when asked for an agent-lane task.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.CreateRequest) (*mcp.CallToolResult, taskOutput, error) {
 		if input.Type == "" {
 			input.Type = defaultTaskType
 		}
@@ -1296,6 +1296,10 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					if identity, err := cloudflare.identity(r); err == nil {
 						valid = true
 						authenticatedPrincipal = agentPrincipal(cfg, identity.Subject)
+						if cfg.MCPHumanDelegation && !identity.Service {
+							person := service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups))
+							authenticatedPrincipal.OnBehalfOf = &person
+						}
 					}
 				} else if len(values) == 1 && strings.HasPrefix(values[0], "Bearer ") {
 					presented := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))

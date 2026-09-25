@@ -34,6 +34,10 @@ type Principal struct {
 	Agent  bool
 	Role   Role
 	Policy AgentPolicy
+	// OnBehalfOf is the verified person operating this agent principal. It is
+	// set only when the deployment enables MCP human delegation, and only
+	// task creation outside the agent lane acts as that person.
+	OnBehalfOf *Principal
 }
 
 type AgentPolicy struct {
@@ -677,6 +681,9 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 		}
 	}
 	eventPayload := map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}
+	if request.DelegatedVia != "" {
+		eventPayload["delegated_via"] = request.DelegatedVia
+	}
 	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: mergePayload(eventPayload, idempotencyPayload("task_create", request.IdempotencyKey, request.IdempotencyHash)), CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.Task{}, err
@@ -692,6 +699,9 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 }
 
 func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
+	if principal.Agent && principal.OnBehalfOf != nil && request.Visibility != model.VisibilityAgent {
+		return s.createDelegated(ctx, request, principal)
+	}
 	if !principal.Agent && !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
@@ -727,6 +737,36 @@ func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, pr
 		}
 	}
 	return s.Create(ctx, request, principal.ID)
+}
+
+// createDelegated records a task as the person operating an agent, so the
+// task has the same visibility default and creator as one made in the browser.
+func (s *Service) createDelegated(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
+	person := *principal.OnBehalfOf
+	if person.Agent || person.ID == "" || !person.Can(PermissionTaskWrite) || !principal.HasCapability(CapabilityTaskCreate) {
+		return model.Task{}, ErrForbidden
+	}
+	if request.Visibility == "" {
+		request.Visibility = model.VisibilityPrivate
+	}
+	request.DelegatedVia = "mcp"
+	if request.IdempotencyKey != "" {
+		s.idempotencyMu.Lock()
+		defer s.idempotencyMu.Unlock()
+	}
+	hash, err := requestHash(request)
+	if err != nil {
+		return model.Task{}, err
+	}
+	request.IdempotencyHash = hash
+	event, replay, err := s.replayIdempotency(ctx, Principal{ID: person.ID, Agent: true, Policy: principal.Policy}, "task_create", request.IdempotencyKey, hash)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if replay {
+		return s.GetFor(ctx, event.TaskID, person)
+	}
+	return s.Create(ctx, request, person.ID)
 }
 
 func (s *Service) SaveTemplate(ctx context.Context, request model.TemplateRequest) (model.Template, error) {

@@ -79,6 +79,7 @@
             "maxPickupsPerMinute": { "type": "integer", "minimum": 1, "maximum": 1000 },
             "maxRunSeconds": { "type": "integer", "minimum": 60, "maximum": 604800 },
             "requireIdempotency": { "type": "boolean" },
+            "humanDelegation": { "type": "boolean" },
             "policiesJSON": { "type": "string" }
           }
         },

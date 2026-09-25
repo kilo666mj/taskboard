@@ -44,6 +44,7 @@
     taskboard_agent_max_pickups_per_minute: 30
     taskboard_agent_max_run_seconds: 28800
     taskboard_agent_require_idempotency: false
+    taskboard_mcp_human_delegation: false
     taskboard_agent_policies_json: ""
     taskboard_retention_days: 0
     taskboard_webhook_url: ""
