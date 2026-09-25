@@ -14,6 +14,7 @@ disable their feature.
 | `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. It is required for non-loopback listeners. Loopback listeners safely default to `localhost`, `127.0.0.1`, and `::1`. Health and readiness probes are exempt. |
 | `TASKBOARD_LEASE_SECONDS` | `120` | Agent lease duration, from 30 through 3600 seconds. |
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Default type for agent-created tasks: `personal` or `work`. |
+| `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp` have `task_create` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
 | `TASKBOARD_VAPID_PUBLIC_KEY` | none | Web Push VAPID public key. |
 | `TASKBOARD_VAPID_PRIVATE_KEY` | none | Matching private key. Keep it secret and stable across upgrades. |
@@ -144,6 +145,26 @@ bearer uses `agent:shared`, unauthenticated loopback development uses
 `cloudflare_access:<subject>` identity (including
 `cloudflare_access:service_token:<common_name>`). MCP `clientInfo` is untrusted
 display metadata and is recorded separately on an agent run.
+
+### MCP human delegation
+
+By default every `/mcp` caller is an agent, so a person who connects their own
+MCP client through Cloudflare Access still creates agent-lane tasks. With
+`TASKBOARD_MCP_HUMAN_DELEGATION=true`, an MCP request carrying a Cloudflare
+Access identity for a person (never a service token) is still an agent
+principal, but `task_create` records the task as that person:
+
+- `created_by` is the person's subject and visibility defaults to `private`,
+  as in the browser; `team` may be requested explicitly.
+- The person's role must allow task writes and the agent policy must grant
+  `task:create`.
+- The `task.created` event carries `delegated_via: "mcp"`.
+- Passing `visibility: "agent"` keeps the previous agent-lane behavior.
+
+Delegation covers only `task_create`. `task_start`, claims, updates and every
+human-owned control (acceptance criteria, dependencies, reviews) keep agent
+authority, so an agent cannot see or change a private task after creating it
+for the person.
 
 Generate an agent credential with a password manager or a system random source,
 for example:

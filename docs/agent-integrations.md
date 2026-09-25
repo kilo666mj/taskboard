@@ -9,6 +9,16 @@ hash of that key. Integrations must use the principal and task run ID—not the
 session ID, callsign, or client label—for audit, authorization, and resume
 decisions.
 
+## Capturing tasks for a person
+
+When the deployment enables `TASKBOARD_MCP_HUMAN_DELEGATION` and the MCP caller
+is a person authenticated by Cloudflare Access, `task_create` records the task
+as that person: `created_by` is their subject and visibility defaults to
+`private`. The returned task is the only view the agent gets of a private task;
+later reads and updates stay agent-scoped. Pass `visibility: "team"` to share
+it, or `visibility: "agent"` when the person asks for pickup work. Service-token
+callers and every other tool are unaffected.
+
 ## Incremental checklist progress
 
 An agent should start or claim work before performing it, then keep the returned

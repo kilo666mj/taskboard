@@ -90,6 +90,8 @@ taskboard:
     maxPickupsPerMinute: 30
     maxRunSeconds: 28800
     requireIdempotency: false
+    # Cloudflare Access people calling MCP create queued tasks as themselves.
+    humanDelegation: false
     policiesJSON: ""
   retentionDays: 0
   webhook:

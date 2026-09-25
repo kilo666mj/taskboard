@@ -57,6 +57,7 @@ type Config struct {
 	AgentMaxPickupsPerMinute int
 	AgentMaxRunDuration      time.Duration
 	AgentRequireIdempotency  bool
+	MCPHumanDelegation       bool
 	AgentPolicies            map[string]AgentPolicy
 	RetentionDays            int
 	WebhookURL               string
@@ -111,6 +112,7 @@ func Load() (Config, error) {
 		AgentMaxPickupsPerMinute: envInt("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", 30),
 		AgentMaxRunDuration:      time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
 		AgentRequireIdempotency:  envBool("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", false),
+		MCPHumanDelegation:       envBool("TASKBOARD_MCP_HUMAN_DELEGATION", false),
 		AgentPolicies:            map[string]AgentPolicy{},
 		RetentionDays:            envInt("TASKBOARD_RETENTION_DAYS", 0),
 		WebhookURL:               strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
@@ -137,6 +139,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY must be true or false")
 		}
 		cfg.AgentRequireIdempotency = value
+	}
+	if raw := strings.TrimSpace(os.Getenv("TASKBOARD_MCP_HUMAN_DELEGATION")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("TASKBOARD_MCP_HUMAN_DELEGATION must be true or false")
+		}
+		cfg.MCPHumanDelegation = value
 	}
 	if value := strings.TrimSpace(os.Getenv("TASKBOARD_LEASE_SECONDS")); value != "" {
 		seconds, err := strconv.Atoi(value)
