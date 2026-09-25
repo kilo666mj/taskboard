@@ -81,6 +81,7 @@
             "maxRunSeconds": { "type": "integer", "minimum": 60, "maximum": 604800 },
             "requireIdempotency": { "type": "boolean" },
             "humanDelegation": { "type": "boolean" },
+            "delegationPrincipals": { "type": "array", "items": { "type": "string", "pattern": "^agent:" } },
             "policiesJSON": { "type": "string" }
           }
         },

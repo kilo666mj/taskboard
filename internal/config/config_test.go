@@ -198,6 +198,28 @@ func TestMCPHumanDelegationConfiguration(t *testing.T) {
 	}
 }
 
+func TestMCPDelegationPrincipalsConfiguration(t *testing.T) {
+	t.Setenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS", "agent:switchboard")
+	if _, err := Load(); err == nil {
+		t.Fatal("delegation principals without delegation and Cloudflare Access were accepted")
+	}
+	t.Setenv("TASKBOARD_MCP_HUMAN_DELEGATION", "true")
+	t.Setenv("TASKBOARD_BROWSER_AUTH_MODE", "cloudflare_access")
+	t.Setenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN", "https://team.cloudflareaccess.com")
+	t.Setenv("TASKBOARD_CF_ACCESS_AUD", "access-audience")
+	t.Setenv("TASKBOARD_CF_ACCESS_TRUST_POLICY", "true")
+	cfg, err := Load()
+	if err != nil || len(cfg.MCPDelegationPrincipals) != 1 || cfg.MCPDelegationPrincipals[0] != "agent:switchboard" {
+		t.Fatalf("delegation principals = %v, %v", cfg.MCPDelegationPrincipals, err)
+	}
+	for _, value := range []string{"agent:shared", "agent:local", "switchboard"} {
+		t.Setenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS", value)
+		if _, err := Load(); err == nil {
+			t.Fatalf("delegation principal %q was accepted", value)
+		}
+	}
+}
+
 func TestAdministrativeLifecycleConfiguration(t *testing.T) {
 	t.Setenv("TASKBOARD_RETENTION_DAYS", "90")
 	t.Setenv("TASKBOARD_WEBHOOK_URL", "https://hooks.example.com/taskboard")

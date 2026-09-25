@@ -94,6 +94,9 @@ taskboard:
     requireIdempotency: false
     # Cloudflare Access people calling MCP create queued tasks as themselves.
     humanDelegation: false
+    # Dedicated agent credential principals allowed to forward a Cloudflare
+    # Access person, for example [agent:switchboard].
+    delegationPrincipals: []
     policiesJSON: ""
   retentionDays: 0
   webhook:

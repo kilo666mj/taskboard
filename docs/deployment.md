@@ -166,8 +166,10 @@ a person's subject rather than a service token. Set
 `TASKBOARD_MCP_HUMAN_DELEGATION=true` (Ansible
 `taskboard_mcp_human_delegation`) if tasks they capture through `task_create`
 should belong to them instead of the agent pickup lane. Service tokens are
-never delegated. See
-[MCP human delegation](configuration.md#mcp-human-delegation).
+never delegated. When those people reach Taskboard through Switchboard, also
+give Switchboard a dedicated agent credential and list it in
+`taskboard_mcp_delegation_principals`; see
+[Through Switchboard](configuration.md#through-switchboard).
 
 For service tokens, the audit actor is
 `cloudflare_access:service_token:<common_name>` because Cloudflare intentionally
