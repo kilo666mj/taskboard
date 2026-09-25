@@ -67,6 +67,25 @@ func TestMCPDefaultTaskType(t *testing.T) {
 	}
 }
 
+func TestInstanceTaskType(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TaskType != "" {
+		t.Fatalf("default instance task type = %q, want empty", cfg.TaskType)
+	}
+	t.Setenv("TASKBOARD_MCP_DEFAULT_TYPE", "work")
+	t.Setenv("TASKBOARD_TASK_TYPE", " Personal ")
+	if cfg, err = Load(); err != nil || cfg.TaskType != "personal" || cfg.MCPDefaultTaskType != "personal" {
+		t.Fatalf("instance task type = %q/%q, %v", cfg.TaskType, cfg.MCPDefaultTaskType, err)
+	}
+	t.Setenv("TASKBOARD_TASK_TYPE", "both")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid instance task type was accepted")
+	}
+}
+
 func TestCloudflareAccessConfiguration(t *testing.T) {
 	t.Setenv("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthCloudflareAccess)
 	t.Setenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN", "https://team.cloudflareaccess.com/")

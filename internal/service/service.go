@@ -351,6 +351,7 @@ type Service struct {
 	pickupMu      sync.Mutex
 	recentEvents  map[string]time.Time
 	recentOrder   []recentEvent
+	fixedType     model.TaskType
 }
 
 type recentEvent struct {
@@ -364,6 +365,26 @@ func New(database *store.Store, leaseDuration time.Duration, metrics ...*observa
 		service.metrics = metrics[0]
 	}
 	return service
+}
+
+// SetFixedTaskType makes every new task and template on this instance use
+// taskType and ignores type changes on existing tasks. An empty value restores
+// per-task types.
+func (s *Service) SetFixedTaskType(taskType model.TaskType) {
+	s.fixedType = taskType
+}
+
+// FixedTaskType reports the instance-wide task type, or empty when tasks may
+// choose their own.
+func (s *Service) FixedTaskType() model.TaskType {
+	return s.fixedType
+}
+
+func (s *Service) taskType(value model.TaskType) model.TaskType {
+	if s.fixedType != "" {
+		return s.fixedType
+	}
+	return normalizedTaskType(value)
 }
 
 func (s *Service) Ready(ctx context.Context) error {
@@ -475,7 +496,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 		defer func() { s.metrics.ObserveAgentRun("start", err) }()
 	}
 	request.Title = strings.TrimSpace(request.Title)
-	request.Type = normalizedTaskType(request.Type)
+	request.Type = s.taskType(request.Type)
 	request.Visibility = normalizedVisibility(request.Visibility, model.VisibilityTeam)
 	request.Summary = strings.TrimSpace(request.Summary)
 	request.Section = normalizedSection(request.Section)
@@ -624,7 +645,7 @@ func (s *Service) StartFor(ctx context.Context, request model.StartRequest, prin
 // run or lease; those are attached only when an agent claims the task.
 func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor string) (model.Task, error) {
 	request.Title = strings.TrimSpace(request.Title)
-	request.Type = normalizedTaskType(request.Type)
+	request.Type = s.taskType(request.Type)
 	request.Visibility = normalizedVisibility(request.Visibility, model.VisibilityTeam)
 	request.Summary = strings.TrimSpace(request.Summary)
 	request.Section = normalizedSection(request.Section)
@@ -772,7 +793,7 @@ func (s *Service) createDelegated(ctx context.Context, request model.CreateReque
 func (s *Service) SaveTemplate(ctx context.Context, request model.TemplateRequest) (model.Template, error) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.Title = strings.TrimSpace(request.Title)
-	request.Type = normalizedTaskType(request.Type)
+	request.Type = s.taskType(request.Type)
 	request.Summary = strings.TrimSpace(request.Summary)
 	request.Section = normalizedSection(request.Section)
 	request.Project = strings.TrimSpace(request.Project)
@@ -1145,6 +1166,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.Status != "" && !model.IsTaskStatus(request.Status) {
 		return model.Task{}, fmt.Errorf("%w: unknown task status", ErrValidation)
 	}
+	if request.Type != nil && s.fixedType != "" {
+		request.Type = nil
+	}
 	if request.Type != nil {
 		value := model.TaskType(strings.ToLower(strings.TrimSpace(string(*request.Type))))
 		if !model.IsTaskType(value) {
@@ -1508,7 +1532,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 			return model.Task{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, nextID, title, summary, taskType, visibility, current.CreatedBy, editor, section, project, repository, priority, nextDue, "", recurrence, nextOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, nextID, title, summary, s.taskType(taskType), visibility, current.CreatedBy, editor, section, project, repository, priority, nextDue, "", recurrence, nextOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
 			return model.Task{}, err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT label,required FROM checklist_items WHERE task_id=? ORDER BY position`, taskID)

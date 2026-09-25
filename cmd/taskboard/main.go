@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/taskboard/internal/config"
+	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/push"
 	"github.com/kilo666mj/taskboard/internal/server"
@@ -46,6 +47,10 @@ func main() {
 	}()
 	metrics := observability.New(database.DB())
 	tasks := service.New(database, cfg.LeaseDuration, metrics)
+	tasks.SetFixedTaskType(model.TaskType(cfg.TaskType))
+	if cfg.TaskType == "" && os.Getenv("TASKBOARD_MCP_DEFAULT_TYPE") != "" {
+		logger.Warn("TASKBOARD_MCP_DEFAULT_TYPE is deprecated; set TASKBOARD_TASK_TYPE to fix one task type for this instance")
+	}
 	notifications := push.New(database, tasks, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDContact, logger, metrics)
 	webhooks := webhook.New(database, cfg.WebhookURL, cfg.WebhookSecret, cfg.WebhookMaxAttempts, logger)
 	runContext, stopNotifications := context.WithCancel(context.Background())

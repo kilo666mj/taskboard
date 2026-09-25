@@ -76,6 +76,8 @@ taskboard:
   allowedHosts: ["taskboard.example.com"]
   leaseSeconds: 120
   mcpDefaultType: work
+  # personal or work fixes every task's type and hides the selector.
+  taskType: ""
   browserAuthMode: oidc
   vapidContact: mailto:admin@example.com
   roles:

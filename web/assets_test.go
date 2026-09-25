@@ -221,3 +221,16 @@ func TestTaskViewsAndSortControlAreWired(t *testing.T) {
 		}
 	}
 }
+
+func TestFixedTaskTypeHidesTypeSelector(t *testing.T) {
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{`state.taskType=session.task_type||''`, `$('#taskType').closest('label').hidden=Boolean(state.taskType)`, `if(!state.taskType)labels.push(`, `...(state.taskType?{}:{type:`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	if !strings.Contains(css, `.modal label[hidden]{display:none}`) {
+		t.Error("app.css does not hide a hidden dialog label")
+	}
+}

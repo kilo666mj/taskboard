@@ -91,6 +91,8 @@ button,input,textarea,select{font:inherit}
 .task-context p{margin:0;color:#cbd3e0;font-size:.8rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .task-modal .field-help{margin:.55rem 0 0;font-size:.78rem}
 .task-classification-row{grid-template-columns:repeat(3,minmax(0,1fr))}
+.modal label[hidden]{display:none}
+.task-classification-row:has(>label[hidden]){grid-template-columns:repeat(2,minmax(0,1fr))}
 @media(max-width:720px){.task-classification-row{grid-template-columns:1fr}}
 .task-management{display:flex;gap:.38rem;flex-wrap:wrap;margin-top:.55rem}
 .task-management button{padding:.35rem .52rem;font-size:.8rem}
