@@ -16,6 +16,7 @@ disable their feature.
 | `TASKBOARD_TASK_TYPE` | none | Fix every new task on this instance to `personal` or `work` and hide the type selector. Type changes to existing tasks are ignored. Leave empty to choose a type per task. |
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Deprecated; use `TASKBOARD_TASK_TYPE`. Default type for MCP-created tasks when `TASKBOARD_TASK_TYPE` is empty. |
 | `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp` have `task_create` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
+| `TASKBOARD_MCP_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential principals, such as `agent:switchboard`, allowed to forward a Cloudflare Access person in `X-Switchboard-Access-Subject`. Requires delegation and Cloudflare Access browser mode; `agent:shared` is refused. |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
 | `TASKBOARD_VAPID_PUBLIC_KEY` | none | Web Push VAPID public key. |
 | `TASKBOARD_VAPID_PRIVATE_KEY` | none | Matching private key. Keep it secret and stable across upgrades. |
@@ -166,6 +167,31 @@ Delegation covers only `task_create`. `task_start`, claims, updates and every
 human-owned control (acceptance criteria, dependencies, reviews) keep agent
 authority, so an agent cannot see or change a private task after creating it
 for the person.
+
+#### Through Switchboard
+
+When people reach Taskboard through Switchboard, Taskboard sees Switchboard's
+bearer instead of the person's Access assertion. To delegate in that topology:
+
+1. Mint a dedicated agent credential for Switchboard, for example principal
+   `agent:switchboard` (see [Administration](administration.md)), and configure
+   Switchboard's Taskboard capability to use it instead of
+   `TASKBOARD_AUTH_TOKEN`.
+2. Enable `forward_cloudflare_access_subject` on that capability. Switchboard
+   then sends the verified person as `cloudflare_access:<sub>` in
+   `X-Switchboard-Access-Subject`, and never for service tokens.
+3. Set `TASKBOARD_MCP_HUMAN_DELEGATION=true` and
+   `TASKBOARD_MCP_DELEGATION_PRINCIPALS=agent:switchboard`.
+
+Taskboard reads the header only from a listed principal and ignores it from
+every other caller, including the shared bearer. It rejects the request when
+the forwarded value is not a person's `cloudflare_access:` subject or when that
+person has been offboarded. The header carries no groups, so the delegated
+person gets `TASKBOARD_DEFAULT_ROLE`. Cloudflare documents the Access `sub` as
+unique to an email address per account, so tasks recorded through Switchboard
+belong to the identity that signs in to the browser when both applications are
+in the same Cloudflare account. A person who is removed and re-added in Access
+receives a new `sub`.
 
 Generate an agent credential with a password manager or a system random source,
 for example:

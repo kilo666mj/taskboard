@@ -17,7 +17,9 @@ as that person: `created_by` is their subject and visibility defaults to
 `private`. The returned task is the only view the agent gets of a private task;
 later reads and updates stay agent-scoped. Pass `visibility: "team"` to share
 it, or `visibility: "agent"` when the person asks for pickup work. Service-token
-callers and every other tool are unaffected.
+callers and every other tool are unaffected. The same applies through Switchboard
+when it forwards the person in `X-Switchboard-Access-Subject` from a credential
+listed in `TASKBOARD_MCP_DELEGATION_PRINCIPALS`.
 
 ## Incremental checklist progress
 

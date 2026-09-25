@@ -31,3 +31,6 @@ taskboard_cf_access_allowed_emails: []
 taskboard_cf_access_allowed_groups: []
 taskboard_cf_access_trust_policy: false
 taskboard_mcp_human_delegation: false
+# Dedicated agent credential principals, such as agent:switchboard, allowed to
+# forward a Cloudflare Access person in X-Switchboard-Access-Subject.
+taskboard_mcp_delegation_principals: []

@@ -198,3 +198,71 @@ func TestCloudflareAccessMCPHumanDelegation(t *testing.T) {
 		})
 	}
 }
+
+func TestSwitchboardForwardedAccessSubjectIsTrustedOnlyFromDelegationPrincipals(t *testing.T) {
+	_, database, logger := serverFixture(t)
+	sessions := newBrowserSessions(database, true, logger)
+	_, trusted, err := database.CreateAgentCredential(t.Context(), "switchboard", "agent:switchboard", nil, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, other, err := database.CreateAgentCredential(t.Context(), "worker", "agent:worker", nil, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.OffboardPrincipal(t.Context(), "cloudflare_access:departed", "test", "left"); err != nil {
+		t.Fatal(err)
+	}
+	shared := strings.Repeat("test-token-", 4)
+	base := config.Config{AuthToken: shared, DefaultRole: "member", LeaseDuration: time.Minute, BrowserAuthMode: config.BrowserAuthCloudflareAccess, MCPHumanDelegation: true, MCPDelegationPrincipals: []string{"agent:switchboard"}}
+	for _, test := range []struct {
+		name, token, subject string
+		disabled             bool
+		wantStatus           int
+		wantPerson           string
+	}{
+		{name: "trusted", token: trusted, subject: "cloudflare_access:person-1", wantStatus: http.StatusNoContent, wantPerson: "cloudflare_access:person-1"},
+		{name: "no header", token: trusted, wantStatus: http.StatusNoContent},
+		{name: "delegation disabled", token: trusted, subject: "cloudflare_access:person-1", disabled: true, wantStatus: http.StatusNoContent},
+		{name: "other credential", token: other, subject: "cloudflare_access:person-1", wantStatus: http.StatusNoContent},
+		{name: "shared bearer", token: shared, subject: "cloudflare_access:person-1", wantStatus: http.StatusNoContent},
+		{name: "service token subject", token: trusted, subject: "cloudflare_access:service_token:build.access", wantStatus: http.StatusUnauthorized},
+		{name: "unprefixed subject", token: trusted, subject: "person-1", wantStatus: http.StatusUnauthorized},
+		{name: "revoked person", token: trusted, subject: "cloudflare_access:departed", wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base
+			cfg.MCPHumanDelegation = !test.disabled
+			var got service.Principal
+			handler := auth(cfg, sessions, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = mcpPrincipal(r.Context())
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodPost, "https://taskboard.example.com/mcp", nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+			if test.subject != "" {
+				request.Header.Set(switchboardAccessSubjectHeader, test.subject)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			if test.wantStatus != http.StatusNoContent {
+				return
+			}
+			if !got.Agent {
+				t.Fatalf("principal = %+v, want agent", got)
+			}
+			if test.wantPerson == "" {
+				if got.OnBehalfOf != nil {
+					t.Fatalf("unexpected delegation: %+v", got.OnBehalfOf)
+				}
+				return
+			}
+			if got.ID != "agent:switchboard" || got.OnBehalfOf == nil || got.OnBehalfOf.ID != test.wantPerson || got.OnBehalfOf.Role != service.RoleMember || got.OnBehalfOf.Agent {
+				t.Fatalf("delegated principal = %+v / %+v", got, got.OnBehalfOf)
+			}
+		})
+	}
+}

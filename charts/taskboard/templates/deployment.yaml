@@ -104,6 +104,8 @@ spec:
               value: {{ .Values.taskboard.agentPolicy.requireIdempotency | quote }}
             - name: TASKBOARD_MCP_HUMAN_DELEGATION
               value: {{ .Values.taskboard.agentPolicy.humanDelegation | quote }}
+            - name: TASKBOARD_MCP_DELEGATION_PRINCIPALS
+              value: {{ join "," (.Values.taskboard.agentPolicy.delegationPrincipals | default list) | quote }}
             - name: TASKBOARD_AGENT_POLICIES_JSON
               value: {{ .Values.taskboard.agentPolicy.policiesJSON | quote }}
             - name: TASKBOARD_RETENTION_DAYS

@@ -97,8 +97,10 @@ impersonating a person or another service in task history.
 A person who connects their own MCP client through Cloudflare Access is still an
 agent by default. Set `TASKBOARD_MCP_HUMAN_DELEGATION=true` to have their
 `task_create` calls record the task as that person, private by default, while
-every other MCP tool keeps agent authority. See
-[MCP human delegation](docs/configuration.md#mcp-human-delegation).
+every other MCP tool keeps agent authority. When people reach Taskboard through
+Switchboard, list Switchboard's dedicated credential in
+`TASKBOARD_MCP_DELEGATION_PRINCIPALS` so Taskboard trusts the person Switchboard
+forwards. See [MCP human delegation](docs/configuration.md#mcp-human-delegation).
 
 ## Planning and review
 

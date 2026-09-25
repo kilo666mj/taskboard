@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1309,6 +1310,14 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					} else if principalID, credentialValid, err := sessions.store.AuthenticateAgentCredential(r.Context(), presented); err == nil && credentialValid {
 						valid = true
 						authenticatedPrincipal = agentPrincipal(cfg, principalID)
+						person, delegated, err := forwardedAccessPerson(cfg, sessions.store, r, principalID)
+						if err != nil {
+							writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+							return
+						}
+						if delegated {
+							authenticatedPrincipal.OnBehalfOf = &person
+						}
 					}
 				}
 			} else if cloudflare != nil {
@@ -1355,6 +1364,27 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)))
 		})
 	}
+}
+
+// switchboardAccessSubjectHeader carries a person that Switchboard verified
+// through Cloudflare Access. It is trusted only from configured delegation
+// principals and ignored for every other caller.
+const switchboardAccessSubjectHeader = "X-Switchboard-Access-Subject"
+
+func forwardedAccessPerson(cfg config.Config, database *store.Store, r *http.Request, principalID string) (service.Principal, bool, error) {
+	values := r.Header.Values(switchboardAccessSubjectHeader)
+	if len(values) == 0 || !cfg.MCPHumanDelegation || !slices.Contains(cfg.MCPDelegationPrincipals, principalID) {
+		return service.Principal{}, false, nil
+	}
+	subject := values[0]
+	if len(values) != 1 || !strings.HasPrefix(subject, "cloudflare_access:") || strings.HasPrefix(subject, "cloudflare_access:service_token:") || !safeAccessClaim(strings.TrimPrefix(subject, "cloudflare_access:")) {
+		return service.Principal{}, false, errInvalidCloudflareAccess
+	}
+	revoked, err := database.PrincipalRevoked(r.Context(), subject)
+	if err != nil || revoked {
+		return service.Principal{}, false, errInvalidCloudflareAccess
+	}
+	return service.HumanPrincipalWithRole(subject, roleForGroups(cfg, nil)), true, nil
 }
 
 func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess) http.HandlerFunc {

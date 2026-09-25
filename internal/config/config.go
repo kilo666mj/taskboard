@@ -59,6 +59,7 @@ type Config struct {
 	AgentMaxRunDuration      time.Duration
 	AgentRequireIdempotency  bool
 	MCPHumanDelegation       bool
+	MCPDelegationPrincipals  []string
 	AgentPolicies            map[string]AgentPolicy
 	RetentionDays            int
 	WebhookURL               string
@@ -115,6 +116,7 @@ func Load() (Config, error) {
 		AgentMaxRunDuration:      time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
 		AgentRequireIdempotency:  envBool("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", false),
 		MCPHumanDelegation:       envBool("TASKBOARD_MCP_HUMAN_DELEGATION", false),
+		MCPDelegationPrincipals:  split(os.Getenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS")),
 		AgentPolicies:            map[string]AgentPolicy{},
 		RetentionDays:            envInt("TASKBOARD_RETENTION_DAYS", 0),
 		WebhookURL:               strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
@@ -188,6 +190,14 @@ func Load() (Config, error) {
 	}
 	if cfg.MCPDefaultTaskType != "personal" && cfg.MCPDefaultTaskType != "work" {
 		return Config{}, fmt.Errorf("TASKBOARD_MCP_DEFAULT_TYPE must be personal or work")
+	}
+	for _, principal := range cfg.MCPDelegationPrincipals {
+		if !strings.HasPrefix(principal, "agent:") || principal == "agent:shared" || principal == "agent:local" {
+			return Config{}, fmt.Errorf("TASKBOARD_MCP_DELEGATION_PRINCIPALS entries must be dedicated agent credential principals, not %q", principal)
+		}
+	}
+	if len(cfg.MCPDelegationPrincipals) > 0 && (!cfg.MCPHumanDelegation || cfg.BrowserAuthMode != BrowserAuthCloudflareAccess) {
+		return Config{}, fmt.Errorf("TASKBOARD_MCP_DELEGATION_PRINCIPALS requires TASKBOARD_MCP_HUMAN_DELEGATION=true and TASKBOARD_BROWSER_AUTH_MODE=cloudflare_access")
 	}
 	if cfg.TaskType != "" && cfg.TaskType != "personal" && cfg.TaskType != "work" {
 		return Config{}, fmt.Errorf("TASKBOARD_TASK_TYPE must be personal, work, or empty")
