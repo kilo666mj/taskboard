@@ -1360,3 +1360,18 @@ func TestDesktopSessionConfirmationCanBeCancelled(t *testing.T) {
 		t.Fatalf("cancelled exchange status = %d, want 401", exchanged.Code)
 	}
 }
+
+func TestSessionStateReportsInstanceTaskType(t *testing.T) {
+	_, database, logger := serverFixture(t)
+	sessions := newBrowserSessions(database, true, logger)
+	handler := sessionState(config.Config{AllowInsecure: true, TaskType: "work"}, sessions, nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/session", nil))
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["task_type"] != "work" {
+		t.Fatalf("session = %v", body)
+	}
+}

@@ -111,6 +111,11 @@ ansible-playbook -i ansible/inventory.local.ini ansible/deploy.yml
 Both local files are ignored. Never put production hostnames, addresses, or
 credentials back into tracked examples.
 
+An instance that serves only one kind of work should set `taskboard_task_type`
+to `personal` or `work` in `private.yml`. Every new task then gets that type
+and the browser hides the type selector. The older `taskboard_mcp_default_type`
+applies only while `taskboard_task_type` is empty.
+
 ## TLS and proxy controls
 
 - Redirect HTTP to HTTPS and enable HSTS at the proxy after HTTPS is stable.

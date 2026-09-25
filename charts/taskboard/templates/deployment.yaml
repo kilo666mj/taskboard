@@ -78,6 +78,8 @@ spec:
               value: {{ .Values.taskboard.leaseSeconds | quote }}
             - name: TASKBOARD_MCP_DEFAULT_TYPE
               value: {{ .Values.taskboard.mcpDefaultType | quote }}
+            - name: TASKBOARD_TASK_TYPE
+              value: {{ .Values.taskboard.taskType | quote }}
             - name: TASKBOARD_BROWSER_AUTH_MODE
               value: {{ .Values.taskboard.browserAuthMode | quote }}
             - name: TASKBOARD_DEFAULT_ROLE

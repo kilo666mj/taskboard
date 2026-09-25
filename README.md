@@ -125,9 +125,11 @@ invented history. When an agent run goes stale, an owner or administrator can
 explicitly review and requeue it; that audited recovery records the reviewer as
 the last editor before the task becomes eligible for a fresh claim.
 
-Every task has a `personal` or `work` type. Existing tasks and browser-created
-tasks default to `personal`; set `TASKBOARD_MCP_DEFAULT_TYPE=work` to classify
-agent-created tasks as work unless an MCP caller explicitly chooses otherwise.
+Every task has a `personal` or `work` type. When one instance serves only one
+kind of work, set `TASKBOARD_TASK_TYPE=personal` or `TASKBOARD_TASK_TYPE=work`:
+every new task gets that type, type changes are ignored, and the browser hides
+the type selector and label. Leave it empty to choose a type per task; browser
+tasks then default to `personal` and MCP tasks to `work`.
 Tasks live in flat sections and may optionally belong to a project and a
 development repository. Priority, due date, and defer-until are planning
 metadata; they never masquerade as the blocked or waiting execution states.
@@ -161,7 +163,7 @@ of at least 32 characters:
 TASKBOARD_LISTEN_ADDRESS=127.0.0.1:8095
 TASKBOARD_AUTH_TOKEN=replace-with-a-long-random-token
 TASKBOARD_ALLOWED_HOSTS=taskboard.example.com
-TASKBOARD_MCP_DEFAULT_TYPE=work
+TASKBOARD_TASK_TYPE=work
 ```
 
 Unauthenticated mode refuses non-loopback listeners and defaults its Host

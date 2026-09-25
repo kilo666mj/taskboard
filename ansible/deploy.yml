@@ -10,6 +10,7 @@
     taskboard_database_url: ""
     taskboard_lease_seconds: 300
     taskboard_mcp_default_type: work
+    taskboard_task_type: ""
     taskboard_browser_auth_mode: oidc
     taskboard_cf_access_team_domain: ""
     taskboard_cf_access_aud: ""
@@ -68,6 +69,7 @@
           - taskboard_browser_auth_mode != 'oidc' or taskboard_oidc_trust_provider_policy | bool or (taskboard_oidc_allowed_subjects | length + taskboard_oidc_allowed_emails | length + taskboard_oidc_allowed_groups | length) > 0
           - taskboard_browser_auth_mode != 'cloudflare_access' or taskboard_cf_access_trust_policy | bool or (taskboard_cf_access_allowed_subjects | length + taskboard_cf_access_allowed_emails | length + taskboard_cf_access_allowed_groups | length) > 0
           - taskboard_mcp_default_type in ['personal', 'work']
+          - taskboard_task_type in ['', 'personal', 'work']
           - taskboard_default_role in ['owner', 'admin', 'member', 'viewer']
           - taskboard_agent_max_concurrent_runs | int >= 1
           - taskboard_agent_max_pickups_per_minute | int >= 1

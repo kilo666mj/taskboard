@@ -1360,7 +1360,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.AllowInsecure && cfg.AuthToken == "" {
-			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "auth_mode": "local", "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": "local", "role": roleForGroups(cfg, nil)})
+			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "auth_mode": "local", "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": "local", "role": roleForGroups(cfg, nil), "task_type": cfg.TaskType})
 			return
 		}
 		if cloudflare != nil {
@@ -1381,6 +1381,7 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 				"identity":                  identityActor(identity),
 				"role":                      roleForGroups(cfg, identity.Groups),
 				"logout_url":                "/cdn-cgi/access/logout",
+				"task_type":                 cfg.TaskType,
 			})
 			return
 		}
@@ -1394,7 +1395,7 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 		if valid {
 			role = roleForGroups(cfg, identity.Groups)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": valid, "auth_mode": config.BrowserAuthOIDC, "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": identityActor(identity), "role": role})
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": valid, "auth_mode": config.BrowserAuthOIDC, "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": identityActor(identity), "role": role, "task_type": cfg.TaskType})
 	}
 }
 

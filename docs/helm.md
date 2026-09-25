@@ -93,6 +93,8 @@ image:
 
 taskboard:
   allowedHosts: [taskboard.example.com]
+  # personal or work fixes every task's type and hides the type selector.
+  taskType: work
   browserAuthMode: oidc
   oidc:
     issuer: https://id.example.com

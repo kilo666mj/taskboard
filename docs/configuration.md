@@ -13,7 +13,8 @@ disable their feature.
 | `TASKBOARD_ALLOW_INSECURE` | `false` | Allow unauthenticated use only for explicit local development. Without a token, startup refuses non-loopback listeners. |
 | `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. It is required for non-loopback listeners. Loopback listeners safely default to `localhost`, `127.0.0.1`, and `::1`. Health and readiness probes are exempt. |
 | `TASKBOARD_LEASE_SECONDS` | `120` | Agent lease duration, from 30 through 3600 seconds. |
-| `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Default type for agent-created tasks: `personal` or `work`. |
+| `TASKBOARD_TASK_TYPE` | none | Fix every new task on this instance to `personal` or `work` and hide the type selector. Type changes to existing tasks are ignored. Leave empty to choose a type per task. |
+| `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Deprecated; use `TASKBOARD_TASK_TYPE`. Default type for MCP-created tasks when `TASKBOARD_TASK_TYPE` is empty. |
 | `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp` have `task_create` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
 | `TASKBOARD_VAPID_PUBLIC_KEY` | none | Web Push VAPID public key. |

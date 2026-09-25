@@ -29,6 +29,7 @@ type Config struct {
 	AllowedHosts             []string
 	LeaseDuration            time.Duration
 	MCPDefaultTaskType       string
+	TaskType                 string
 	BrowserAuthMode          string
 	VAPIDPublicKey           string
 	VAPIDPrivateKey          string
@@ -84,6 +85,7 @@ func Load() (Config, error) {
 		AllowedHosts:             split(os.Getenv("TASKBOARD_ALLOWED_HOSTS")),
 		LeaseDuration:            2 * time.Minute,
 		MCPDefaultTaskType:       env("TASKBOARD_MCP_DEFAULT_TYPE", "work"),
+		TaskType:                 strings.ToLower(strings.TrimSpace(os.Getenv("TASKBOARD_TASK_TYPE"))),
 		BrowserAuthMode:          env("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthOIDC),
 		VAPIDPublicKey:           strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PUBLIC_KEY")),
 		VAPIDPrivateKey:          strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PRIVATE_KEY")),
@@ -186,6 +188,12 @@ func Load() (Config, error) {
 	}
 	if cfg.MCPDefaultTaskType != "personal" && cfg.MCPDefaultTaskType != "work" {
 		return Config{}, fmt.Errorf("TASKBOARD_MCP_DEFAULT_TYPE must be personal or work")
+	}
+	if cfg.TaskType != "" && cfg.TaskType != "personal" && cfg.TaskType != "work" {
+		return Config{}, fmt.Errorf("TASKBOARD_TASK_TYPE must be personal, work, or empty")
+	}
+	if cfg.TaskType != "" {
+		cfg.MCPDefaultTaskType = cfg.TaskType
 	}
 	if cfg.BrowserAuthMode != BrowserAuthOIDC && cfg.BrowserAuthMode != BrowserAuthCloudflareAccess {
 		return Config{}, fmt.Errorf("TASKBOARD_BROWSER_AUTH_MODE must be oidc or cloudflare_access")
