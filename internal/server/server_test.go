@@ -16,14 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilo666mj/mcpkit/mcpkittest"
-	"github.com/kilo666mj/oidcrp"
 	"github.com/kilo666mj/taskboard/internal/config"
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/push"
 	"github.com/kilo666mj/taskboard/internal/service"
 	"github.com/kilo666mj/taskboard/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.michaelspost.com/mcpkit/mcpkittest"
+	"go.michaelspost.com/oidcrp"
 )
 
 func serverFixture(t *testing.T) (*service.Service, *store.Store, *slog.Logger) {

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilo666mj/oidcrp"
 	"github.com/kilo666mj/taskboard/internal/config"
 	"github.com/kilo666mj/taskboard/internal/store"
+	"go.michaelspost.com/oidcrp"
 )
 
 const (

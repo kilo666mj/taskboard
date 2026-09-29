@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
-	pwakit "github.com/kilo666mj/pwa-kit"
+	pwakit "go.michaelspost.com/pwa-kit"
 )
 
 func main() {
