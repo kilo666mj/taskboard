@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	pwakit "github.com/kilo666mj/pwa-kit"
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/observability"
 	"github.com/kilo666mj/taskboard/internal/service"
 	"github.com/kilo666mj/taskboard/internal/store"
+	pwakit "go.michaelspost.com/pwa-kit"
 )
 
 type Service struct {

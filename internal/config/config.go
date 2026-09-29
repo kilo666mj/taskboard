@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	pwakit "github.com/kilo666mj/pwa-kit"
+	pwakit "go.michaelspost.com/pwa-kit"
 )
 
 const (

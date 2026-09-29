@@ -18,9 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kilo666mj/mcpkit"
-	"github.com/kilo666mj/oidcrp"
-	pwakit "github.com/kilo666mj/pwa-kit"
 	"github.com/kilo666mj/taskboard/internal/config"
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/observability"
@@ -29,6 +26,9 @@ import (
 	"github.com/kilo666mj/taskboard/internal/store"
 	webassets "github.com/kilo666mj/taskboard/web"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.michaelspost.com/mcpkit"
+	"go.michaelspost.com/oidcrp"
+	pwakit "go.michaelspost.com/pwa-kit"
 )
 
 var Version = "dev"
