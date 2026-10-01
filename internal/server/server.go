@@ -244,6 +244,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	oidcAuth := oidcrp.New(oidcrp.Config{
 		Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, RedirectURL: cfg.OIDCRedirectURL,
 		AllowedSubjects: cfg.OIDCAllowedSubjects, AllowedEmails: cfg.OIDCAllowedEmails, AllowedGroups: cfg.OIDCAllowedGroups,
+		Scopes:          oidcScopes(cfg),
 		StateCookieName: "taskboard_oidc", LoginPath: "/", LoginStartPath: "/api/v1/auth/oidc/start", CallbackPath: "/api/v1/auth/oidc/callback", SuccessPath: "/",
 		DesktopHandoffParam: "desktop", DesktopSuccessPath: "/api/v1/auth/desktop/complete", ValidateDesktopHandoff: validDesktopHandoff,
 	}, sessions)
