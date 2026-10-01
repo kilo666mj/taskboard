@@ -287,3 +287,26 @@ func TestMetricsListenerIsOptionalAndValidated(t *testing.T) {
 		t.Fatal("invalid metrics listener was accepted")
 	}
 }
+
+func TestRoutingRequirementConfiguration(t *testing.T) {
+	t.Setenv("TASKBOARD_DEFAULT_REQUIREMENTS", "runner:k8s-job, repo:org/app")
+	t.Setenv("TASKBOARD_AGENT_POLICIES_JSON", `{"agent:bridge":{"allowed_requirements":["runner:local"]}}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := cfg.AgentPolicies["agent:bridge"].AllowedRequirements
+	if len(cfg.DefaultRequirements) != 2 || cfg.DefaultRequirements[0] != "runner:k8s-job" || allowed == nil || len(*allowed) != 1 {
+		t.Fatalf("routing configuration = %#v / %#v", cfg.DefaultRequirements, allowed)
+	}
+
+	t.Setenv("TASKBOARD_DEFAULT_REQUIREMENTS", "Runner:K8s")
+	if _, err := Load(); err == nil {
+		t.Fatal("non-normalized default requirement was accepted")
+	}
+	t.Setenv("TASKBOARD_DEFAULT_REQUIREMENTS", "")
+	t.Setenv("TASKBOARD_AGENT_POLICIES_JSON", `{"agent:bridge":{"allowed_requirements":["runner local"]}}`)
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid allowed requirement was accepted")
+	}
+}

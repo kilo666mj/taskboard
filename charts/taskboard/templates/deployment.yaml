@@ -80,6 +80,8 @@ spec:
               value: {{ .Values.taskboard.mcpDefaultType | quote }}
             - name: TASKBOARD_TASK_TYPE
               value: {{ .Values.taskboard.taskType | quote }}
+            - name: TASKBOARD_DEFAULT_REQUIREMENTS
+              value: {{ join "," (.Values.taskboard.defaultRequirements | default list) | quote }}
             - name: TASKBOARD_BROWSER_AUTH_MODE
               value: {{ .Values.taskboard.browserAuthMode | quote }}
             - name: TASKBOARD_DEFAULT_ROLE

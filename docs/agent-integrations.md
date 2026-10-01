@@ -236,7 +236,13 @@ It is intentionally unavailable through the agent MCP surface.
 
 Task requirements are human-maintained lowercase tokens such as
 `repo:org/name`, `browser`, `playwright`, `aws`, `kubernetes`,
-`screenshot`, `harness:codex`, or `model:gpt-5`. Controllers call
+`screenshot`, `harness:codex`, `model:gpt-5`, or a `runner:` token naming an
+execution backend. A person can set them when creating a task or later. An
+agent can set them only at creation, and only tokens its policy lists in
+`allowed_requirements`. Agent-lane tasks created without requirements receive
+`TASKBOARD_DEFAULT_REQUIREMENTS`, as do tasks moved into the agent lane without
+any; tasks started directly with `task_start` do not. A recurring task's next
+occurrence keeps its requirements. Controllers call
 `worker_advertise` with their current operational tokens, capacity, and a short
 TTL. Advertisements are ephemeral scheduling input, not durable authorization.
 

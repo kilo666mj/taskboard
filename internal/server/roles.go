@@ -64,6 +64,9 @@ func agentPrincipal(cfg config.Config, id string) service.Principal {
 		if override.RequireIdempotency != nil {
 			policy.RequireIdempotency = *override.RequireIdempotency
 		}
+		if override.AllowedRequirements != nil {
+			policy.AllowedRequirements = capabilitySet(*override.AllowedRequirements)
+		}
 	}
 	return service.AgentPrincipalWithPolicy(id, policy)
 }

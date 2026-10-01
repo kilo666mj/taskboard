@@ -78,6 +78,9 @@ taskboard:
   mcpDefaultType: work
   # personal or work fixes every task's type and hides the selector.
   taskType: ""
+  # Requirement tokens, such as [runner:k8s-job], given to agent-lane tasks
+  # created without any. Route this instance's pickup work to one backend.
+  defaultRequirements: []
   browserAuthMode: oidc
   vapidContact: mailto:admin@example.com
   roles:

@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -11,8 +10,6 @@ import (
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/store"
 )
-
-var operationalRequirementPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*(?::[a-z0-9._/-]+)?$`)
 
 func normalizeRequirements(values []string) ([]string, error) {
 	if len(values) > 50 {
@@ -22,7 +19,7 @@ func normalizeRequirements(values []string) ([]string, error) {
 	items := []string{}
 	for _, value := range values {
 		value = strings.ToLower(strings.TrimSpace(value))
-		if !operationalRequirementPattern.MatchString(value) || len(value) > 100 {
+		if !model.IsRequirementToken(value) {
 			return nil, fmt.Errorf("%w: requirements must be lowercase namespace:value tokens", ErrValidation)
 		}
 		if !seen[value] {
@@ -45,6 +42,31 @@ func workerMatches(requirements, capabilities []string) bool {
 	}
 	return true
 }
+func insertRequirements(ctx context.Context, tx *store.Tx, taskID string, items []string, actor string, now time.Time) error {
+	for _, item := range items {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_requirements(task_id,requirement,created_by,created_at) VALUES(?,?,?,?)`, taskID, item, actor, stamp(now)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyDefaultRequirements gives an agent-lane task without requirements the
+// instance defaults and reports the tokens it added.
+func (s *Service) applyDefaultRequirements(ctx context.Context, tx *store.Tx, taskID, actor string, now time.Time) ([]string, error) {
+	if len(s.defaultRequirements) == 0 {
+		return nil, nil
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_requirements WHERE task_id=?`, taskID).Scan(&existing); err != nil {
+		return nil, err
+	}
+	if existing > 0 {
+		return nil, nil
+	}
+	return s.defaultRequirements, insertRequirements(ctx, tx, taskID, s.defaultRequirements, actor, now)
+}
+
 func (s *Service) SetTaskRequirementsFor(ctx context.Context, taskID string, request model.SetTaskRequirementsRequest, principal Principal) (model.Task, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
@@ -79,10 +101,8 @@ func (s *Service) SetTaskRequirementsFor(ctx context.Context, taskID string, req
 	if _, err = tx.ExecContext(ctx, `DELETE FROM task_requirements WHERE task_id=?`, taskID); err != nil {
 		return model.Task{}, err
 	}
-	for _, item := range items {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO task_requirements(task_id,requirement,created_by,created_at) VALUES(?,?,?,?)`, taskID, item, principal.ID, stamp(now)); err != nil {
-			return model.Task{}, err
-		}
+	if err = insertRequirements(ctx, tx, taskID, items, principal.ID, now); err != nil {
+		return model.Task{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=?`, principal.ID, stamp(now), taskID, request.ExpectedVersion); err != nil {
 		return model.Task{}, err
