@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilo666mj/taskboard/internal/model"
 	pwakit "go.michaelspost.com/pwa-kit"
 )
 
@@ -61,6 +62,7 @@ type Config struct {
 	MCPHumanDelegation       bool
 	MCPDelegationPrincipals  []string
 	AgentPolicies            map[string]AgentPolicy
+	DefaultRequirements      []string
 	RetentionDays            int
 	WebhookURL               string
 	WebhookSecret            string
@@ -73,6 +75,7 @@ type AgentPolicy struct {
 	MaxPickupsPerMinute *int      `json:"max_pickups_per_minute,omitempty"`
 	MaxRunSeconds       *int      `json:"max_run_seconds,omitempty"`
 	RequireIdempotency  *bool     `json:"require_idempotency,omitempty"`
+	AllowedRequirements *[]string `json:"allowed_requirements,omitempty"`
 }
 
 func Load() (Config, error) {
@@ -118,6 +121,7 @@ func Load() (Config, error) {
 		MCPHumanDelegation:       envBool("TASKBOARD_MCP_HUMAN_DELEGATION", false),
 		MCPDelegationPrincipals:  split(os.Getenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS")),
 		AgentPolicies:            map[string]AgentPolicy{},
+		DefaultRequirements:      split(os.Getenv("TASKBOARD_DEFAULT_REQUIREMENTS")),
 		RetentionDays:            envInt("TASKBOARD_RETENTION_DAYS", 0),
 		WebhookURL:               strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
 		WebhookSecret:            strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_SECRET")),
@@ -338,6 +342,20 @@ func validateAgentPolicies(cfg Config) error {
 	if cfg.AgentMaxRunDuration < time.Minute || cfg.AgentMaxRunDuration > 7*24*time.Hour {
 		return fmt.Errorf("TASKBOARD_AGENT_MAX_RUN_SECONDS must be between 60 and 604800")
 	}
+	validateRequirements := func(name string, requirements []string) error {
+		if len(requirements) > 50 {
+			return fmt.Errorf("%s is limited to 50 requirements", name)
+		}
+		for _, requirement := range requirements {
+			if !model.IsRequirementToken(requirement) {
+				return fmt.Errorf("%s contains invalid requirement %q; use lowercase namespace:value tokens", name, requirement)
+			}
+		}
+		return nil
+	}
+	if err := validateRequirements("TASKBOARD_DEFAULT_REQUIREMENTS", cfg.DefaultRequirements); err != nil {
+		return err
+	}
 	for principal, policy := range cfg.AgentPolicies {
 		if strings.TrimSpace(principal) != principal || principal == "" || len(principal) > 200 {
 			return fmt.Errorf("TASKBOARD_AGENT_POLICIES_JSON contains an invalid principal")
@@ -355,6 +373,11 @@ func validateAgentPolicies(cfg Config) error {
 		}
 		if policy.MaxRunSeconds != nil && (*policy.MaxRunSeconds < 60 || *policy.MaxRunSeconds > 604800) {
 			return fmt.Errorf("TASKBOARD_AGENT_POLICIES_JSON max_run_seconds must be between 60 and 604800")
+		}
+		if policy.AllowedRequirements != nil {
+			if err := validateRequirements("TASKBOARD_AGENT_POLICIES_JSON allowed_requirements", *policy.AllowedRequirements); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -46,6 +46,9 @@ type AgentPolicy struct {
 	MaxPickupsPerMinute int
 	MaxRunDuration      time.Duration
 	RequireIdempotency  bool
+	// AllowedRequirements are the operational requirement tokens this agent
+	// may set when it creates a task. Requirement edits remain human-only.
+	AllowedRequirements map[string]bool
 }
 
 const (
@@ -352,6 +355,9 @@ type Service struct {
 	recentEvents  map[string]time.Time
 	recentOrder   []recentEvent
 	fixedType     model.TaskType
+	// defaultRequirements route agent-lane tasks created without
+	// requirements to this instance's execution backend.
+	defaultRequirements []string
 }
 
 type recentEvent struct {
@@ -372,6 +378,18 @@ func New(database *store.Store, leaseDuration time.Duration, metrics ...*observa
 // per-task types.
 func (s *Service) SetFixedTaskType(taskType model.TaskType) {
 	s.fixedType = taskType
+}
+
+// SetDefaultRequirements sets the operational requirements given to
+// agent-lane tasks that are created, or moved into the agent lane, without
+// any. An empty list disables defaults.
+func (s *Service) SetDefaultRequirements(values []string) error {
+	items, err := normalizeRequirements(values)
+	if err != nil {
+		return err
+	}
+	s.defaultRequirements = items
+	return nil
 }
 
 // FixedTaskType reports the instance-wide task type, or empty when tasks may
@@ -679,6 +697,14 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 			return model.Task{}, fmt.Errorf("%w: checklist items must contain 1-300 characters", ErrValidation)
 		}
 	}
+	requirements, err := normalizeRequirements(request.Requirements)
+	if err != nil {
+		return model.Task{}, err
+	}
+	requirementsSource := "request"
+	if len(requirements) == 0 && request.Visibility == model.VisibilityAgent && len(s.defaultRequirements) > 0 {
+		requirements, requirementsSource = s.defaultRequirements, "default"
+	}
 
 	now := time.Now().UTC()
 	taskID := newID(now)
@@ -701,7 +727,14 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 			return model.Task{}, err
 		}
 	}
+	if err := insertRequirements(ctx, tx, taskID, requirements, creator, now); err != nil {
+		return model.Task{}, err
+	}
 	eventPayload := map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}
+	if len(requirements) > 0 {
+		eventPayload["requirements"] = requirements
+		eventPayload["requirements_source"] = requirementsSource
+	}
 	if request.DelegatedVia != "" {
 		eventPayload["delegated_via"] = request.DelegatedVia
 	}
@@ -720,6 +753,17 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 }
 
 func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
+	if principal.Agent {
+		requirements, err := normalizeRequirements(request.Requirements)
+		if err != nil {
+			return model.Task{}, err
+		}
+		for _, item := range requirements {
+			if !principal.Policy.AllowedRequirements[item] {
+				return model.Task{}, fmt.Errorf("%w: agent policy does not allow requirement %q", ErrForbidden, item)
+			}
+		}
+	}
 	if principal.Agent && principal.OnBehalfOf != nil && request.Visibility != model.VisibilityAgent {
 		return s.createDelegated(ctx, request, principal)
 	}
@@ -1520,6 +1564,12 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if count, _ := result.RowsAffected(); count != 1 {
 		return model.Task{}, ErrConflict
 	}
+	var defaultedRequirements []string
+	if request.Visibility != nil && visibility == model.VisibilityAgent && current.Visibility != model.VisibilityAgent {
+		if defaultedRequirements, err = s.applyDefaultRequirements(ctx, tx, taskID, editor, now); err != nil {
+			return model.Task{}, err
+		}
+	}
 	var recurringEvent *model.Event
 	if status == model.TaskDone && current.Status != model.TaskDone && recurrence != "" {
 		nextID := newID(now)
@@ -1562,6 +1612,15 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 				return model.Task{}, err
 			}
 		}
+		// The next occurrence keeps the routing of the completed one.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_requirements(task_id,requirement,created_by,created_at) SELECT ?,requirement,created_by,? FROM task_requirements WHERE task_id=?`, nextID, stamp(now), taskID); err != nil {
+			return model.Task{}, err
+		}
+		if visibility == model.VisibilityAgent {
+			if _, err := s.applyDefaultRequirements(ctx, tx, nextID, editor, now); err != nil {
+				return model.Task{}, err
+			}
+		}
 		event := model.Event{ID: newID(now), TaskID: nextID, Kind: "task.recurring_created", Actor: defaultActor(actor, current.Owner), Message: title, Payload: map[string]any{"status": model.TaskQueued, "source_task_id": taskID, "due_date": nextDue}, CreatedAt: now}
 		if err := store.InsertEvent(ctx, tx, event); err != nil {
 			return model.Task{}, err
@@ -1594,6 +1653,10 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	}
 	if request.Visibility != nil {
 		payload["visibility"] = visibility
+	}
+	if len(defaultedRequirements) > 0 {
+		payload["requirements"] = defaultedRequirements
+		payload["requirements_source"] = "default"
 	}
 	if len(completedItemIDs) > 0 {
 		payload["completed_item_ids"] = completedItemIDs

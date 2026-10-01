@@ -11,6 +11,7 @@
     taskboard_lease_seconds: 300
     taskboard_mcp_default_type: work
     taskboard_task_type: ""
+    taskboard_default_requirements: []
     taskboard_browser_auth_mode: oidc
     taskboard_cf_access_team_domain: ""
     taskboard_cf_access_aud: ""

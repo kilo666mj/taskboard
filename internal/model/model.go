@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
 
 type TaskStatus string
 
@@ -633,20 +636,24 @@ type StartRequest struct {
 }
 
 type CreateRequest struct {
-	Title           string         `json:"title"`
-	Type            TaskType       `json:"type,omitempty"`
-	Visibility      TaskVisibility `json:"visibility,omitempty"`
-	Summary         string         `json:"summary,omitempty"`
-	Section         string         `json:"section,omitempty"`
-	Project         string         `json:"project,omitempty"`
-	Repository      string         `json:"repository,omitempty"`
-	Priority        Priority       `json:"priority,omitempty"`
-	DueDate         string         `json:"due_date,omitempty"`
-	DeferUntil      string         `json:"defer_until,omitempty"`
-	Recurrence      string         `json:"recurrence,omitempty"`
-	Checklist       []string       `json:"checklist,omitempty"`
-	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
-	IdempotencyHash string         `json:"-"`
+	Title      string         `json:"title"`
+	Type       TaskType       `json:"type,omitempty"`
+	Visibility TaskVisibility `json:"visibility,omitempty"`
+	Summary    string         `json:"summary,omitempty"`
+	Section    string         `json:"section,omitempty"`
+	Project    string         `json:"project,omitempty"`
+	Repository string         `json:"repository,omitempty"`
+	Priority   Priority       `json:"priority,omitempty"`
+	DueDate    string         `json:"due_date,omitempty"`
+	DeferUntil string         `json:"defer_until,omitempty"`
+	Recurrence string         `json:"recurrence,omitempty"`
+	Checklist  []string       `json:"checklist,omitempty"`
+	// Requirements are operational worker-matching tokens. Agents may set
+	// only tokens their policy allows; agent-lane tasks created without any
+	// receive the instance defaults.
+	Requirements    []string `json:"requirements,omitempty"`
+	IdempotencyKey  string   `json:"idempotency_key,omitempty"`
+	IdempotencyHash string   `json:"-"`
 	// DelegatedVia is set by the service, never by clients, when an agent
 	// creates the task on behalf of the person operating it.
 	DelegatedVia string `json:"-"`
@@ -772,6 +779,14 @@ type ListTasksRequest struct {
 type TaskPage struct {
 	Tasks      []Task
 	NextCursor string
+}
+
+var requirementTokenPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*(?::[a-z0-9._/-]+)?$`)
+
+// IsRequirementToken reports whether value is a normalized operational
+// requirement such as kubernetes or runner:k8s-job.
+func IsRequirementToken(value string) bool {
+	return len(value) <= 100 && requirementTokenPattern.MatchString(value)
 }
 
 func IsTaskVisibility(value TaskVisibility) bool {

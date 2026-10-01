@@ -48,6 +48,10 @@ func main() {
 	metrics := observability.New(database.DB())
 	tasks := service.New(database, cfg.LeaseDuration, metrics)
 	tasks.SetFixedTaskType(model.TaskType(cfg.TaskType))
+	if err := tasks.SetDefaultRequirements(cfg.DefaultRequirements); err != nil {
+		logger.Error("invalid default requirements", "error", err)
+		os.Exit(1)
+	}
 	if cfg.TaskType == "" && os.Getenv("TASKBOARD_MCP_DEFAULT_TYPE") != "" {
 		logger.Warn("TASKBOARD_MCP_DEFAULT_TYPE is deprecated; set TASKBOARD_TASK_TYPE to fix one task type for this instance")
 	}

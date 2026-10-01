@@ -94,4 +94,12 @@ func TestAgentPrincipalUsesPerIdentitySafetyPolicy(t *testing.T) {
 	if !principal.HasCapability(service.CapabilityTaskClaim) || principal.HasCapability(service.CapabilityTaskCreate) || principal.Policy.MaxConcurrentRuns != 1 || !principal.Policy.RequireIdempotency {
 		t.Fatalf("resolved agent policy = %+v", principal.Policy)
 	}
+	if len(principal.Policy.AllowedRequirements) != 0 {
+		t.Fatalf("default allowed requirements = %+v", principal.Policy.AllowedRequirements)
+	}
+	allowed := []string{"runner:local"}
+	cfg.AgentPolicies["agent:bridge"] = config.AgentPolicy{AllowedRequirements: &allowed}
+	if bridge := agentPrincipal(cfg, "agent:bridge"); !bridge.Policy.AllowedRequirements["runner:local"] {
+		t.Fatalf("bridge allowed requirements = %+v", bridge.Policy.AllowedRequirements)
+	}
 }

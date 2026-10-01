@@ -14,6 +14,7 @@ disable their feature.
 | `TASKBOARD_ALLOWED_HOSTS` | none | Comma-separated hostnames accepted by the application. It is required for non-loopback listeners. Loopback listeners safely default to `localhost`, `127.0.0.1`, and `::1`. Health and readiness probes are exempt. |
 | `TASKBOARD_LEASE_SECONDS` | `120` | Agent lease duration, from 30 through 3600 seconds. |
 | `TASKBOARD_TASK_TYPE` | none | Fix every new task on this instance to `personal` or `work` and hide the type selector. Type changes to existing tasks are ignored. Leave empty to choose a type per task. |
+| `TASKBOARD_DEFAULT_REQUIREMENTS` | none | Comma-separated requirement tokens, such as `runner:k8s-job`, given to agent-lane tasks that are created, moved into the agent lane, or recur without any. Routes this instance's pickup work to one execution backend. See [Dispatchers](dispatchers.md). |
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Deprecated; use `TASKBOARD_TASK_TYPE`. Default type for MCP-created tasks when `TASKBOARD_TASK_TYPE` is empty. |
 | `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp` have `task_create` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
 | `TASKBOARD_MCP_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential principals, such as `agent:switchboard`, allowed to forward a Cloudflare Access person in `X-Switchboard-Access-Subject`. Requires delegation and Cloudflare Access browser mode; `agent:shared` is refused. |
@@ -45,7 +46,7 @@ disable their feature.
 | `TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE` | `30` | Maximum task starts and claims per service principal per minute (1-1000). |
 | `TASKBOARD_AGENT_MAX_RUN_SECONDS` | `28800` | Maximum run age that may be extended by heartbeat (60-604800 seconds). |
 | `TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY` | `false` | Require `idempotency_key` on mutating task operations for service principals. |
-| `TASKBOARD_AGENT_POLICIES_JSON` | none | JSON object containing per-principal capability and limit overrides. |
+| `TASKBOARD_AGENT_POLICIES_JSON` | none | JSON object containing per-principal capability, limit, and `allowed_requirements` overrides. |
 | `TASKBOARD_RETENTION_DAYS` | `0` | Age in days for explicit administrative pruning of completed/cancelled tasks. `0` disables retention deletion. |
 | `TASKBOARD_WEBHOOK_URL` | none | Trusted HTTPS endpoint for durable signed event delivery. It receives task titles, notes, actors, status, and visibility. Requires `TASKBOARD_WEBHOOK_SECRET`. |
 | `TASKBOARD_WEBHOOK_SECRET` | none | HMAC-SHA256 webhook signing secret of at least 32 characters. |
@@ -95,6 +96,12 @@ run, a two-hour maximum run, and mandatory idempotency keys:
 ```dotenv
 TASKBOARD_AGENT_POLICIES_JSON={"cloudflare_access:service_token:build":{"capabilities":["task:read","task:claim","task:update","task:complete"],"max_concurrent_runs":1,"max_pickups_per_minute":10,"max_run_seconds":7200,"require_idempotency":true}}
 ```
+
+`allowed_requirements` lists the operational requirement tokens a principal may
+set in `task_create`, for example an integration that routes chat requests to a
+host-local runner with `{"agent:bridge":{"allowed_requirements":["runner:local"]}}`.
+It is empty by default, so agents cannot set requirements unless allowed.
+Changing requirements on an existing task remains human-only.
 
 Mutating MCP task tools accept an `idempotency_key` of 8-128 letters, digits,
 periods, underscores, colons, or hyphens. Repeating the same operation and

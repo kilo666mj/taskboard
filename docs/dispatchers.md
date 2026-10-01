@@ -58,20 +58,19 @@ consequences matter here:
 
 - A task with **no** requirements matches every dispatcher. In an instance with
   more than one dispatcher, untagged work goes to whichever polls first.
-- Requirements are human-maintained. Agents, including integrations that create
-  tasks on a person's behalf, cannot set them.
+- Requirement edits on existing tasks are human-only.
 
-*Gap: default routing.* Add an instance-level `TASKBOARD_DEFAULT_REQUIREMENTS`
-applied when an agent-pickup task is created without requirements, so an
-instance with one execution backend needs no per-task tagging. Per-project
-defaults can follow if one instance serves several backends. Creation-time
-defaults are recorded as normal requirements, remain human-editable, and keep
-`last_edited_by` provenance unchanged.
+To avoid the first, set `TASKBOARD_DEFAULT_REQUIREMENTS` to the runner token
+of the instance's execution backend. Agent-lane tasks created or moved into the agent lane
+without requirements receive the defaults, recorded as ordinary
+human-editable requirements. Recurring tasks carry their requirements to the
+next occurrence. Tasks started directly with `task_start` are not defaulted,
+so an interactive agent can still reclaim its own stale work. Per-project
+defaults can follow if one instance serves several backends.
 
-*Gap: integration-requested routing.* Integrations such as a chat bridge may
-need to create pickup work for a specific runner. Allow an agent policy to
-name the requirement tokens that principal may set at creation, rather than
-opening requirement edits to all agents.
+Integrations such as a chat bridge route work by setting requirements in
+`task_create`. An agent may set only the tokens its policy lists in
+`allowed_requirements`; see [configuration](configuration.md).
 
 ## Dispatch lifecycle
 
@@ -203,7 +202,7 @@ only if the webhook's event set or payload is insufficient.
 
 ## Migration order
 
-1. Close the default-routing gap and document runner tokens.
+1. Default routing and policy-allowed runner tokens (done).
 2. Extract the dispatcher library and build the host-local backend.
 3. Close the delegated-answer, restricted-answerer, and expiry gaps, then move
    approval decisions from notification cards into escalations.
