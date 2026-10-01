@@ -355,6 +355,10 @@ type Service struct {
 	recentEvents  map[string]time.Time
 	recentOrder   []recentEvent
 	fixedType     model.TaskType
+	// answerDelegates may forward people's escalation answers; those people
+	// act with answerDelegateRole.
+	answerDelegates    []string
+	answerDelegateRole Role
 	// defaultRequirements route agent-lane tasks created without
 	// requirements to this instance's execution backend.
 	defaultRequirements []string

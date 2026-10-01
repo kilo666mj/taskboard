@@ -93,3 +93,153 @@ func TestNonBlockingEscalationLeavesRunActiveAndCapabilityIsRequired(t *testing.
 		t.Fatalf("missing capability error = %v, want forbidden", err)
 	}
 }
+
+func escalateForDecision(t *testing.T, tasks *Service, key string, request model.CreateEscalationRequest) (model.Task, model.TaskEscalation) {
+	t.Helper()
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Remediate " + key, Checklist: []string{"Apply"}, IdempotencyKey: "start-" + key}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.RunID, request.ExpectedVersion, request.IdempotencyKey = started.Run.ID, started.Task.Version, "escalate-"+key
+	if request.Question == "" {
+		request.Question = "Apply the proposed fix?"
+	}
+	escalation, err := tasks.CreateEscalationFor(t.Context(), started.Task.ID, request, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := tasks.GetFor(t.Context(), started.Task.ID, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task, escalation
+}
+
+func TestEscalationAnswerersRestrictWhoMayAnswer(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	task, escalation := escalateForDecision(t, tasks, "answerers", model.CreateEscalationRequest{Options: []string{"Approve", "Reject"}, Blocking: true, Answerers: []string{" human:approver ", "human:approver"}})
+	if len(escalation.Answerers) != 1 || escalation.Answerers[0] != "human:approver" {
+		t.Fatalf("answerers = %v", escalation.Answerers)
+	}
+	answer := model.ResolveEscalationRequest{ExpectedVersion: task.Version, Answer: "Approved.", SelectedOption: "Approve"}
+	if _, err := tasks.ResolveEscalationFor(t.Context(), task.ID, escalation.ID, answer, HumanPrincipal("human:bystander")); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unnamed answer error = %v", err)
+	}
+	answered, err := tasks.ResolveEscalationFor(t.Context(), task.ID, escalation.ID, answer, HumanPrincipal("human:approver"))
+	if err != nil || answered.ResolvedBy != "human:approver" || answered.DelegatedBy != "" {
+		t.Fatalf("named answer = %+v, %v", answered, err)
+	}
+}
+
+func TestEscalationPolicyValidation(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Validate", Checklist: []string{"Ask"}, IdempotencyKey: "start-validate"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooMany := make([]string, 21)
+	for index := range tooMany {
+		tooMany[index] = "human:person-" + string(rune('a'+index))
+	}
+	for name, request := range map[string]model.CreateEscalationRequest{
+		"agent answerer":   {Answerers: []string{"agent:worker"}},
+		"service answerer": {Answerers: []string{"cloudflare_access:service_token:abc"}},
+		"too many":         {Answerers: tooMany},
+		"short expiry":     {ExpiresIn: 30},
+		"long expiry":      {ExpiresIn: 8 * 24 * 60 * 60},
+	} {
+		request.RunID, request.ExpectedVersion, request.Question = started.Run.ID, started.Task.Version, "Question?"
+		if _, err := tasks.CreateEscalationFor(t.Context(), started.Task.ID, request, agent); !errors.Is(err, ErrValidation) {
+			t.Errorf("%s: error = %v", name, err)
+		}
+	}
+}
+
+func TestExpiredEscalationRefusesAnswers(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	task, escalation := escalateForDecision(t, tasks, "expiry", model.CreateEscalationRequest{Blocking: true, ExpiresIn: 3600})
+	if escalation.ExpiresAt == nil || escalation.ExpiresAt.Sub(escalation.CreatedAt) != time.Hour || escalation.Status != model.EscalationOpen {
+		t.Fatalf("escalation = %+v", escalation)
+	}
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE task_escalations SET expires_at=? WHERE id=?`, past, escalation.ID); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := tasks.ListEscalationsFor(t.Context(), task.ID, HumanPrincipal("human:operator"))
+	if err != nil || len(listed) != 1 || listed[0].Status != model.EscalationExpired {
+		t.Fatalf("listed = %+v, %v", listed, err)
+	}
+	_, err = tasks.ResolveEscalationFor(t.Context(), task.ID, escalation.ID, model.ResolveEscalationRequest{ExpectedVersion: task.Version, Answer: "Too late."}, HumanPrincipal("human:operator"))
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expired answer error = %v", err)
+	}
+	unchanged, err := tasks.GetFor(t.Context(), task.ID, HumanPrincipal("human:operator"))
+	if err != nil || unchanged.Status != model.TaskWaiting {
+		t.Fatalf("task after refused answer = %+v, %v", unchanged, err)
+	}
+}
+
+func TestDelegatedAnswersRequireAllowlistAndNamedAnswerer(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	tasks.SetAnswerDelegation([]string{"agent:notifier"}, RoleMember)
+	delegate, stranger := AgentPrincipal("agent:notifier"), AgentPrincipal("agent:other")
+	task, escalation := escalateForDecision(t, tasks, "delegated", model.CreateEscalationRequest{Options: []string{"Approve", "Reject"}, Blocking: true, Answerers: []string{"human:approver", "human:former"}})
+	open, openEscalation := escalateForDecision(t, tasks, "unrestricted", model.CreateEscalationRequest{Blocking: true})
+	answer := model.ResolveEscalationRequest{ExpectedVersion: task.Version, Answer: "Approved from the card.", SelectedOption: "Approve", IdempotencyKey: "delegated-approve"}
+
+	if _, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "human:approver", answer, stranger); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unlisted delegate error = %v", err)
+	}
+	if _, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), open.ID, openEscalation.ID, "human:approver", model.ResolveEscalationRequest{ExpectedVersion: open.Version, Answer: "Yes."}, delegate); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unrestricted escalation error = %v", err)
+	}
+	if _, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "human:bystander", answer, delegate); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unnamed person error = %v", err)
+	}
+	if _, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "agent:worker", answer, delegate); !errors.Is(err, ErrValidation) {
+		t.Fatalf("agent person error = %v", err)
+	}
+	if err := tasks.store.OffboardPrincipal(t.Context(), "human:former", "human:admin", "left"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "human:former", answer, delegate); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("offboarded person error = %v", err)
+	}
+
+	answered, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "human:approver", answer, delegate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answered.ResolvedBy != "human:approver" || answered.DelegatedBy != "agent:notifier" || answered.SelectedOption != "Approve" {
+		t.Fatalf("delegated answer = %+v", answered)
+	}
+	replayed, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "human:approver", answer, delegate)
+	if err != nil || replayed.AnswerMessageID != answered.AnswerMessageID {
+		t.Fatalf("replayed delegated answer = %+v, %v", replayed, err)
+	}
+	messages, err := tasks.ListMessagesFor(t.Context(), task.ID, "", 10, HumanPrincipal("human:approver"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.ID == answered.AnswerMessageID && message.Author != "human:approver" {
+			t.Fatalf("answer author = %q", message.Author)
+		}
+	}
+	queued, err := tasks.GetFor(t.Context(), task.ID, delegate)
+	if err != nil || queued.Status != model.TaskQueued {
+		t.Fatalf("task after delegated answer = %+v, %v", queued, err)
+	}
+}
+
+func TestDelegatedPersonWithoutWriteRoleCannotAnswer(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	tasks.SetAnswerDelegation([]string{"agent:notifier"}, RoleViewer)
+	task, escalation := escalateForDecision(t, tasks, "viewer", model.CreateEscalationRequest{Blocking: true, Answerers: []string{"human:approver"}})
+	_, err := tasks.ResolveEscalationOnBehalfFor(t.Context(), task.ID, escalation.ID, "human:approver", model.ResolveEscalationRequest{ExpectedVersion: task.Version, Answer: "Yes."}, AgentPrincipal("agent:notifier"))
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer delegated answer error = %v", err)
+	}
+}

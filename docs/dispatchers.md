@@ -78,9 +78,12 @@ Integrations such as a chat bridge route work by setting requirements in
    capacity, and a TTL, and renew it before expiry. Capacity is the
    mechanism's concurrency budget. For autoscaled clusters this is the job
    budget, not the number of nodes currently present.
-2. **List.** Call `task_list` with `visibility: "agent"` and follow
-   `next_cursor` until it is absent. Readiness, dependencies, and matching are
-   already applied before the page limit.
+2. **List.** Call `task_list` with `visibility: "agent"` and
+   `statuses: ["queued"]`, and follow `next_cursor` until it is absent.
+   Readiness, dependencies, and matching are already applied before the page
+   limit. Never claim `stale` tasks, although Taskboard offers them for
+   pickup: stale work waits for a person to review and requeue it, so a
+   failing worker is not retried in a loop.
 3. **Admit.** Apply the dispatcher's own policy before claiming, such as the
    provenance allowlist in
    [shared-task edit provenance](agent-integrations.md#shared-task-edit-provenance).
@@ -92,13 +95,15 @@ Integrations such as a chat bridge route work by setting requirements in
    returned by the claim. Make the launch idempotent on the run ID (for
    example a Kubernetes Job named from it) so a dispatcher restart re-attaches
    instead of launching again.
-6. **Bridge startup.** While the worker is starting, the dispatcher heartbeats
-   the run, because node provisioning can exceed the default two-minute lease.
-   It reports a concise note such as "Waiting for capacity" so the board shows
-   why an active run has no checklist progress yet.
-7. **Run.** Once the worker is running it heartbeats and reports progress
-   itself. The dispatcher stops heartbeating that run but keeps watching the
-   worker's liveness.
+6. **Keep the lease.** The dispatcher heartbeats the run for as long as the
+   backend reports the worker pending or running. Node provisioning can exceed
+   the default two-minute lease, and a worker that knows nothing about
+   Taskboard still keeps its task. If a heartbeat is refused, the dispatcher
+   stops the worker only once Taskboard shows the run ended or past its maximum
+   duration; transient errors leave it running.
+7. **Run.** The worker may report checklist progress, references, handoffs,
+   and escalations itself when it is given the dispatcher's credential. Without
+   it, the exit status is all Taskboard learns.
 8. **Finish.** The worker completes, blocks, waits, or escalates through the
    normal tools. If the worker exits without a terminal transition, the
    dispatcher writes a handoff with what it observed (exit status, not logs)
@@ -154,17 +159,17 @@ This lets notification clients present questions and approvals without knowing
 which mechanism runs the task. A notification card's action answers the
 Taskboard escalation; the owning dispatcher resumes the work.
 
-Approval-style decisions need more than an ordinary answer:
+Approval-style decisions use the escalation decision policy described in
+[Approval decisions](agent-integrations.md#approval-decisions):
 
-- *Gap: delegated answers.* Escalation answers require a human principal with
-  task write permission. A notification service that forwards a person's
-  button press needs a delegated path, comparable to the existing MCP human
-  delegation, that records the verified person rather than the service.
-- *Gap: restricted answerers.* An escalation should optionally name the people
-  or group allowed to answer it, so approving a remediation can be narrower
-  than general task membership.
-- *Gap: decision expiry.* An escalation should optionally expire, after which
-  answers are rejected and the worker's proposal needs a new decision.
+- `answerers` names the people who alone may approve, narrower than general
+  task membership.
+- `expires_in_seconds` makes an unanswered approval lapse; the worker's
+  proposal then needs a new decision.
+- `task_escalation_answer` lets an allowlisted notification service forward a
+  person's button press. It records the verified person as the author and the
+  service as `delegated_by`, and works only on escalations that name their
+  answerers.
 
 The immutable question message already binds an answer to the exact proposal
 text, so a separate proposal fingerprint is not needed.
@@ -172,22 +177,16 @@ text, so a separate proposal fingerprint is not needed.
 ## Shared dispatcher library
 
 The advertise, list, claim, heartbeat, control, and handoff loop is identical
-across mechanisms. It belongs in one versioned Go module with a small backend
-interface:
+across mechanisms. It lives in the versioned module
+[`go.michaelspost.com/taskboard-dispatch`](https://github.com/kilo666mj/taskboard-dispatch),
+which talks to Taskboard's MCP tools and defines a small backend interface
+(`Launch`, idempotent on the run ID; `Status`; `Stop`; `Forget`; and `Active`
+for workers that survive a dispatcher restart). Each dispatcher connects to
+`/mcp` directly with its own agent credential rather than through an MCP
+gateway shared with interactive agents.
 
-```go
-type Backend interface {
-	// Launch starts a worker for the run. It must be idempotent on runID.
-	Launch(ctx context.Context, run Run) error
-	// State reports whether the worker is pending, running, or exited.
-	State(ctx context.Context, runID string) (WorkerState, error)
-	// Stop signals the worker and returns once it has stopped or the
-	// context ends.
-	Stop(ctx context.Context, runID string, reason StopReason) error
-}
-```
-
-Reference backends: a host-local process runner and a Kubernetes Job runner.
+Reference backends: a host-local process runner (`localexec`, available now)
+and a Kubernetes Job runner.
 Mechanism-specific policy, such as node selectors, resource requests, sandbox
 settings, and budgets, stays in each backend's configuration.
 

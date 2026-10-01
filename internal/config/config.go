@@ -21,52 +21,53 @@ const (
 )
 
 type Config struct {
-	ListenAddress            string
-	MetricsListenAddress     string
-	DatabasePath             string
-	DatabaseURL              string
-	AuthToken                string
-	AllowInsecure            bool
-	AllowedHosts             []string
-	LeaseDuration            time.Duration
-	MCPDefaultTaskType       string
-	TaskType                 string
-	BrowserAuthMode          string
-	VAPIDPublicKey           string
-	VAPIDPrivateKey          string
-	VAPIDContact             string
-	OIDCIssuer               string
-	OIDCClientID             string
-	OIDCClientSecret         string
-	OIDCRedirectURL          string
-	OIDCAllowedSubjects      []string
-	OIDCAllowedEmails        []string
-	OIDCAllowedGroups        []string
-	OIDCTrustProviderPolicy  bool
-	CFAccessTeamDomain       string
-	CFAccessAudience         string
-	CFAccessSubjects         []string
-	CFAccessEmails           []string
-	CFAccessGroups           []string
-	CFAccessTrustPolicy      bool
-	DefaultRole              string
-	OwnerGroups              []string
-	AdminGroups              []string
-	MemberGroups             []string
-	ViewerGroups             []string
-	AgentCapabilities        []string
-	AgentMaxConcurrentRuns   int
-	AgentMaxPickupsPerMinute int
-	AgentMaxRunDuration      time.Duration
-	AgentRequireIdempotency  bool
-	MCPHumanDelegation       bool
-	MCPDelegationPrincipals  []string
-	AgentPolicies            map[string]AgentPolicy
-	DefaultRequirements      []string
-	RetentionDays            int
-	WebhookURL               string
-	WebhookSecret            string
-	WebhookMaxAttempts       int
+	ListenAddress              string
+	MetricsListenAddress       string
+	DatabasePath               string
+	DatabaseURL                string
+	AuthToken                  string
+	AllowInsecure              bool
+	AllowedHosts               []string
+	LeaseDuration              time.Duration
+	MCPDefaultTaskType         string
+	TaskType                   string
+	BrowserAuthMode            string
+	VAPIDPublicKey             string
+	VAPIDPrivateKey            string
+	VAPIDContact               string
+	OIDCIssuer                 string
+	OIDCClientID               string
+	OIDCClientSecret           string
+	OIDCRedirectURL            string
+	OIDCAllowedSubjects        []string
+	OIDCAllowedEmails          []string
+	OIDCAllowedGroups          []string
+	OIDCTrustProviderPolicy    bool
+	CFAccessTeamDomain         string
+	CFAccessAudience           string
+	CFAccessSubjects           []string
+	CFAccessEmails             []string
+	CFAccessGroups             []string
+	CFAccessTrustPolicy        bool
+	DefaultRole                string
+	OwnerGroups                []string
+	AdminGroups                []string
+	MemberGroups               []string
+	ViewerGroups               []string
+	AgentCapabilities          []string
+	AgentMaxConcurrentRuns     int
+	AgentMaxPickupsPerMinute   int
+	AgentMaxRunDuration        time.Duration
+	AgentRequireIdempotency    bool
+	MCPHumanDelegation         bool
+	MCPDelegationPrincipals    []string
+	AnswerDelegationPrincipals []string
+	AgentPolicies              map[string]AgentPolicy
+	DefaultRequirements        []string
+	RetentionDays              int
+	WebhookURL                 string
+	WebhookSecret              string
+	WebhookMaxAttempts         int
 }
 
 type AgentPolicy struct {
@@ -80,52 +81,53 @@ type AgentPolicy struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddress:            env("TASKBOARD_LISTEN_ADDRESS", "127.0.0.1:8095"),
-		MetricsListenAddress:     strings.TrimSpace(os.Getenv("TASKBOARD_METRICS_LISTEN_ADDRESS")),
-		DatabasePath:             env("TASKBOARD_DATABASE_PATH", "taskboard.db"),
-		DatabaseURL:              strings.TrimSpace(os.Getenv("TASKBOARD_DATABASE_URL")),
-		AuthToken:                strings.TrimSpace(os.Getenv("TASKBOARD_AUTH_TOKEN")),
-		AllowInsecure:            envBool("TASKBOARD_ALLOW_INSECURE", false),
-		AllowedHosts:             split(os.Getenv("TASKBOARD_ALLOWED_HOSTS")),
-		LeaseDuration:            2 * time.Minute,
-		MCPDefaultTaskType:       env("TASKBOARD_MCP_DEFAULT_TYPE", "work"),
-		TaskType:                 strings.ToLower(strings.TrimSpace(os.Getenv("TASKBOARD_TASK_TYPE"))),
-		BrowserAuthMode:          env("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthOIDC),
-		VAPIDPublicKey:           strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PUBLIC_KEY")),
-		VAPIDPrivateKey:          strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PRIVATE_KEY")),
-		VAPIDContact:             env("TASKBOARD_VAPID_CONTACT", "mailto:admin@localhost"),
-		OIDCIssuer:               strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_ISSUER")),
-		OIDCClientID:             strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_ID")),
-		OIDCClientSecret:         strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_SECRET")),
-		OIDCRedirectURL:          strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_REDIRECT_URL")),
-		OIDCAllowedSubjects:      split(os.Getenv("TASKBOARD_OIDC_ALLOWED_SUBJECTS")),
-		OIDCAllowedEmails:        split(os.Getenv("TASKBOARD_OIDC_ALLOWED_EMAILS")),
-		OIDCAllowedGroups:        split(os.Getenv("TASKBOARD_OIDC_ALLOWED_GROUPS")),
-		OIDCTrustProviderPolicy:  envBool("TASKBOARD_OIDC_TRUST_PROVIDER_POLICY", false),
-		CFAccessTeamDomain:       strings.TrimRight(strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN")), "/"),
-		CFAccessAudience:         strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_AUD")),
-		CFAccessSubjects:         split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS")),
-		CFAccessEmails:           split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_EMAILS")),
-		CFAccessGroups:           split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_GROUPS")),
-		CFAccessTrustPolicy:      envBool("TASKBOARD_CF_ACCESS_TRUST_POLICY", false),
-		DefaultRole:              env("TASKBOARD_DEFAULT_ROLE", "member"),
-		OwnerGroups:              split(os.Getenv("TASKBOARD_OWNER_GROUPS")),
-		AdminGroups:              split(os.Getenv("TASKBOARD_ADMIN_GROUPS")),
-		MemberGroups:             split(os.Getenv("TASKBOARD_MEMBER_GROUPS")),
-		ViewerGroups:             split(os.Getenv("TASKBOARD_VIEWER_GROUPS")),
-		AgentCapabilities:        split(env("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:create,task:claim,task:update,task:message,task:escalate,task:control,task:reference,task:handoff,task:evidence,task:session,task:usage,task:complete,worker:advertise,template:read,template:manage")),
-		AgentMaxConcurrentRuns:   envInt("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", 8),
-		AgentMaxPickupsPerMinute: envInt("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", 30),
-		AgentMaxRunDuration:      time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
-		AgentRequireIdempotency:  envBool("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", false),
-		MCPHumanDelegation:       envBool("TASKBOARD_MCP_HUMAN_DELEGATION", false),
-		MCPDelegationPrincipals:  split(os.Getenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS")),
-		AgentPolicies:            map[string]AgentPolicy{},
-		DefaultRequirements:      split(os.Getenv("TASKBOARD_DEFAULT_REQUIREMENTS")),
-		RetentionDays:            envInt("TASKBOARD_RETENTION_DAYS", 0),
-		WebhookURL:               strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
-		WebhookSecret:            strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_SECRET")),
-		WebhookMaxAttempts:       envInt("TASKBOARD_WEBHOOK_MAX_ATTEMPTS", 8),
+		ListenAddress:              env("TASKBOARD_LISTEN_ADDRESS", "127.0.0.1:8095"),
+		MetricsListenAddress:       strings.TrimSpace(os.Getenv("TASKBOARD_METRICS_LISTEN_ADDRESS")),
+		DatabasePath:               env("TASKBOARD_DATABASE_PATH", "taskboard.db"),
+		DatabaseURL:                strings.TrimSpace(os.Getenv("TASKBOARD_DATABASE_URL")),
+		AuthToken:                  strings.TrimSpace(os.Getenv("TASKBOARD_AUTH_TOKEN")),
+		AllowInsecure:              envBool("TASKBOARD_ALLOW_INSECURE", false),
+		AllowedHosts:               split(os.Getenv("TASKBOARD_ALLOWED_HOSTS")),
+		LeaseDuration:              2 * time.Minute,
+		MCPDefaultTaskType:         env("TASKBOARD_MCP_DEFAULT_TYPE", "work"),
+		TaskType:                   strings.ToLower(strings.TrimSpace(os.Getenv("TASKBOARD_TASK_TYPE"))),
+		BrowserAuthMode:            env("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthOIDC),
+		VAPIDPublicKey:             strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PUBLIC_KEY")),
+		VAPIDPrivateKey:            strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PRIVATE_KEY")),
+		VAPIDContact:               env("TASKBOARD_VAPID_CONTACT", "mailto:admin@localhost"),
+		OIDCIssuer:                 strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_ISSUER")),
+		OIDCClientID:               strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_ID")),
+		OIDCClientSecret:           strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_SECRET")),
+		OIDCRedirectURL:            strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_REDIRECT_URL")),
+		OIDCAllowedSubjects:        split(os.Getenv("TASKBOARD_OIDC_ALLOWED_SUBJECTS")),
+		OIDCAllowedEmails:          split(os.Getenv("TASKBOARD_OIDC_ALLOWED_EMAILS")),
+		OIDCAllowedGroups:          split(os.Getenv("TASKBOARD_OIDC_ALLOWED_GROUPS")),
+		OIDCTrustProviderPolicy:    envBool("TASKBOARD_OIDC_TRUST_PROVIDER_POLICY", false),
+		CFAccessTeamDomain:         strings.TrimRight(strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN")), "/"),
+		CFAccessAudience:           strings.TrimSpace(os.Getenv("TASKBOARD_CF_ACCESS_AUD")),
+		CFAccessSubjects:           split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS")),
+		CFAccessEmails:             split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_EMAILS")),
+		CFAccessGroups:             split(os.Getenv("TASKBOARD_CF_ACCESS_ALLOWED_GROUPS")),
+		CFAccessTrustPolicy:        envBool("TASKBOARD_CF_ACCESS_TRUST_POLICY", false),
+		DefaultRole:                env("TASKBOARD_DEFAULT_ROLE", "member"),
+		OwnerGroups:                split(os.Getenv("TASKBOARD_OWNER_GROUPS")),
+		AdminGroups:                split(os.Getenv("TASKBOARD_ADMIN_GROUPS")),
+		MemberGroups:               split(os.Getenv("TASKBOARD_MEMBER_GROUPS")),
+		ViewerGroups:               split(os.Getenv("TASKBOARD_VIEWER_GROUPS")),
+		AgentCapabilities:          split(env("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:create,task:claim,task:update,task:message,task:escalate,task:control,task:reference,task:handoff,task:evidence,task:session,task:usage,task:complete,worker:advertise,template:read,template:manage")),
+		AgentMaxConcurrentRuns:     envInt("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", 8),
+		AgentMaxPickupsPerMinute:   envInt("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", 30),
+		AgentMaxRunDuration:        time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
+		AgentRequireIdempotency:    envBool("TASKBOARD_AGENT_REQUIRE_IDEMPOTENCY", false),
+		MCPHumanDelegation:         envBool("TASKBOARD_MCP_HUMAN_DELEGATION", false),
+		MCPDelegationPrincipals:    split(os.Getenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS")),
+		AnswerDelegationPrincipals: split(os.Getenv("TASKBOARD_ANSWER_DELEGATION_PRINCIPALS")),
+		AgentPolicies:              map[string]AgentPolicy{},
+		DefaultRequirements:        split(os.Getenv("TASKBOARD_DEFAULT_REQUIREMENTS")),
+		RetentionDays:              envInt("TASKBOARD_RETENTION_DAYS", 0),
+		WebhookURL:                 strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
+		WebhookSecret:              strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_SECRET")),
+		WebhookMaxAttempts:         envInt("TASKBOARD_WEBHOOK_MAX_ATTEMPTS", 8),
 	}
 	if raw := strings.TrimSpace(os.Getenv("TASKBOARD_AGENT_POLICIES_JSON")); raw != "" {
 		decoder := json.NewDecoder(strings.NewReader(raw))
@@ -198,6 +200,12 @@ func Load() (Config, error) {
 	for _, principal := range cfg.MCPDelegationPrincipals {
 		if !strings.HasPrefix(principal, "agent:") || principal == "agent:shared" || principal == "agent:local" {
 			return Config{}, fmt.Errorf("TASKBOARD_MCP_DELEGATION_PRINCIPALS entries must be dedicated agent credential principals, not %q", principal)
+		}
+	}
+	for _, principal := range cfg.AnswerDelegationPrincipals {
+		dedicated := strings.HasPrefix(principal, "agent:") && principal != "agent:shared" && principal != "agent:local"
+		if !dedicated && !strings.HasPrefix(principal, "cloudflare_access:service_token:") {
+			return Config{}, fmt.Errorf("TASKBOARD_ANSWER_DELEGATION_PRINCIPALS entries must be dedicated agent credential or Cloudflare Access service token principals, not %q", principal)
 		}
 	}
 	if len(cfg.MCPDelegationPrincipals) > 0 && (!cfg.MCPHumanDelegation || cfg.BrowserAuthMode != BrowserAuthCloudflareAccess) {

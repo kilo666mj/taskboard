@@ -101,6 +101,33 @@ answer arrives after some other authorized transition moved the blocking task
 away from `waiting`, resolution returns a conflict and requires review rather
 than overwriting newer state.
 
+## Approval decisions
+
+An escalation can carry a decision policy for approvals such as applying a
+remediation:
+
+- `answerers` lists up to 20 person principal IDs. Only they may answer; other
+  members receive `forbidden`. Agent and service-token principals cannot be
+  named, because they cannot answer.
+- `expires_in_seconds` (60 to 604800) sets a deadline. After it passes the
+  escalation reports `expired` and refuses answers. A blocking escalation's task
+  stays `waiting`; a person resumes or requeues it so a fresh run can ask
+  again. Approval of an expired proposal never carries over.
+
+The escalation's question message is immutable, so an answer always applies to
+the exact proposal text the agent asked about.
+
+A service that collects decisions elsewhere, such as a notification card, can
+forward them with `task_escalation_answer`. The caller must be listed in
+`TASKBOARD_ANSWER_DELEGATION_PRINCIPALS`, must have authenticated the person
+itself, and passes that person's Taskboard principal ID in `on_behalf_of`
+along with the usual `expected_version`, `answer`, `selected_option`, and
+`idempotency_key`. Taskboard accepts the answer only when the escalation names
+its answerers and includes that person, and refuses offboarded people. The
+answer message is authored by the person; the escalation and its
+`task.escalation_answered` event record the service in `delegated_by`.
+Escalations without `answerers` can be answered only in Taskboard itself.
+
 ## Acknowledged run controls
 
 Pause, cancel, resume, and retry are requests to the controller, not immediate

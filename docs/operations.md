@@ -126,15 +126,17 @@ SQLite records the version as a compatibility no-op. PostgreSQL startup also
 verifies that the trigger exists and rejects a partially modified schema.
 
 Versions 3 and 4 add administrative lifecycle records and friendly agent-run
-callsigns. Taskboard advances the schema from version 4 through version 16:
+callsigns. Taskboard advances the schema from version 4 through version 17:
 version 5 adds task messages, 6 structured escalations, 7 acknowledged run
 controls, 8 typed delivery references, 9 run handoffs, 10 completion contracts,
 11 trusted session bridges, 12 task dependencies, 13 worker matching, and 14
 numeric usage records. Version 15 groups independent task runs under a hashed,
 opaque agent-session key so they share one callsign. Version 16 adds the
 server-controlled `last_edited_by` task provenance field; historical rows retain
-an empty value until their first authenticated edit. A current binary upgrades
-any complete supported schema from version 1 through 15 directly and
+an empty value until their first authenticated edit. Version 17 adds escalation
+decision policy columns (`answerers_json`, `expires_at`, and `delegated_by`);
+existing escalations keep no answerer restriction or expiry. A current binary
+upgrades any complete supported schema from version 1 through 16 directly and
 transactionally.
 
 Back up the database before upgrading to v0.6.0. The new tables are additive,

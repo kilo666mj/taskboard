@@ -74,6 +74,12 @@ type escalationCreateInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 	model.CreateEscalationRequest
 }
+type escalationAnswerInput struct {
+	TaskID       string `json:"task_id" jsonschema:"Task ULID"`
+	EscalationID string `json:"escalation_id" jsonschema:"Escalation ULID"`
+	OnBehalfOf   string `json:"on_behalf_of" jsonschema:"Taskboard principal ID of the person whose answer this service collected and authenticated"`
+	model.ResolveEscalationRequest
+}
 type escalationListInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 }
@@ -222,6 +228,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	if len(metricSets) > 0 {
 		metrics = metricSets[0]
 	}
+	service.SetAnswerDelegation(cfg.AnswerDelegationPrincipals, roleForGroups(cfg, nil))
 	mcpHandler, err := mcpkit.StatelessHTTP(func(*http.Request) *mcp.Server {
 		return newMCPServer(service, model.TaskType(cfg.MCPDefaultTaskType), logger)
 	}, mcpkit.HTTPOptions{
@@ -488,6 +495,10 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 	mcp.AddTool(server, &mcp.Tool{Name: "task_escalation_list", Description: "List structured questions, choices, recommendations, and recorded answers for an owned task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationListInput) (*mcp.CallToolResult, escalationsOutput, error) {
 		items, err := tasks.ListEscalationsFor(ctx, input.TaskID, mcpPrincipal(ctx))
 		return nil, escalationsOutput{Escalations: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_escalation_answer", Description: "Forward a person's answer to an escalation that names its answerers. Only service principals allowed to delegate answers may call this, after authenticating the person themselves; the person is recorded as the author.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationAnswerInput) (*mcp.CallToolResult, escalationOutput, error) {
+		item, err := tasks.ResolveEscalationOnBehalfFor(ctx, input.TaskID, input.EscalationID, input.OnBehalfOf, input.ResolveEscalationRequest, mcpPrincipal(ctx))
+		return nil, escalationOutput{Escalation: item}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_escalate", Description: "Ask a structured question from an active run. A blocking escalation atomically ends the run and waits the task; after a human answers, claim the queued task to create a replacement run.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationCreateInput) (*mcp.CallToolResult, escalationOutput, error) {
 		item, err := tasks.CreateEscalationFor(ctx, input.TaskID, input.CreateEscalationRequest, mcpPrincipal(ctx))
