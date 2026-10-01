@@ -83,6 +83,9 @@ type Task struct {
 	Dependencies []TaskDependency `json:"dependencies,omitempty"`
 	Ready        bool             `json:"ready"`
 	Requirements []string         `json:"requirements,omitempty"`
+	// DecisionRequested is set for a person when the task has an open,
+	// unexpired escalation they may answer. It depends on the viewer.
+	DecisionRequested bool `json:"decision_requested,omitempty"`
 }
 
 type TaskDependency struct {

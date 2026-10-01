@@ -268,3 +268,43 @@ func TestSelectedChoiceIsACompleteAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkDecisionsForShowsOnlyQuestionsTheViewerMayAnswer(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	named, _ := escalateForDecision(t, tasks, "needs-me-named", model.CreateEscalationRequest{Blocking: true, Answerers: []string{"human:approver"}})
+	open, _ := escalateForDecision(t, tasks, "needs-me-open", model.CreateEscalationRequest{Blocking: true})
+	expired, expiredEscalation := escalateForDecision(t, tasks, "needs-me-expired", model.CreateEscalationRequest{Blocking: true, ExpiresIn: 3600})
+	answered, answeredEscalation := escalateForDecision(t, tasks, "needs-me-answered", model.CreateEscalationRequest{Blocking: true})
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE task_escalations SET expires_at=? WHERE id=?`, past, expiredEscalation.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.ResolveEscalationFor(t.Context(), answered.ID, answeredEscalation.ID, model.ResolveEscalationRequest{ExpectedVersion: answered.Version, Answer: "Done."}, HumanPrincipal("human:other")); err != nil {
+		t.Fatal(err)
+	}
+	flags := func(principal Principal) map[string]bool {
+		items := []model.Task{named, open, expired, answered}
+		if err := tasks.MarkDecisionsFor(t.Context(), items, principal); err != nil {
+			t.Fatal(err)
+		}
+		result := map[string]bool{}
+		for _, item := range items {
+			result[item.ID] = item.DecisionRequested
+		}
+		return result
+	}
+	approver := flags(HumanPrincipal("human:approver"))
+	if !approver[named.ID] || !approver[open.ID] || approver[expired.ID] || approver[answered.ID] {
+		t.Fatalf("approver flags = %v", approver)
+	}
+	bystander := flags(HumanPrincipal("human:bystander"))
+	if bystander[named.ID] || !bystander[open.ID] {
+		t.Fatalf("bystander flags = %v", bystander)
+	}
+	if viewer := flags(HumanPrincipalWithRole("human:approver", RoleViewer)); viewer[named.ID] || viewer[open.ID] {
+		t.Fatalf("viewer flags = %v", viewer)
+	}
+	if agent := flags(AgentPrincipal("agent:worker")); agent[named.ID] || agent[open.ID] {
+		t.Fatalf("agent flags = %v", agent)
+	}
+}

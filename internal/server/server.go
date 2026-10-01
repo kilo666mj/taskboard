@@ -652,6 +652,9 @@ func listTasks(tasks *service.Service) http.HandlerFunc {
 		if apiError(w, err) {
 			return
 		}
+		if apiError(w, tasks.MarkDecisionsFor(r.Context(), page.Tasks, principal(r.Context()))) {
+			return
+		}
 		writeJSON(w, http.StatusOK, tasksOutput{Tasks: page.Tasks, NextCursor: page.NextCursor})
 	}
 }
@@ -687,6 +690,11 @@ func getTask(tasks *service.Service) http.HandlerFunc {
 		if apiError(w, err) {
 			return
 		}
+		marked := []model.Task{task}
+		if apiError(w, tasks.MarkDecisionsFor(r.Context(), marked, principal(r.Context()))) {
+			return
+		}
+		task = marked[0]
 		handoffs, _ := tasks.ListRunHandoffsFor(r.Context(), task.ID, principal(r.Context()))
 		writeJSON(w, http.StatusOK, taskOutput{Task: task, Handoffs: handoffs})
 	}
