@@ -309,7 +309,7 @@ type CreateEscalationRequest struct {
 
 type ResolveEscalationRequest struct {
 	ExpectedVersion int64  `json:"expected_version"`
-	Answer          string `json:"answer"`
+	Answer          string `json:"answer,omitempty" jsonschema:"Answer text; optional when selected_option is set, which then becomes the answer"`
 	SelectedOption  string `json:"selected_option,omitempty"`
 	IdempotencyKey  string `json:"idempotency_key,omitempty"`
 	IdempotencyHash string `json:"-"`
