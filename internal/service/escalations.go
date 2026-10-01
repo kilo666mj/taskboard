@@ -195,8 +195,13 @@ func (s *Service) resolveEscalation(ctx context.Context, taskID, escalationID st
 	}
 	taskID, escalationID = strings.TrimSpace(taskID), strings.TrimSpace(escalationID)
 	request.Answer, request.SelectedOption = strings.TrimSpace(request.Answer), strings.TrimSpace(request.SelectedOption)
+	if request.Answer == "" {
+		// A selected choice is a complete answer; it is validated against the
+		// escalation's choices below.
+		request.Answer = request.SelectedOption
+	}
 	if taskID == "" || escalationID == "" || request.ExpectedVersion < 1 || request.Answer == "" || len(request.Answer) > 4000 {
-		return model.TaskEscalation{}, fmt.Errorf("%w: task_id, escalation_id, expected_version, and a 1-4000 character answer are required", ErrValidation)
+		return model.TaskEscalation{}, fmt.Errorf("%w: task_id, escalation_id, expected_version, and a selected_option or a 1-4000 character answer are required", ErrValidation)
 	}
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {

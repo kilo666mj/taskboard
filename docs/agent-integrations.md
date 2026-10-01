@@ -86,7 +86,8 @@ escalation; it does not create another question.
 
 A signed-in member answers through the task's decision form or
 `POST /api/v1/tasks/{task}/escalations/{escalation}/answer`. The answer is an
-immutable reply message. For a blocking escalation, Taskboard atomically queues
+immutable reply message. When the person selects one of the escalation's choices,
+the written answer is optional and defaults to the choice. For a blocking escalation, Taskboard atomically queues
 the task and clears `waiting_for`; it deliberately does not reactivate the old
 run. A controller watching events or polling the task may then claim it with the
 new task version. That claim creates a new immutable run ID. A controller may

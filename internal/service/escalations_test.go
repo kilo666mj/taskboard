@@ -243,3 +243,28 @@ func TestDelegatedPersonWithoutWriteRoleCannotAnswer(t *testing.T) {
 		t.Fatalf("viewer delegated answer error = %v", err)
 	}
 }
+
+func TestSelectedChoiceIsACompleteAnswer(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	task, escalation := escalateForDecision(t, tasks, "choice-only", model.CreateEscalationRequest{Options: []string{"Approve fix", "Reject"}, Blocking: true})
+	person := HumanPrincipal("human:operator")
+	if _, err := tasks.ResolveEscalationFor(t.Context(), task.ID, escalation.ID, model.ResolveEscalationRequest{ExpectedVersion: task.Version}, person); !errors.Is(err, ErrValidation) {
+		t.Fatalf("empty answer without a choice error = %v", err)
+	}
+	if _, err := tasks.ResolveEscalationFor(t.Context(), task.ID, escalation.ID, model.ResolveEscalationRequest{ExpectedVersion: task.Version, SelectedOption: "Maybe"}, person); !errors.Is(err, ErrValidation) {
+		t.Fatalf("unknown choice error = %v", err)
+	}
+	answered, err := tasks.ResolveEscalationFor(t.Context(), task.ID, escalation.ID, model.ResolveEscalationRequest{ExpectedVersion: task.Version, SelectedOption: "Approve fix"}, person)
+	if err != nil || answered.SelectedOption != "Approve fix" {
+		t.Fatalf("choice-only answer = %+v, %v", answered, err)
+	}
+	messages, err := tasks.ListMessagesFor(t.Context(), task.ID, "", 10, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if message.ID == answered.AnswerMessageID && message.Body != "Approve fix" {
+			t.Fatalf("answer body = %q, want the selected choice", message.Body)
+		}
+	}
+}
