@@ -86,6 +86,8 @@ example Switchboard capability is in
 
 See [Agent integrations](docs/agent-integrations.md) for the incremental
 checklist, conversation, acknowledgement, callsign, and heartbeat contracts.
+[Dispatchers](docs/dispatchers.md) proposes how work is routed to different
+execution backends, such as host-local runners or Kubernetes Jobs.
 
 Audit actors always come from authenticated server context. The deployment
 bearer token maps to the stable `agent:shared` actor, while an MCP client's
