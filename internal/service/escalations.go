@@ -304,6 +304,28 @@ func (s *Service) resolveEscalation(ctx context.Context, taskID, escalationID st
 	return s.store.GetTaskEscalation(ctx, escalationID)
 }
 
+// MarkDecisionsFor sets DecisionRequested on tasks with an open, unexpired
+// escalation the person may answer: one that names them, or names nobody.
+func (s *Service) MarkDecisionsFor(ctx context.Context, tasks []model.Task, principal Principal) error {
+	if principal.Agent || !principal.Can(PermissionTaskWrite) || len(tasks) == 0 {
+		return nil
+	}
+	open, err := s.store.ListOpenTaskEscalations(ctx)
+	if err != nil {
+		return err
+	}
+	waiting := map[string]bool{}
+	for _, escalation := range open {
+		if escalation.Status == model.EscalationOpen && (len(escalation.Answerers) == 0 || slices.Contains(escalation.Answerers, principal.ID)) {
+			waiting[escalation.TaskID] = true
+		}
+	}
+	for index := range tasks {
+		tasks[index].DecisionRequested = waiting[tasks[index].ID]
+	}
+	return nil
+}
+
 // normalizeAnswerers validates the people allowed to answer. Agents and
 // service tokens cannot answer, so naming them would be meaningless.
 func normalizeAnswerers(values []string) ([]string, error) {

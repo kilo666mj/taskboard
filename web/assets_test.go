@@ -48,12 +48,12 @@ func TestEscalationDecisionUIIsWiredAndResponsive(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
 	css := embeddedText(t, "app.css")
-	for _, expected := range []string{`class="escalation-list"`, `aria-label="Task decisions"`} {
+	for _, expected := range []string{`class="escalation-list"`, `aria-label="Task decisions"`, `<option value="needs-me">Needs me</option>`} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("index.html missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=!choice?.value`, `function escalationPolicy`, `escalation.status==='expired'`, `forwarded by ${escalation.delegated_by}`} {
+	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=!choice?.value`, `function escalationPolicy`, `state.filter==='needs-me'`, `Needs me (${needsMe})`, `escalation.status==='expired'`, `forwarded by ${escalation.delegated_by}`} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
 		}

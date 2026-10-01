@@ -52,6 +52,12 @@ func (s *Store) ListTaskEscalations(ctx context.Context, taskID string) ([]model
 	return s.listEscalations(ctx, `SELECT `+escalationColumns+` FROM task_escalations WHERE task_id=? ORDER BY id DESC`, taskID)
 }
 
+// ListOpenTaskEscalations returns unanswered escalations; expired ones
+// report the derived expired status.
+func (s *Store) ListOpenTaskEscalations(ctx context.Context) ([]model.TaskEscalation, error) {
+	return s.listEscalations(ctx, `SELECT `+escalationColumns+` FROM task_escalations WHERE status=? ORDER BY task_id,id`, model.EscalationOpen)
+}
+
 func (s *Store) ListAllTaskEscalations(ctx context.Context) ([]model.TaskEscalation, error) {
 	return s.listEscalations(ctx, `SELECT `+escalationColumns+` FROM task_escalations ORDER BY task_id,id`)
 }
