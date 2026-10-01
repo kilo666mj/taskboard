@@ -260,6 +260,20 @@
             </form>
           </div>
         </details>
+        <details class="discussion" hidden>
+          <summary>Discuss live</summary>
+          <div class="discussion-panel">
+            <p class="discussion-status" role="status" aria-live="polite"></p>
+            <ol class="discussion-list" aria-label="Live discussion"></ol>
+            <form class="discussion-form">
+              <label>Message<textarea name="body" maxlength="4000" rows="2" required placeholder="Ask the agent about this task"></textarea></label>
+              <div class="message-submit-row">
+                <button class="text-button end-discussion" type="button" hidden>End discussion</button>
+                <button class="primary send-discussion" type="submit">Send</button>
+              </div>
+            </form>
+          </div>
+        </details>
         <div class="task-management">
           <button class="text-button edit-task" type="button">Edit</button>
           <button class="text-button move-up" type="button" aria-label="Move task up">↑</button>

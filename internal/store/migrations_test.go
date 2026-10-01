@@ -71,7 +71,9 @@ func TestMigrationRejectsUnknownChecksum(t *testing.T) {
 func TestUpgradeReleasedBaselineBeforeEditProvenance(t *testing.T) {
 	path := createMigratedSQLite(t)
 	const released = "9b02436acc5f77fc8f43d198e93ad0947bb5d8d0bc5c54dd32cb17e307fec79c"
-	// Roll back to the released schema 15: later migrations add these columns.
+	// Roll back to the released schema 15: later migrations add these tables and columns.
+	mutateSQLite(t, path, `DROP TABLE task_discussion_messages`)
+	mutateSQLite(t, path, `DROP TABLE task_discussions`)
 	for _, column := range []string{"answerers_json", "expires_at", "delegated_by"} {
 		mutateSQLite(t, path, `ALTER TABLE task_escalations DROP COLUMN `+column)
 	}
