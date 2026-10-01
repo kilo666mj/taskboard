@@ -78,3 +78,13 @@ func capabilitySet(capabilities []string) map[string]bool {
 	}
 	return result
 }
+
+// oidcScopes requests the groups claim whenever groups decide a role, not only
+// when they restrict sign-in. Without it, role groups never match and every
+// OIDC user receives TASKBOARD_DEFAULT_ROLE. Nil keeps the library default.
+func oidcScopes(cfg config.Config) []string {
+	if len(cfg.OwnerGroups)+len(cfg.AdminGroups)+len(cfg.MemberGroups)+len(cfg.ViewerGroups) == 0 {
+		return nil
+	}
+	return []string{"openid", "profile", "email", "groups"}
+}

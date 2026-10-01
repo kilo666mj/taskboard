@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -101,5 +102,16 @@ func TestAgentPrincipalUsesPerIdentitySafetyPolicy(t *testing.T) {
 	cfg.AgentPolicies["agent:bridge"] = config.AgentPolicy{AllowedRequirements: &allowed}
 	if bridge := agentPrincipal(cfg, "agent:bridge"); !bridge.Policy.AllowedRequirements["runner:local"] {
 		t.Fatalf("bridge allowed requirements = %+v", bridge.Policy.AllowedRequirements)
+	}
+}
+
+func TestOIDCRequestsGroupsWhenGroupsDecideRoles(t *testing.T) {
+	if scopes := oidcScopes(config.Config{}); scopes != nil {
+		t.Fatalf("scopes without role groups = %v, want library default", scopes)
+	}
+	for _, cfg := range []config.Config{{OwnerGroups: []string{"taskboard-owners"}}, {AdminGroups: []string{"a"}}, {MemberGroups: []string{"m"}}, {ViewerGroups: []string{"v"}}} {
+		if scopes := oidcScopes(cfg); !slices.Contains(scopes, "groups") || !slices.Contains(scopes, "openid") || !slices.Contains(scopes, "email") {
+			t.Fatalf("scopes for %+v = %v", cfg, scopes)
+		}
 	}
 }

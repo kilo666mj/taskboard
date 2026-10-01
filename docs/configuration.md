@@ -39,7 +39,7 @@ disable their feature.
 | `TASKBOARD_CF_ACCESS_TRUST_POLICY` | `false` | Explicitly rely on the Cloudflare Access application policy when all application allowlists are empty. |
 | `TASKBOARD_DEFAULT_ROLE` | `member` | Role assigned when no configured role group matches: `owner`, `admin`, `member`, or `viewer`. Grant privileged roles with explicit group mappings. |
 | `TASKBOARD_OWNER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `owner`. |
-| `TASKBOARD_ADMIN_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `admin`. |
+| `TASKBOARD_ADMIN_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `admin`. When any role group is set in OIDC mode, Taskboard requests the `groups` scope; the provider must release a `groups` claim, and people sign in again to pick up a new role. |
 | `TASKBOARD_MEMBER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `member`. |
 | `TASKBOARD_VIEWER_GROUPS` | none | Comma-separated OIDC or Cloudflare Access groups mapped to `viewer`. |
 | `TASKBOARD_AGENT_CAPABILITIES` | safe task/template capabilities | Comma-separated default capabilities for service principals. `task:sensitive` is deliberately excluded. |
