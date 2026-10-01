@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,6 +45,14 @@ func (s *Service) CreateEscalationFor(ctx context.Context, taskID string, reques
 			return model.TaskEscalation{}, fmt.Errorf("%w: choices must be unique and contain 1-200 characters", ErrValidation)
 		}
 		seen[key] = true
+	}
+	answerers, err := normalizeAnswerers(request.Answerers)
+	if err != nil {
+		return model.TaskEscalation{}, err
+	}
+	request.Answerers = answerers
+	if request.ExpiresIn != 0 && (request.ExpiresIn < 60 || request.ExpiresIn > 7*24*60*60) {
+		return model.TaskEscalation{}, fmt.Errorf("%w: expires_in_seconds must be between 60 and 604800", ErrValidation)
 	}
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
@@ -99,7 +108,11 @@ func (s *Service) CreateEscalationFor(ctx context.Context, taskID string, reques
 	if err := store.InsertTaskMessage(ctx, tx, question); err != nil {
 		return model.TaskEscalation{}, err
 	}
-	escalation := model.TaskEscalation{ID: newID(now), TaskID: taskID, RunID: request.RunID, QuestionMessageID: question.ID, Blocking: request.Blocking, Options: request.Options, Recommendation: request.Recommendation, Status: model.EscalationOpen, CreatedAt: now}
+	escalation := model.TaskEscalation{ID: newID(now), TaskID: taskID, RunID: request.RunID, QuestionMessageID: question.ID, Blocking: request.Blocking, Options: request.Options, Recommendation: request.Recommendation, Status: model.EscalationOpen, Answerers: request.Answerers, CreatedAt: now}
+	if request.ExpiresIn > 0 {
+		expires := now.Add(time.Duration(request.ExpiresIn) * time.Second)
+		escalation.ExpiresAt = &expires
+	}
 	if err := store.InsertTaskEscalation(ctx, tx, escalation); err != nil {
 		return model.TaskEscalation{}, err
 	}
@@ -134,7 +147,49 @@ func (s *Service) CreateEscalationFor(ctx context.Context, taskID string, reques
 	return escalation, nil
 }
 
+// ResolveEscalationFor records a person's answer made in Taskboard.
 func (s *Service) ResolveEscalationFor(ctx context.Context, taskID, escalationID string, request model.ResolveEscalationRequest, principal Principal) (model.TaskEscalation, error) {
+	return s.resolveEscalation(ctx, taskID, escalationID, request, principal, "")
+}
+
+// SetAnswerDelegation lets the listed service principals forward answers for
+// people, who receive role when acting through them. Delegation applies only
+// to escalations that name their answerers.
+func (s *Service) SetAnswerDelegation(principals []string, role Role) {
+	s.answerDelegates = append([]string(nil), principals...)
+	s.answerDelegateRole = role
+}
+
+// ResolveEscalationOnBehalfFor records an answer that an allowlisted service,
+// such as a notification client, collected from the person personID after
+// authenticating them. The escalation must name that person as an answerer;
+// the person is recorded as the author and the service as the delegate.
+func (s *Service) ResolveEscalationOnBehalfFor(ctx context.Context, taskID, escalationID, personID string, request model.ResolveEscalationRequest, delegate Principal) (model.TaskEscalation, error) {
+	if !delegate.Agent || !slices.Contains(s.answerDelegates, delegate.ID) {
+		return model.TaskEscalation{}, ErrForbidden
+	}
+	personID = strings.TrimSpace(personID)
+	if !validPersonID(personID) {
+		return model.TaskEscalation{}, fmt.Errorf("%w: on_behalf_of must be a person principal", ErrValidation)
+	}
+	revoked, err := s.store.PrincipalRevoked(ctx, personID)
+	if err != nil {
+		return model.TaskEscalation{}, err
+	}
+	if revoked {
+		return model.TaskEscalation{}, ErrForbidden
+	}
+	escalation, err := s.store.GetTaskEscalation(ctx, strings.TrimSpace(escalationID))
+	if err != nil {
+		return model.TaskEscalation{}, err
+	}
+	if len(escalation.Answerers) == 0 {
+		return model.TaskEscalation{}, fmt.Errorf("%w: delegated answers require an escalation that names its answerers", ErrForbidden)
+	}
+	return s.resolveEscalation(ctx, taskID, escalationID, request, HumanPrincipalWithRole(personID, s.answerDelegateRole), delegate.ID)
+}
+
+func (s *Service) resolveEscalation(ctx context.Context, taskID, escalationID string, request model.ResolveEscalationRequest, principal Principal, delegatedBy string) (model.TaskEscalation, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.TaskEscalation{}, ErrForbidden
 	}
@@ -158,8 +213,9 @@ func (s *Service) ResolveEscalationFor(ctx context.Context, taskID, escalationID
 	hash, err := requestHash(struct {
 		TaskID       string
 		EscalationID string
+		DelegatedBy  string
 		model.ResolveEscalationRequest
-	}{taskID, escalationID, request})
+	}{taskID, escalationID, delegatedBy, request})
 	if err != nil {
 		return model.TaskEscalation{}, err
 	}
@@ -190,8 +246,14 @@ func (s *Service) ResolveEscalationFor(ctx context.Context, taskID, escalationID
 	if err != nil || escalation.TaskID != taskID {
 		return model.TaskEscalation{}, store.ErrNotFound
 	}
+	if escalation.Status == model.EscalationExpired {
+		return model.TaskEscalation{}, fmt.Errorf("%w: escalation expired; the agent must ask again", ErrValidation)
+	}
 	if escalation.Status != model.EscalationOpen {
 		return model.TaskEscalation{}, ErrConflict
+	}
+	if len(escalation.Answerers) > 0 && !slices.Contains(escalation.Answerers, principal.ID) {
+		return model.TaskEscalation{}, fmt.Errorf("%w: this escalation can only be answered by its named answerers", ErrForbidden)
 	}
 	if request.SelectedOption != "" && !containsExact(escalation.Options, request.SelectedOption) {
 		return model.TaskEscalation{}, fmt.Errorf("%w: selected_option must match one of the escalation choices", ErrValidation)
@@ -203,7 +265,7 @@ func (s *Service) ResolveEscalationFor(ctx context.Context, taskID, escalationID
 	if err := store.InsertTaskMessage(ctx, tx, answer); err != nil {
 		return model.TaskEscalation{}, err
 	}
-	if err := store.ResolveTaskEscalation(ctx, tx, escalationID, answer.ID, request.SelectedOption, principal.ID, now); err != nil {
+	if err := store.ResolveTaskEscalation(ctx, tx, escalationID, answer.ID, request.SelectedOption, principal.ID, delegatedBy, now); err != nil {
 		return model.TaskEscalation{}, err
 	}
 	version := current.Version
@@ -222,6 +284,9 @@ func (s *Service) ResolveEscalationFor(ctx context.Context, taskID, escalationID
 		version++
 	}
 	payload := map[string]any{"escalation_id": escalation.ID, "answer_message_id": answer.ID, "blocking": escalation.Blocking, "status": map[bool]model.TaskStatus{true: model.TaskQueued, false: current.Status}[escalation.Blocking], "version": version}
+	if delegatedBy != "" {
+		payload["delegated_by"] = delegatedBy
+	}
 	mergePayload(payload, idempotencyPayload("task_escalation_resolve", request.IdempotencyKey, request.IdempotencyHash))
 	resolved := model.Event{ID: newID(now), TaskID: taskID, RunID: escalation.RunID, Kind: "task.escalation_answered", Actor: principal.ID, Message: "Escalation answered", Payload: payload, CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, resolved); err != nil {
@@ -232,6 +297,30 @@ func (s *Service) ResolveEscalationFor(ctx context.Context, taskID, escalationID
 	}
 	s.publish(resolved)
 	return s.store.GetTaskEscalation(ctx, escalationID)
+}
+
+// normalizeAnswerers validates the people allowed to answer. Agents and
+// service tokens cannot answer, so naming them would be meaningless.
+func normalizeAnswerers(values []string) ([]string, error) {
+	if len(values) > 20 {
+		return nil, fmt.Errorf("%w: answerers are limited to 20", ErrValidation)
+	}
+	var result []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if !validPersonID(value) {
+			return nil, fmt.Errorf("%w: answerers must be person principal IDs", ErrValidation)
+		}
+		if !slices.Contains(result, value) {
+			result = append(result, value)
+		}
+	}
+	return result, nil
+}
+
+func validPersonID(value string) bool {
+	return value != "" && len(value) <= 200 && !strings.ContainsAny(value, " \t\r\n") &&
+		!strings.HasPrefix(value, "agent:") && !strings.HasPrefix(value, "cloudflare_access:service_token:")
 }
 
 func containsExact(values []string, target string) bool {

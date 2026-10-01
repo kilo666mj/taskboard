@@ -37,7 +37,7 @@ func TestTaskEscalationStorageLifecycle(t *testing.T) {
 	if err := InsertTaskMessage(t.Context(), tx, answer); err != nil {
 		t.Fatal(err)
 	}
-	if err := ResolveTaskEscalation(t.Context(), tx, escalation.ID, answer.ID, "A", answer.Author, answer.CreatedAt); err != nil {
+	if err := ResolveTaskEscalation(t.Context(), tx, escalation.ID, answer.ID, "A", answer.Author, "", answer.CreatedAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

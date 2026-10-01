@@ -71,7 +71,7 @@ func TestMCPToolSurfaceIsAnnotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_escalate", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
+	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_escalate", "task_escalation_answer", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
 	got := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		got = append(got, tool.Name)
@@ -1373,5 +1373,34 @@ func TestSessionStateReportsInstanceTaskType(t *testing.T) {
 	}
 	if body["task_type"] != "work" {
 		t.Fatalf("session = %v", body)
+	}
+}
+
+func TestMCPEscalationAnswerRequiresDelegationAllowlist(t *testing.T) {
+	tasks, _, logger := serverFixture(t)
+	worker := service.AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Remediate", Checklist: []string{"Apply"}, IdempotencyKey: "start-delegated-mcp"}, worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	escalation, err := tasks.CreateEscalationFor(t.Context(), started.Task.ID, model.CreateEscalationRequest{RunID: started.Run.ID, ExpectedVersion: started.Task.Version, Question: "Apply the fix?", Options: []string{"Approve", "Reject"}, Blocking: true, Answerers: []string{"human:approver"}, IdempotencyKey: "escalate-delegated-mcp"}, worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := map[string]any{"task_id": started.Task.ID, "escalation_id": escalation.ID, "on_behalf_of": "human:approver", "expected_version": started.Task.Version + 1, "answer": "Approved from a card.", "selected_option": "Approve"}
+	session := mcpkittest.Connect(t, newMCPServer(tasks, model.TaskWork, logger))
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_escalation_answer", Arguments: arguments})
+	if err != nil || !result.IsError {
+		t.Fatalf("unlisted delegate result = %+v, %v", result, err)
+	}
+
+	tasks.SetAnswerDelegation([]string{"agent:shared"}, service.RoleMember)
+	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_escalation_answer", Arguments: arguments})
+	if err != nil || result.IsError {
+		t.Fatalf("delegated answer result = %+v, %v", result, err)
+	}
+	answered, err := tasks.ListEscalationsFor(t.Context(), started.Task.ID, service.HumanPrincipal("human:approver"))
+	if err != nil || len(answered) != 1 || answered[0].ResolvedBy != "human:approver" || answered[0].DelegatedBy != "agent:shared" {
+		t.Fatalf("escalations = %+v, %v", answered, err)
 	}
 }

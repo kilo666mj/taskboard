@@ -198,6 +198,20 @@ func TestMCPHumanDelegationConfiguration(t *testing.T) {
 	}
 }
 
+func TestAnswerDelegationPrincipalsConfiguration(t *testing.T) {
+	t.Setenv("TASKBOARD_ANSWER_DELEGATION_PRINCIPALS", "agent:tintwire, cloudflare_access:service_token:notifier")
+	cfg, err := Load()
+	if err != nil || len(cfg.AnswerDelegationPrincipals) != 2 {
+		t.Fatalf("answer delegation = %v, %v", cfg.AnswerDelegationPrincipals, err)
+	}
+	for _, principal := range []string{"agent:shared", "agent:local", "human:operator"} {
+		t.Setenv("TASKBOARD_ANSWER_DELEGATION_PRINCIPALS", principal)
+		if _, err := Load(); err == nil {
+			t.Errorf("answer delegation principal %q was accepted", principal)
+		}
+	}
+}
+
 func TestMCPDelegationPrincipalsConfiguration(t *testing.T) {
 	t.Setenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS", "agent:switchboard")
 	if _, err := Load(); err == nil {

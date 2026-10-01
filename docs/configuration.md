@@ -18,6 +18,7 @@ disable their feature.
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Deprecated; use `TASKBOARD_TASK_TYPE`. Default type for MCP-created tasks when `TASKBOARD_TASK_TYPE` is empty. |
 | `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp` have `task_create` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
 | `TASKBOARD_MCP_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential principals, such as `agent:switchboard`, allowed to forward a Cloudflare Access person in `X-Switchboard-Access-Subject`. Requires delegation and Cloudflare Access browser mode; `agent:shared` is refused. |
+| `TASKBOARD_ANSWER_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential or Cloudflare Access service token principals, such as `agent:tintwire`, allowed to forward a person's answer with `task_escalation_answer`. Only escalations that name their answerers accept delegated answers, and the person acts with `TASKBOARD_DEFAULT_ROLE`. `agent:shared` and `agent:local` are refused. See [Approval decisions](agent-integrations.md#approval-decisions). |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
 | `TASKBOARD_VAPID_PUBLIC_KEY` | none | Web Push VAPID public key. |
 | `TASKBOARD_VAPID_PRIVATE_KEY` | none | Matching private key. Keep it secret and stable across upgrades. |

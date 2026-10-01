@@ -265,6 +265,9 @@ type EscalationStatus string
 const (
 	EscalationOpen     EscalationStatus = "open"
 	EscalationAnswered EscalationStatus = "answered"
+	// EscalationExpired is derived when an open escalation passes ExpiresAt;
+	// it is never stored.
+	EscalationExpired EscalationStatus = "expired"
 )
 
 // TaskEscalation adds decision semantics to an immutable question/answer pair.
@@ -280,9 +283,15 @@ type TaskEscalation struct {
 	Recommendation    string           `json:"recommendation,omitempty"`
 	SelectedOption    string           `json:"selected_option,omitempty"`
 	Status            EscalationStatus `json:"status"`
-	ResolvedBy        string           `json:"resolved_by,omitempty"`
-	CreatedAt         time.Time        `json:"created_at"`
-	ResolvedAt        *time.Time       `json:"resolved_at,omitempty"`
+	// Answerers, when set, are the only people who may answer.
+	Answerers  []string   `json:"answerers,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	ResolvedBy string     `json:"resolved_by,omitempty"`
+	// DelegatedBy is the service principal that forwarded ResolvedBy's
+	// answer, when the person did not answer in Taskboard directly.
+	DelegatedBy string     `json:"delegated_by,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
 }
 
 type CreateEscalationRequest struct {
@@ -292,6 +301,8 @@ type CreateEscalationRequest struct {
 	Options         []string `json:"options,omitempty"`
 	Recommendation  string   `json:"recommendation,omitempty"`
 	Blocking        bool     `json:"blocking"`
+	Answerers       []string `json:"answerers,omitempty" jsonschema:"Optional person principal IDs who alone may answer, for approvals; required for delegated answers"`
+	ExpiresIn       int      `json:"expires_in_seconds,omitempty" jsonschema:"Optional lifetime in seconds (60-604800); answers are refused after it"`
 	IdempotencyKey  string   `json:"idempotency_key,omitempty"`
 	IdempotencyHash string   `json:"-"`
 }

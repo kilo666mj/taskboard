@@ -53,7 +53,7 @@ func TestEscalationDecisionUIIsWiredAndResponsive(t *testing.T) {
 			t.Errorf("index.html missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=true`} {
+	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=true`, `function escalationPolicy`, `escalation.status==='expired'`, `forwarded by ${escalation.delegated_by}`} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
 		}

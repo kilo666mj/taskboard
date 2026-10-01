@@ -100,6 +100,9 @@ taskboard:
     # Dedicated agent credential principals allowed to forward a Cloudflare
     # Access person, for example [agent:switchboard].
     delegationPrincipals: []
+    # Service principals, such as a notification client, allowed to forward a
+    # person's answer to an escalation that names its answerers.
+    answerDelegationPrincipals: []
     policiesJSON: ""
   retentionDays: 0
   webhook:

@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 16
+const latestSchemaVersion = 17
 
 type schemaMigration struct {
 	Version  int
@@ -245,6 +245,15 @@ var schemaMigrations = []schemaMigration{
 	}, Postgres: []string{
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_edited_by TEXT NOT NULL DEFAULT ''`,
 	}},
+	{Version: 17, Name: "escalation_decision_policy", SQLite: []string{
+		`ALTER TABLE task_escalations ADD COLUMN answerers_json TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE task_escalations ADD COLUMN expires_at TEXT`,
+		`ALTER TABLE task_escalations ADD COLUMN delegated_by TEXT NOT NULL DEFAULT ''`,
+	}, Postgres: []string{
+		`ALTER TABLE task_escalations ADD COLUMN IF NOT EXISTS answerers_json TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE task_escalations ADD COLUMN IF NOT EXISTS expires_at TEXT`,
+		`ALTER TABLE task_escalations ADD COLUMN IF NOT EXISTS delegated_by TEXT NOT NULL DEFAULT ''`,
+	}},
 }
 
 var messagingSchema = map[string][]string{
@@ -255,7 +264,7 @@ var messagingSchema = map[string][]string{
 var messagingIndexes = []string{"idx_task_messages_task", "idx_task_messages_target", "idx_task_messages_supersedes", "idx_message_receipts_run"}
 
 var escalationSchema = map[string][]string{
-	"task_escalations": {"id", "task_id", "run_id", "question_message_id", "answer_message_id", "blocking", "options_json", "recommendation", "selected_option", "status", "resolved_by", "created_at", "resolved_at"},
+	"task_escalations": {"id", "task_id", "run_id", "question_message_id", "answer_message_id", "blocking", "options_json", "recommendation", "selected_option", "status", "resolved_by", "created_at", "resolved_at", "answerers_json", "expires_at", "delegated_by"},
 }
 
 var escalationIndexes = []string{"idx_task_escalations_task", "idx_task_escalations_open"}

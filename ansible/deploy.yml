@@ -48,6 +48,7 @@
     taskboard_agent_require_idempotency: false
     taskboard_mcp_human_delegation: false
     taskboard_mcp_delegation_principals: []
+    taskboard_answer_delegation_principals: []
     taskboard_agent_policies_json: ""
     taskboard_retention_days: 0
     taskboard_webhook_url: ""

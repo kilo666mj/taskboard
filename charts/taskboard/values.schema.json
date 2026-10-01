@@ -83,6 +83,7 @@
             "requireIdempotency": { "type": "boolean" },
             "humanDelegation": { "type": "boolean" },
             "delegationPrincipals": { "type": "array", "items": { "type": "string", "pattern": "^agent:" } },
+            "answerDelegationPrincipals": { "type": "array", "items": { "type": "string", "pattern": "^(agent:|cloudflare_access:service_token:)" } },
             "policiesJSON": { "type": "string" }
           }
         },

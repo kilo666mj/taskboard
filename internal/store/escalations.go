@@ -10,6 +10,8 @@ import (
 	"github.com/kilo666mj/taskboard/internal/model"
 )
 
+const escalationColumns = `id,task_id,run_id,question_message_id,answer_message_id,blocking,options_json,recommendation,selected_option,status,resolved_by,created_at,resolved_at,answerers_json,expires_at,delegated_by`
+
 func InsertTaskEscalation(ctx context.Context, tx interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, escalation model.TaskEscalation) error {
@@ -17,9 +19,22 @@ func InsertTaskEscalation(ctx context.Context, tx interface {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO task_escalations(id,task_id,run_id,question_message_id,answer_message_id,blocking,options_json,recommendation,selected_option,status,resolved_by,created_at,resolved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	answerers := escalation.Answerers
+	if answerers == nil {
+		answerers = []string{}
+	}
+	encodedAnswerers, err := json.Marshal(answerers)
+	if err != nil {
+		return err
+	}
+	var expiresAt any
+	if escalation.ExpiresAt != nil {
+		expiresAt = formatTime(*escalation.ExpiresAt)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO task_escalations(`+escalationColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		escalation.ID, escalation.TaskID, escalation.RunID, escalation.QuestionMessageID, nullableText(escalation.AnswerMessageID), escalation.Blocking,
-		string(options), escalation.Recommendation, escalation.SelectedOption, escalation.Status, escalation.ResolvedBy, formatTime(escalation.CreatedAt), nil)
+		string(options), escalation.Recommendation, escalation.SelectedOption, escalation.Status, escalation.ResolvedBy, formatTime(escalation.CreatedAt), nil,
+		string(encodedAnswerers), expiresAt, escalation.DelegatedBy)
 	return err
 }
 
@@ -30,15 +45,15 @@ func (s *Store) GetTaskEscalation(ctx context.Context, id string) (model.TaskEsc
 func LoadTaskEscalation(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id string) (model.TaskEscalation, error) {
-	return scanTaskEscalation(q.QueryRowContext(ctx, `SELECT id,task_id,run_id,question_message_id,answer_message_id,blocking,options_json,recommendation,selected_option,status,resolved_by,created_at,resolved_at FROM task_escalations WHERE id=?`, id))
+	return scanTaskEscalation(q.QueryRowContext(ctx, `SELECT `+escalationColumns+` FROM task_escalations WHERE id=?`, id))
 }
 
 func (s *Store) ListTaskEscalations(ctx context.Context, taskID string) ([]model.TaskEscalation, error) {
-	return s.listEscalations(ctx, `SELECT id,task_id,run_id,question_message_id,answer_message_id,blocking,options_json,recommendation,selected_option,status,resolved_by,created_at,resolved_at FROM task_escalations WHERE task_id=? ORDER BY id DESC`, taskID)
+	return s.listEscalations(ctx, `SELECT `+escalationColumns+` FROM task_escalations WHERE task_id=? ORDER BY id DESC`, taskID)
 }
 
 func (s *Store) ListAllTaskEscalations(ctx context.Context) ([]model.TaskEscalation, error) {
-	return s.listEscalations(ctx, `SELECT id,task_id,run_id,question_message_id,answer_message_id,blocking,options_json,recommendation,selected_option,status,resolved_by,created_at,resolved_at FROM task_escalations ORDER BY task_id,id`)
+	return s.listEscalations(ctx, `SELECT `+escalationColumns+` FROM task_escalations ORDER BY task_id,id`)
 }
 
 func (s *Store) listEscalations(ctx context.Context, query string, args ...any) ([]model.TaskEscalation, error) {
@@ -72,15 +87,31 @@ func scanTaskEscalation(row rowScanner) (model.TaskEscalation, error) {
 
 func scanEscalationValues(row rowScanner) (model.TaskEscalation, error) {
 	var item model.TaskEscalation
-	var answerMessageID, resolvedAt sql.NullString
-	var options, created string
+	var answerMessageID, resolvedAt, expiresAt sql.NullString
+	var options, answerers, created string
 	if err := row.Scan(&item.ID, &item.TaskID, &item.RunID, &item.QuestionMessageID, &answerMessageID, &item.Blocking, &options,
-		&item.Recommendation, &item.SelectedOption, &item.Status, &item.ResolvedBy, &created, &resolvedAt); err != nil {
+		&item.Recommendation, &item.SelectedOption, &item.Status, &item.ResolvedBy, &created, &resolvedAt, &answerers, &expiresAt, &item.DelegatedBy); err != nil {
 		return model.TaskEscalation{}, err
 	}
 	item.AnswerMessageID = answerMessageID.String
 	if err := json.Unmarshal([]byte(options), &item.Options); err != nil {
 		return model.TaskEscalation{}, err
+	}
+	if err := json.Unmarshal([]byte(answerers), &item.Answerers); err != nil {
+		return model.TaskEscalation{}, err
+	}
+	if len(item.Answerers) == 0 {
+		item.Answerers = nil
+	}
+	if expiresAt.Valid {
+		value, err := time.Parse(time.RFC3339Nano, expiresAt.String)
+		if err != nil {
+			return model.TaskEscalation{}, err
+		}
+		item.ExpiresAt = &value
+		if item.Status == model.EscalationOpen && !time.Now().Before(value) {
+			item.Status = model.EscalationExpired
+		}
 	}
 	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	if resolvedAt.Valid {
@@ -92,9 +123,9 @@ func scanEscalationValues(row rowScanner) (model.TaskEscalation, error) {
 
 func ResolveTaskEscalation(ctx context.Context, tx interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}, escalationID, answerMessageID, selectedOption, resolvedBy string, resolvedAt time.Time) error {
-	result, err := tx.ExecContext(ctx, `UPDATE task_escalations SET answer_message_id=?,selected_option=?,status=?,resolved_by=?,resolved_at=? WHERE id=? AND status=?`,
-		answerMessageID, selectedOption, model.EscalationAnswered, resolvedBy, formatTime(resolvedAt), escalationID, model.EscalationOpen)
+}, escalationID, answerMessageID, selectedOption, resolvedBy, delegatedBy string, resolvedAt time.Time) error {
+	result, err := tx.ExecContext(ctx, `UPDATE task_escalations SET answer_message_id=?,selected_option=?,status=?,resolved_by=?,delegated_by=?,resolved_at=? WHERE id=? AND status=?`,
+		answerMessageID, selectedOption, model.EscalationAnswered, resolvedBy, delegatedBy, formatTime(resolvedAt), escalationID, model.EscalationOpen)
 	if err != nil {
 		return err
 	}
