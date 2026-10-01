@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 17
+const latestSchemaVersion = 18
 
 type schemaMigration struct {
 	Version  int
@@ -254,6 +254,15 @@ var schemaMigrations = []schemaMigration{
 		`ALTER TABLE task_escalations ADD COLUMN IF NOT EXISTS expires_at TEXT`,
 		`ALTER TABLE task_escalations ADD COLUMN IF NOT EXISTS delegated_by TEXT NOT NULL DEFAULT ''`,
 	}},
+	{Version: 18, Name: "task_discussions", SQLite: discussionStatements, Postgres: discussionStatements},
+}
+
+var discussionStatements = []string{
+	`CREATE TABLE task_discussions (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,controller TEXT NOT NULL,status TEXT NOT NULL,agent_status TEXT NOT NULL DEFAULT '',requested_by TEXT NOT NULL,end_reason TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,started_at TEXT,last_activity_at TEXT NOT NULL,ended_at TEXT)`,
+	`CREATE INDEX idx_task_discussions_task ON task_discussions(task_id,id DESC)`,
+	`CREATE INDEX idx_task_discussions_controller ON task_discussions(controller,status,id)`,
+	`CREATE TABLE task_discussion_messages (id TEXT PRIMARY KEY,discussion_id TEXT NOT NULL REFERENCES task_discussions(id) ON DELETE CASCADE,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,author TEXT NOT NULL,role TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL)`,
+	`CREATE INDEX idx_task_discussion_messages_discussion ON task_discussion_messages(discussion_id,id)`,
 }
 
 var messagingSchema = map[string][]string{
@@ -268,6 +277,13 @@ var escalationSchema = map[string][]string{
 }
 
 var escalationIndexes = []string{"idx_task_escalations_task", "idx_task_escalations_open"}
+
+var discussionSchema = map[string][]string{
+	"task_discussions":         {"id", "task_id", "controller", "status", "agent_status", "requested_by", "end_reason", "created_at", "started_at", "last_activity_at", "ended_at"},
+	"task_discussion_messages": {"id", "discussion_id", "task_id", "author", "role", "body", "created_at"},
+}
+
+var discussionIndexes = []string{"idx_task_discussions_task", "idx_task_discussions_controller", "idx_task_discussion_messages_discussion"}
 
 var runControlSchema = map[string][]string{
 	"run_control_requests": {"id", "task_id", "target_run_id", "target_agent", "kind", "status", "requested_by", "reason", "outcome_note", "task_version", "created_at", "updated_at", "expires_at", "acknowledged_at", "decided_at", "completed_at"},
@@ -464,6 +480,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := validateSchemaParts(ctx, tx, s.db.dialect, escalationSchema, escalationIndexes, "escalation"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, discussionSchema, discussionIndexes, "discussion"); err != nil {
 		return err
 	}
 	if err := validateSchemaParts(ctx, tx, s.db.dialect, runControlSchema, runControlIndexes, "run control"); err != nil {

@@ -86,6 +86,9 @@ type Task struct {
 	// DecisionRequested is set for a person when the task has an open,
 	// unexpired escalation they may answer. It depends on the viewer.
 	DecisionRequested bool `json:"decision_requested,omitempty"`
+	// Discussable is set for a person when the task's owning controller
+	// currently accepts live discussions.
+	Discussable bool `json:"discussable,omitempty"`
 }
 
 type TaskDependency struct {
@@ -819,4 +822,57 @@ func IsMessageKind(value MessageKind) bool {
 	default:
 		return false
 	}
+}
+
+// DiscussionStatus is the lifecycle of a live discussion.
+type DiscussionStatus string
+
+const (
+	DiscussionRequested DiscussionStatus = "requested"
+	DiscussionActive    DiscussionStatus = "active"
+	DiscussionEnded     DiscussionStatus = "ended"
+)
+
+// TaskDiscussion is a live conversation between people and the controller
+// that owns a task. It never changes the task's status, checklist, runs or
+// escalations, and nothing said in it approves anything.
+type TaskDiscussion struct {
+	ID             string              `json:"id"`
+	TaskID         string              `json:"task_id"`
+	Controller     string              `json:"controller"`
+	Status         DiscussionStatus    `json:"status"`
+	AgentStatus    string              `json:"agent_status,omitempty"`
+	RequestedBy    string              `json:"requested_by"`
+	EndReason      string              `json:"end_reason,omitempty"`
+	CreatedAt      time.Time           `json:"created_at"`
+	StartedAt      *time.Time          `json:"started_at,omitempty"`
+	LastActivityAt time.Time           `json:"last_activity_at"`
+	EndedAt        *time.Time          `json:"ended_at,omitempty"`
+	Messages       []DiscussionMessage `json:"messages,omitempty"`
+}
+
+// DiscussionMessage is one plain-text turn. Role is person or agent.
+type DiscussionMessage struct {
+	ID           string    `json:"id"`
+	DiscussionID string    `json:"discussion_id"`
+	TaskID       string    `json:"task_id"`
+	Author       string    `json:"author"`
+	Role         string    `json:"role"`
+	Body         string    `json:"body"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type StartDiscussionRequest struct {
+	Message string `json:"message,omitempty"`
+}
+
+type DiscussionMessageRequest struct {
+	Body           string `json:"body"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type UpdateDiscussionRequest struct {
+	Status      DiscussionStatus `json:"status,omitempty" jsonschema:"active to accept a requested discussion, ended to close it"`
+	AgentStatus string           `json:"agent_status,omitempty" jsonschema:"thinking or ready; shown to people as the agent's live state"`
+	EndReason   string           `json:"end_reason,omitempty"`
 }
