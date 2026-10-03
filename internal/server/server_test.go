@@ -71,7 +71,7 @@ func TestMCPToolSurfaceIsAnnotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_discussion_get", "task_discussion_list", "task_discussion_reply", "task_discussion_update", "task_escalate", "task_escalation_answer", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
+	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_discussion_get", "task_discussion_list", "task_discussion_reply", "task_discussion_update", "task_escalate", "task_escalation_answer", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_inbox", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
 	got := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		got = append(got, tool.Name)
@@ -370,6 +370,16 @@ func TestRunControlRESTSurface(t *testing.T) {
 	var listed controlsOutput
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Controls) != 1 || listed.Controls[0].Status != model.RunControlAcknowledged {
 		t.Fatalf("listed controls = %d %+v: %s", response.Code, listed.Controls, response.Body.String())
+	}
+	body, _ = json.Marshal(model.InboxRequest{Runs: []model.InboxRun{{TaskID: started.Task.ID, RunID: started.Run.ID}}})
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/inbox", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response = httptest.NewRecorder()
+	controllerInbox(tasks).ServeHTTP(response, request)
+	var inbox model.Inbox
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &inbox) != nil || inbox.Count != 1 || inbox.Controls[0].ID != created.Control.ID {
+		t.Fatalf("inbox = %d %+v: %s", response.Code, inbox, response.Body.String())
 	}
 }
 

@@ -292,6 +292,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("POST /api/v1/tasks/{id}/controls", authenticated(http.HandlerFunc(createTaskControl(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/review-requeue", authenticated(http.HandlerFunc(reviewAndRequeueTask(service))))
 	mux.Handle("GET /api/v1/run-controls", authenticated(http.HandlerFunc(listPendingControls(service))))
+	mux.Handle("POST /api/v1/inbox", authenticated(http.HandlerFunc(controllerInbox(service))))
 	mux.Handle("PATCH /api/v1/run-controls/{control}", authenticated(http.HandlerFunc(updateRunControl(service))))
 	mux.Handle("GET /api/v1/tasks/{id}/references", authenticated(http.HandlerFunc(listTaskReferences(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/references", authenticated(http.HandlerFunc(addTaskReference(service))))
@@ -549,6 +550,10 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 	mcp.AddTool(server, &mcp.Tool{Name: "task_control_list", Description: "Poll actionable pause, cancel, resume, and retry requests addressed to this controller principal. This works even when the target run has ended.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input controlListInput) (*mcp.CallToolResult, controlsOutput, error) {
 		items, err := tasks.ListPendingRunControlsFor(ctx, input.Limit, mcpPrincipal(ctx))
 		return nil, controlsOutput{Controls: items}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_inbox", Description: "Check everything waiting on this agent session in one read: open controls and session requests for the named runs, discussions on their tasks that are requested or awaiting a reply, answered or expired escalations, and unreceived messages. Pass every task and run this session started or claimed, including ended runs. Reading changes nothing; act through the specific tools, and remember handled items by ID and update time.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.InboxRequest) (*mcp.CallToolResult, model.Inbox, error) {
+		inbox, err := tasks.InboxFor(ctx, input, mcpPrincipal(ctx))
+		return nil, inbox, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_control_update", Description: "Acknowledge, accept, reject, complete, or expire a control addressed to this controller. Only completed controls mutate task/run state; completion requires the latest task version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input controlUpdateInput) (*mcp.CallToolResult, controlOutput, error) {
 		item, err := tasks.UpdateRunControlFor(ctx, input.ControlID, input.UpdateRunControlRequest, mcpPrincipal(ctx))
@@ -900,6 +905,19 @@ func listPendingControls(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, controlsOutput{Controls: items})
+	}
+}
+func controllerInbox(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.InboxRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		inbox, err := tasks.InboxFor(r.Context(), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, inbox)
 	}
 }
 func updateRunControl(tasks *service.Service) http.HandlerFunc {
