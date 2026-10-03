@@ -183,6 +183,12 @@ off while nothing changes, and stop once every named task is done or
 cancelled. An idle poll is not progress: do not heartbeat merely to keep an
 idle run's lease alive.
 
+For Claude Code, the
+[taskboard-idle-inbox](../integrations/claude-code/taskboard-idle-inbox/README.md)
+plugin does this: it tracks the session's runs, reads the inbox while the
+session is idle, and wakes the agent only for items it has not reported
+before.
+
 ## Acknowledged run controls
 
 Pause, cancel, resume, and retry are requests to the controller, not immediate
