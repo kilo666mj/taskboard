@@ -876,3 +876,36 @@ type UpdateDiscussionRequest struct {
 	AgentStatus string           `json:"agent_status,omitempty" jsonschema:"thinking or ready; shown to people as the agent's live state"`
 	EndReason   string           `json:"end_reason,omitempty"`
 }
+
+// InboxRun names one run a controller wants to check for waiting work.
+type InboxRun struct {
+	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	RunID  string `json:"run_id" jsonschema:"Run ULID returned by task_start or task_claim"`
+}
+
+type InboxRequest struct {
+	Runs []InboxRun `json:"runs" jsonschema:"1-20 task and run ID pairs started or claimed by this agent session, including runs that have since ended"`
+}
+
+// InboxRunState reports where a checked run and its task stand.
+type InboxRunState struct {
+	TaskID      string     `json:"task_id"`
+	RunID       string     `json:"run_id"`
+	TaskStatus  TaskStatus `json:"task_status"`
+	TaskVersion int64      `json:"task_version"`
+	RunStatus   TaskStatus `json:"run_status"`
+	Active      bool       `json:"active"`
+}
+
+// Inbox is the work waiting on a controller for a set of its runs. Reading
+// it never changes receipt, control, discussion or escalation state.
+type Inbox struct {
+	AsOf            time.Time              `json:"as_of"`
+	Count           int                    `json:"count"`
+	Runs            []InboxRunState        `json:"runs"`
+	Controls        []RunControlRequest    `json:"controls"`
+	SessionRequests []SessionBridgeRequest `json:"session_requests"`
+	Discussions     []TaskDiscussion       `json:"discussions"`
+	Escalations     []TaskEscalation       `json:"escalations"`
+	Messages        []TaskMessage          `json:"messages"`
+}
