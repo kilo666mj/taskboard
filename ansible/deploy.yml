@@ -99,6 +99,11 @@
         chdir: "{{ playbook_dir }}/.."
       environment:
         GOCACHE: /tmp/taskboard-ansible-go-cache
+        # Build for the target, not the controller. The SQLite driver is
+        # pure Go, so a static cross-build works from any controller.
+        CGO_ENABLED: "0"
+        GOOS: linux
+        GOARCH: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
       delegate_to: localhost
       become: false
       run_once: true
