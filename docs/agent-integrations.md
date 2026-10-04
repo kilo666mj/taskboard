@@ -294,6 +294,21 @@ Dependency edits are human-owned, task-versioned, and cycle-safe. Deleting a
 task removes its incident edges through referential integrity. Controllers
 should not reinterpret an unmet dependency as the execution `blocked` status.
 
+## Producers maintaining unclaimed work
+
+A service that raises agent-lane work, such as a monitor that files a task when
+it detects a problem, may keep that task current until someone claims it. The
+agent that created a task may update its `title`, `summary`, `priority` and
+`current_note`, and may cancel it, while the task is `queued` with no owner and
+no live run. Cancelling still requires the `task:sensitive` capability. Every
+other field (checklist progress, ownership, routing, scheduling, run fields)
+stays with the claiming agent and with people, and the producer loses these
+rights as soon as the task is claimed, so it can never change work in progress.
+
+Typical use: refresh the summary when the detected condition changes, and
+cancel with a note such as "Resolved: …" when it clears before anyone picks the
+task up.
+
 ## Duplicate tasks
 
 Agents most often duplicate work by starting a new task when they should have

@@ -190,6 +190,36 @@ func canMutate(task model.Task, principal Principal) bool {
 	return task.Owner != "" && task.Owner == principal.ID
 }
 
+// producerMayUpdate lets the agent that created a task keep it current
+// until someone claims it: a monitoring service can refresh the description
+// of work it raised, or cancel it when the condition clears, without claiming
+// it out of the pickup queue. The right ends as soon as the task has an
+// owner or a live run, so a producer can never change work in progress.
+func producerMayUpdate(task model.Task, principal Principal) bool {
+	if !principal.Agent || task.CreatedBy == "" || task.CreatedBy != principal.ID || task.Owner != "" || task.Status != model.TaskQueued {
+		return false
+	}
+	for _, run := range task.Runs {
+		if run.EndedAt == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// producerFieldsOnly reports whether an update touches only what a producer
+// may change on its unclaimed task: wording, priority, the note, and
+// cancellation. Checklist, ownership, routing, scheduling, and run fields stay
+// with the claiming agent and with people.
+func producerFieldsOnly(request model.UpdateRequest) bool {
+	return request.RunID == "" && (request.Status == "" || request.Status == model.TaskCancelled) &&
+		request.Type == nil && request.Visibility == nil && request.Owner == nil && request.Section == nil &&
+		request.Project == nil && request.Repository == nil && request.DueDate == nil && request.DeferUntil == nil &&
+		request.Recurrence == nil && !request.Reviewed && request.Checklist == nil && request.Blocker == nil &&
+		request.WaitingFor == nil && request.CurrentItemID == "" && len(request.CompleteItemIDs) == 0 &&
+		len(request.SkipItemIDs) == 0 && len(request.AddItems) == 0 && request.DuplicateOf == nil
+}
+
 func validateIdempotencyKey(key string) error {
 	if key == "" {
 		return nil
@@ -1798,7 +1828,7 @@ func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.Up
 	if err != nil {
 		return model.Task{}, err
 	}
-	if !canMutate(current, principal) {
+	if !canMutate(current, principal) && !(producerMayUpdate(current, principal) && producerFieldsOnly(request)) {
 		return model.Task{}, ErrForbidden
 	}
 	if principal.Agent && request.Visibility != nil {
