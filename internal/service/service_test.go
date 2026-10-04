@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -96,29 +97,76 @@ func TestAgentCapabilitiesAndSensitiveApprovalGate(t *testing.T) {
 	}
 
 	agent := AgentPrincipal("agent:worker")
-	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Guarded work", Checklist: []string{"Sensitive step"}}, agent)
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Guarded work", Checklist: []string{"Obsolete step", "Real step"}}, agent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{
 		ExpectedVersion: started.Task.Version,
 		RunID:           started.Run.ID,
+		Status:          model.TaskCancelled,
+	}, agent); !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), CapabilityTaskSensitive) {
+		t.Fatalf("ungated cancel error = %v, want forbidden naming %s", err, CapabilityTaskSensitive)
+	}
+
+	noSkip := DefaultAgentPolicy()
+	delete(noSkip.Capabilities, CapabilityTaskSkip)
+	if _, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{
+		ExpectedVersion: started.Task.Version,
+		RunID:           started.Run.ID,
 		SkipItemIDs:     []string{started.Task.Items[0].ID},
-		SkipReason:      "irreversible",
-	}, agent); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("ungated sensitive update error = %v, want forbidden", err)
+		SkipReason:      "no longer applies",
+	}, AgentPrincipalWithPolicy("agent:worker", noSkip)); !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), CapabilityTaskSkip) {
+		t.Fatalf("skip without task:skip error = %v, want forbidden naming %s", err, CapabilityTaskSkip)
+	}
+
+	skipped, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{
+		ExpectedVersion: started.Task.Version,
+		RunID:           started.Run.ID,
+		SkipItemIDs:     []string{started.Task.Items[0].ID},
+		SkipReason:      "no longer applies",
+	}, agent)
+	if err != nil {
+		t.Fatalf("default agent skip: %v", err)
 	}
 
 	policy := DefaultAgentPolicy()
 	policy.Capabilities[CapabilityTaskSensitive] = true
 	approved := AgentPrincipalWithPolicy("agent:worker", policy)
 	if _, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{
-		ExpectedVersion: started.Task.Version,
+		ExpectedVersion: skipped.Version,
 		RunID:           started.Run.ID,
-		SkipItemIDs:     []string{started.Task.Items[0].ID},
-		SkipReason:      "approved by policy",
+		Status:          model.TaskCancelled,
 	}, approved); err != nil {
-		t.Fatalf("approved sensitive update: %v", err)
+		t.Fatalf("approved sensitive cancel: %v", err)
+	}
+}
+
+func TestVersionConflictExplainsStaleRuns(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Lease work", Checklist: []string{"Step"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: started.Task.Version, RunID: started.Run.ID, CurrentNote: ptr("Working")}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: started.Task.Version, RunID: started.Run.ID}, agent)
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), fmt.Sprintf("version %d", updated.Version)) || !strings.Contains(err.Error(), "task_get") {
+		t.Fatalf("plain conflict error = %v", err)
+	}
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE agent_runs SET lease_expires_at=? WHERE id=?`, past, started.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.SweepStale(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: updated.Version, RunID: started.Run.ID, Status: model.TaskDone}, agent)
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "task_claim") || !strings.Contains(err.Error(), "lease expired") {
+		t.Fatalf("stale conflict error = %v", err)
 	}
 }
 

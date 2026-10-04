@@ -127,6 +127,22 @@ func (s *Service) AddTaskReferenceFor(ctx context.Context, taskID string, reques
 	return reference, nil
 }
 
+// MarkLinkCountsFor sets LinkCount on tasks for people. Agents read delivery
+// details through their own run, so their listings are left unmarked.
+func (s *Service) MarkLinkCountsFor(ctx context.Context, tasks []model.Task, principal Principal) error {
+	if principal.Agent || len(tasks) == 0 {
+		return nil
+	}
+	counts, err := s.store.CountDeliveryItems(ctx)
+	if err != nil {
+		return err
+	}
+	for index := range tasks {
+		tasks[index].LinkCount = counts[tasks[index].ID]
+	}
+	return nil
+}
+
 func (s *Service) DeliveryMilestonesFor(ctx context.Context, taskID string, principal Principal) ([]model.DeliveryMilestone, error) {
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {

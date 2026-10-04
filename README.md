@@ -144,9 +144,9 @@ when completed, including a fresh copy of the checklist.
 
 The board opens with every unfinished visible task. Optional compact views cover
 Private, Team, Agent pickup, Inbox, Today, Upcoming, Waiting, Active agents,
-Completed, and daily and weekly review queues. Search always spans all visible
-tasks by title, context, lane, section, project, repository, and owner,
-regardless of the selected view. Review queues surface
+Completed, and daily and weekly review queues. Search matches title, context,
+lane, section, project, repository, and owner within the selected view; when
+other views hold more matches, the board offers to search all visible tasks. Review queues surface
 unplanned, overdue, stale, and waiting work and let a person explicitly mark a
 task reviewed. Reusable templates preserve planning fields and checklists.
 

@@ -52,18 +52,22 @@ type AgentPolicy struct {
 }
 
 const (
-	CapabilityTaskRead        = "task:read"
-	CapabilityTaskCreate      = "task:create"
-	CapabilityTaskClaim       = "task:claim"
-	CapabilityTaskUpdate      = "task:update"
-	CapabilityTaskMessage     = "task:message"
-	CapabilityTaskEscalate    = "task:escalate"
-	CapabilityTaskControl     = "task:control"
-	CapabilityTaskReference   = "task:reference"
-	CapabilityTaskHandoff     = "task:handoff"
-	CapabilityTaskEvidence    = "task:evidence"
-	CapabilityTaskSession     = "task:session"
-	CapabilityTaskComplete    = "task:complete"
+	CapabilityTaskRead      = "task:read"
+	CapabilityTaskCreate    = "task:create"
+	CapabilityTaskClaim     = "task:claim"
+	CapabilityTaskUpdate    = "task:update"
+	CapabilityTaskMessage   = "task:message"
+	CapabilityTaskEscalate  = "task:escalate"
+	CapabilityTaskControl   = "task:control"
+	CapabilityTaskReference = "task:reference"
+	CapabilityTaskHandoff   = "task:handoff"
+	CapabilityTaskEvidence  = "task:evidence"
+	CapabilityTaskSession   = "task:session"
+	CapabilityTaskComplete  = "task:complete"
+	// CapabilityTaskSkip lets the owning run skip checklist items with a
+	// recorded reason, so it can finish work whose remaining steps no longer
+	// apply. Cancelling and duplicate marking stay behind task:sensitive.
+	CapabilityTaskSkip        = "task:skip"
 	CapabilityTaskSensitive   = "task:sensitive"
 	CapabilityWorkerAdvertise = "worker:advertise"
 	CapabilityTaskUsage       = "task:usage"
@@ -73,7 +77,7 @@ const (
 
 var KnownAgentCapabilities = []string{
 	CapabilityTaskRead, CapabilityTaskCreate, CapabilityTaskClaim, CapabilityTaskUpdate,
-	CapabilityTaskMessage, CapabilityTaskEscalate, CapabilityTaskControl, CapabilityTaskReference, CapabilityTaskHandoff, CapabilityTaskEvidence, CapabilityTaskSession, CapabilityTaskUsage, CapabilityTaskComplete, CapabilityTaskSensitive, CapabilityWorkerAdvertise, CapabilityTemplateRead, CapabilityTemplateManage,
+	CapabilityTaskMessage, CapabilityTaskEscalate, CapabilityTaskControl, CapabilityTaskReference, CapabilityTaskHandoff, CapabilityTaskEvidence, CapabilityTaskSession, CapabilityTaskUsage, CapabilityTaskComplete, CapabilityTaskSkip, CapabilityTaskSensitive, CapabilityWorkerAdvertise, CapabilityTemplateRead, CapabilityTemplateManage,
 }
 
 func DefaultAgentPolicy() AgentPolicy {
@@ -178,6 +182,25 @@ func CanView(task model.Task, principal Principal) bool {
 		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && task.Owner == principal.ID
 	}
 	return task.Visibility != model.VisibilityPrivate || task.CreatedBy != "" && task.CreatedBy == principal.ID
+}
+
+// missingCapability explains which agent capability an action needs, so a
+// controller can tell a policy refusal from a task it may not touch.
+func missingCapability(capability, action string) error {
+	return fmt.Errorf("%w: the %s capability is required to %s", ErrForbidden, capability, action)
+}
+
+// versionConflict explains a stale expected_version. A task most often moves
+// under an agent because its run lease expired, which marks it stale and ends
+// the run; the agent then has to re-read and claim it before continuing.
+func versionConflict(current model.Task, expected int64, runEnded bool) error {
+	hint := "re-read it with task_get and retry with the current version"
+	if current.Status == model.TaskStale {
+		hint = "its run lease expired, so the task is stale; claim it again with task_claim (using the current version) and retry with the new run"
+	} else if runEnded {
+		hint = "your run has ended; claim the task again with task_claim and retry with the new run"
+	}
+	return fmt.Errorf("%w: the task is at version %d, not %d; %s", ErrConflict, current.Version, expected, hint)
 }
 
 func canMutate(task model.Task, principal Principal) bool {
@@ -1381,7 +1404,14 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		return model.Task{}, err
 	}
 	if current.Version != request.ExpectedVersion {
-		return model.Task{}, ErrConflict
+		runEnded := false
+		if request.RunID != "" {
+			var ended sql.NullString
+			if err := tx.QueryRowContext(ctx, `SELECT ended_at FROM agent_runs WHERE id=? AND task_id=?`, request.RunID, taskID).Scan(&ended); err == nil {
+				runEnded = ended.Valid
+			}
+		}
+		return model.Task{}, versionConflict(current, request.ExpectedVersion, runEnded)
 	}
 	if request.Visibility != nil && *request.Visibility != current.Visibility {
 		var activeRuns int
@@ -1797,14 +1827,17 @@ func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.Up
 			defer s.idempotencyMu.Unlock()
 		}
 		if !principal.HasCapability(CapabilityTaskUpdate) {
-			return model.Task{}, ErrForbidden
+			return model.Task{}, missingCapability(CapabilityTaskUpdate, "update tasks")
 		}
 		if request.Status == model.TaskDone && !principal.HasCapability(CapabilityTaskComplete) {
-			return model.Task{}, ErrForbidden
+			return model.Task{}, missingCapability(CapabilityTaskComplete, "mark tasks done")
 		}
 		marksDuplicate := request.DuplicateOf != nil && strings.TrimSpace(*request.DuplicateOf) != ""
-		if (request.Status == model.TaskCancelled || marksDuplicate || len(request.SkipItemIDs) > 0) && !principal.HasCapability(CapabilityTaskSensitive) {
-			return model.Task{}, ErrForbidden
+		if (request.Status == model.TaskCancelled || marksDuplicate) && !principal.HasCapability(CapabilityTaskSensitive) {
+			return model.Task{}, missingCapability(CapabilityTaskSensitive, "cancel tasks or mark them duplicates; ask a person to do it")
+		}
+		if len(request.SkipItemIDs) > 0 && !principal.HasCapability(CapabilityTaskSkip) && !principal.HasCapability(CapabilityTaskSensitive) {
+			return model.Task{}, missingCapability(CapabilityTaskSkip, "skip checklist items; ask a person to skip them or finish the steps")
 		}
 		hash, err := requestHash(struct {
 			TaskID string
@@ -1829,13 +1862,16 @@ func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.Up
 		return model.Task{}, err
 	}
 	if !canMutate(current, principal) && !(producerMayUpdate(current, principal) && producerFieldsOnly(request)) {
+		if principal.Agent && current.Owner != principal.ID {
+			return model.Task{}, fmt.Errorf("%w: the task is owned by %q, not %s; claim it first", ErrForbidden, current.Owner, principal.ID)
+		}
 		return model.Task{}, ErrForbidden
 	}
 	if principal.Agent && request.Visibility != nil {
-		return model.Task{}, ErrForbidden
+		return model.Task{}, fmt.Errorf("%w: agents cannot change task visibility", ErrForbidden)
 	}
 	if principal.Agent && request.Owner != nil && strings.TrimSpace(*request.Owner) != principal.ID {
-		return model.Task{}, ErrForbidden
+		return model.Task{}, fmt.Errorf("%w: agents can only assign tasks to themselves", ErrForbidden)
 	}
 	if request.DuplicateOf != nil && strings.TrimSpace(*request.DuplicateOf) != "" {
 		if _, err := s.GetFor(ctx, strings.TrimSpace(*request.DuplicateOf), principal); err != nil {
