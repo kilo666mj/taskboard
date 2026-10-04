@@ -437,6 +437,13 @@ func (s *Service) SetFixedTaskType(taskType model.TaskType) {
 	s.fixedType = taskType
 }
 
+// ValidateRequirements reports whether requirement tokens are acceptable as
+// instance defaults, without needing a running service.
+func ValidateRequirements(values []string) error {
+	_, err := normalizeRequirements(values)
+	return err
+}
+
 // SetDefaultRequirements sets the operational requirements given to
 // agent-lane tasks that are created, or moved into the agent lane, without
 // any. An empty list disables defaults.

@@ -97,6 +97,17 @@ Create a dedicated service account and state directory, place environment
 configuration in a root-owned file, and use the hardened example unit in
 `ansible/templates/taskboard.service.j2` as the systemd baseline.
 
+`taskboard -version` prints the release and, for source builds, the embedded
+VCS revision. `taskboard -check-config` validates the configuration without
+opening the database or listening, and `-env-file` points it at a systemd
+environment file instead of the current environment. Run it against a new
+binary and environment before restarting the service, so a rejected setting
+fails the upgrade instead of the running server:
+
+```sh
+/usr/local/bin/taskboard.new -check-config -env-file /etc/taskboard/taskboard.env.new
+```
+
 ## Ansible example
 
 The tracked inventory uses documentation-only addresses. Copy it and the
@@ -110,6 +121,9 @@ ansible-playbook -i ansible/inventory.local.ini ansible/deploy.yml
 
 Both local files are ignored. Never put production hostnames, addresses, or
 credentials back into tracked examples.
+
+The playbook stages the binary and environment as `.candidate` files, runs
+`-check-config` on them, and only then installs them and restarts Taskboard.
 
 An instance that serves only one kind of work should set `taskboard_task_type`
 to `personal` or `work` in `private.yml`. Every new task then gets that type

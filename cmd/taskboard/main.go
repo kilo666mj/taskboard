@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -22,6 +24,30 @@ import (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	check := flag.Bool("check-config", false, "validate the configuration and exit without starting the server")
+	envFile := flag.String("env-file", "", "with -check-config, validate this systemd environment file instead of the current environment")
+	flag.Parse()
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q\n", flag.Arg(0))
+		os.Exit(2)
+	}
+	if *showVersion {
+		fmt.Println(versionString())
+		return
+	}
+	if *check {
+		if err := checkConfig(*envFile); err != nil {
+			fmt.Fprintln(os.Stderr, "invalid configuration:", err)
+			os.Exit(1)
+		}
+		fmt.Println("configuration ok")
+		return
+	}
+	if *envFile != "" {
+		fmt.Fprintln(os.Stderr, "-env-file is only used with -check-config")
+		os.Exit(2)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
 	if err != nil {

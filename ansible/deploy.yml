@@ -134,9 +134,38 @@
         group: taskboard
         mode: "0750"
 
-    - name: Install Taskboard binary
+    # Stage the binary and environment next to the live ones and validate
+    # them together, so a configuration the new build rejects fails the
+    # deployment instead of crash-looping the restarted service.
+    - name: Stage Taskboard binary
       ansible.builtin.copy:
         src: "{{ taskboard_binary }}"
+        dest: /usr/local/bin/taskboard.candidate
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Stage protected environment
+      ansible.builtin.template:
+        src: templates/taskboard.env.j2
+        dest: /etc/taskboard/taskboard.env.candidate
+        owner: root
+        group: taskboard
+        mode: "0640"
+
+    - name: Validate staged configuration
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/taskboard.candidate
+          - -check-config
+          - -env-file
+          - /etc/taskboard/taskboard.env.candidate
+      changed_when: false
+
+    - name: Install Taskboard binary
+      ansible.builtin.copy:
+        src: /usr/local/bin/taskboard.candidate
+        remote_src: true
         dest: /usr/local/bin/taskboard
         owner: root
         group: root
@@ -144,8 +173,9 @@
       notify: Restart Taskboard
 
     - name: Install protected environment
-      ansible.builtin.template:
-        src: templates/taskboard.env.j2
+      ansible.builtin.copy:
+        src: /etc/taskboard/taskboard.env.candidate
+        remote_src: true
         dest: /etc/taskboard/taskboard.env
         owner: root
         group: taskboard
