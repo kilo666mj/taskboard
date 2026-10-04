@@ -498,7 +498,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		task, err := tasks.MoveFor(ctx, input.TaskID, input.MoveRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_complete", Description: "Mark a task done. Rejected while any required checklist item remains open; skipped items require a recorded reason.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_complete", Description: "Mark a task done. Rejected while any required checklist item remains open; skip items that no longer apply with skip_item_ids and a skip_reason (needs the task:skip capability). On a version conflict, re-read the task; if its run lease expired, claim it again before retrying.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		input.Status = model.TaskDone
 		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
@@ -708,6 +708,9 @@ func listTasks(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		tasks.MarkDiscussableFor(r.Context(), page.Tasks, principal(r.Context()))
+		if apiError(w, tasks.MarkLinkCountsFor(r.Context(), page.Tasks, principal(r.Context()))) {
+			return
+		}
 		writeJSON(w, http.StatusOK, tasksOutput{Tasks: page.Tasks, NextCursor: page.NextCursor})
 	}
 }
@@ -748,6 +751,9 @@ func getTask(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		tasks.MarkDiscussableFor(r.Context(), marked, principal(r.Context()))
+		if apiError(w, tasks.MarkLinkCountsFor(r.Context(), marked, principal(r.Context()))) {
+			return
+		}
 		task = marked[0]
 		handoffs, _ := tasks.ListRunHandoffsFor(r.Context(), task.ID, principal(r.Context()))
 		writeJSON(w, http.StatusOK, taskOutput{Task: task, Handoffs: handoffs})

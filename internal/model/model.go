@@ -93,6 +93,10 @@ type Task struct {
 	// Discussable is set for a person when the task's owning controller
 	// currently accepts live discussions.
 	Discussable bool `json:"discussable,omitempty"`
+	// LinkCount is the number of delivery references, run handoffs and
+	// completion requirements attached to the task, so people can tell
+	// whether its Links panel has anything in it.
+	LinkCount int `json:"link_count,omitempty"`
 }
 
 // TaskLink identifies another task by ID with enough context to display it.

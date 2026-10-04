@@ -58,3 +58,32 @@ func TestHumanReferenceCannotClaimAgentProvenance(t *testing.T) {
 		t.Fatalf("human reference = %+v, %v", created, err)
 	}
 }
+
+func TestMarkLinkCountsForCountsDeliveryItemsForPeople(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	linked, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Linked delivery", Checklist: []string{"Ship"}, IdempotencyKey: "link-count-linked"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"link-count-pr", "link-count-ci"} {
+		if _, err := tasks.AddTaskReferenceFor(t.Context(), linked.Task.ID, model.AddTaskReferenceRequest{RunID: linked.Run.ID, Kind: model.ReferenceCIRun, Label: key, Locator: key, IdempotencyKey: key}, agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	empty, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Unlinked delivery", Checklist: []string{"Ship"}, IdempotencyKey: "link-count-empty"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []model.Task{linked.Task, empty.Task}
+	if err := tasks.MarkLinkCountsFor(t.Context(), items, HumanPrincipal("human:viewer")); err != nil {
+		t.Fatal(err)
+	}
+	if items[0].LinkCount != 2 || items[1].LinkCount != 0 {
+		t.Fatalf("link counts = %d, %d; want 2, 0", items[0].LinkCount, items[1].LinkCount)
+	}
+	items = []model.Task{linked.Task}
+	if err := tasks.MarkLinkCountsFor(t.Context(), items, agent); err != nil || items[0].LinkCount != 0 {
+		t.Fatalf("agent link count = %d, %v; want unmarked", items[0].LinkCount, err)
+	}
+}

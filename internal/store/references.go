@@ -37,6 +37,26 @@ func (s *Store) ListTaskReferences(ctx context.Context, taskID string) ([]model.
 	return s.listTaskReferences(ctx, `SELECT id,task_id,run_id,kind,label,locator,url,created_by,provenance,created_at FROM task_references WHERE task_id=? ORDER BY id`, taskID)
 }
 
+// CountDeliveryItems returns, per task, how many references, run handoffs and
+// completion requirements it has. Tasks with none are absent.
+func (s *Store) CountDeliveryItems(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id,COUNT(*) FROM (SELECT task_id FROM task_references UNION ALL SELECT task_id FROM run_handoffs UNION ALL SELECT task_id FROM completion_requirements) items GROUP BY task_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	counts := map[string]int{}
+	for rows.Next() {
+		var taskID string
+		var count int
+		if err := rows.Scan(&taskID, &count); err != nil {
+			return nil, err
+		}
+		counts[taskID] = count
+	}
+	return counts, rows.Err()
+}
+
 func (s *Store) ListAllTaskReferences(ctx context.Context) ([]model.TaskReference, error) {
 	return s.listTaskReferences(ctx, `SELECT id,task_id,run_id,kind,label,locator,url,created_by,provenance,created_at FROM task_references ORDER BY task_id,id`)
 }

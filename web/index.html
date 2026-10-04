@@ -78,7 +78,7 @@
             <option value="updated">Recently updated</option>
           </select>
         </label>
-        <label class="search-box"><span class="visually-hidden">Search all tasks</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search tasks"></label>
+        <label class="search-box"><span class="visually-hidden">Search tasks in this view</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search tasks"></label>
       </div>
 
       <section id="board" class="board" aria-live="polite" aria-busy="true"></section>
@@ -124,7 +124,7 @@
         <label>Repeat<select id="taskRecurrence"><option value="">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
       </div>
       <label>Task context <span>(durable)</span><textarea id="taskSummary" maxlength="2000" rows="4" aria-describedby="taskContextHelp" placeholder="Describe the desired outcome, background, constraints, and important links"></textarea></label>
-      <p id="taskContextHelp" class="field-help">This stays with the task. Use Conversation for later updates and decisions; the status note remains a concise snapshot of current progress.</p>
+      <p id="taskContextHelp" class="field-help">This stays with the task. Use Messages for later updates and decisions; the status note remains a concise snapshot of current progress.</p>
       <fieldset>
         <legend>Checklist <span>(optional)</span></legend>
         <div id="checklistEditor" class="checklist-editor"></div>
@@ -198,18 +198,28 @@
           </form>
           <button class="secondary finish-self" type="button">Mark done</button>
         </div>
-        <details class="run-details" hidden>
-          <summary>Agent sessions</summary>
-          <div class="run-list"></div>
-        </details>
-        <details class="delivery">
-          <summary>Delivery <span class="reference-count"></span></summary>
+        <details class="delivery" hidden>
+          <summary>Links <span class="reference-count"></span></summary>
           <div class="delivery-panel">
-            <p class="delivery-status" role="status">Open to load delivery details.</p>
+            <p class="delivery-status" role="status"></p>
             <ol class="milestone-list" aria-label="Delivery milestones"></ol>
-            <section class="completion-contract" aria-label="Completion contract">
+            <section class="completion-contract" aria-label="Completion gates">
               <div class="completion-list"></div>
+            </section>
+            <div class="handoff-list" aria-label="Run handoffs"></div>
+            <ul class="reference-list" aria-label="Links"></ul>
+            <div class="link-add" hidden>
+              <form class="reference-form">
+                <div class="reference-fields">
+                  <label>Kind<select name="kind"><option value="linear">Linear</option><option value="repository">Repository</option><option value="worktree">Worktree</option><option value="branch">Branch</option><option value="commit">Commit</option><option value="pull_request">Pull request</option><option value="ci_run">CI run</option><option value="deployment">Deployment</option><option value="screenshot">Screenshot</option><option value="review">Review</option></select></label>
+                  <label>Label<input name="label" maxlength="200" required placeholder="PR #42"></label>
+                </div>
+                <label>Locator<input name="locator" maxlength="2000" placeholder="org/repo#42, branch, SHA, or local path"></label>
+                <label>HTTPS URL<input name="url" type="url" inputmode="url" maxlength="2000" placeholder="https://…"></label>
+                <button class="secondary add-reference" type="submit">Add link</button>
+              </form>
               <form class="completion-form">
+                <p class="field-help">A completion gate must be met or waived before the task can be marked done.</p>
                 <div class="reference-fields">
                   <label>Gate<select name="kind"><option value="pull_request">Pull request</option><option value="green_ci">Green CI</option><option value="validation">Validation</option><option value="resolved_review">Resolved review</option><option value="deployment">Deployment</option><option value="human_approval">Human approval</option><option value="custom">Custom</option></select></label>
                   <label>Acceptance criterion<input name="label" required maxlength="300" placeholder="Required before completion"></label>
@@ -217,26 +227,16 @@
                 <label class="inline-check"><input name="required" type="checkbox" checked> Required gate</label>
                 <button class="secondary add-completion" type="submit">Add completion gate</button>
               </form>
-            </section>
-            <div class="handoff-list" aria-label="Run handoffs"></div>
-            <ul class="reference-list" aria-label="Delivery references"></ul>
-            <form class="reference-form">
-              <div class="reference-fields">
-                <label>Kind<select name="kind"><option value="linear">Linear</option><option value="repository">Repository</option><option value="worktree">Worktree</option><option value="branch">Branch</option><option value="commit">Commit</option><option value="pull_request">Pull request</option><option value="ci_run">CI run</option><option value="deployment">Deployment</option><option value="screenshot">Screenshot</option><option value="review">Review</option></select></label>
-                <label>Label<input name="label" maxlength="200" required placeholder="PR #42"></label>
-              </div>
-              <label>Locator<input name="locator" maxlength="2000" placeholder="org/repo#42, branch, SHA, or local path"></label>
-              <label>HTTPS URL<input name="url" type="url" inputmode="url" maxlength="2000" placeholder="https://…"></label>
-              <button class="secondary add-reference" type="submit">Add reference</button>
-            </form>
+            </div>
           </div>
         </details>
         <details class="conversation">
-          <summary>Conversation <span class="message-count"></span></summary>
+          <summary>Messages <span class="message-count"></span></summary>
           <div class="conversation-panel">
             <p class="conversation-status" role="status"></p>
             <section class="control-panel" aria-label="Run controls">
               <div class="control-list"></div>
+              <details class="control-toggle" hidden><summary>Pause or stop the agent</summary>
               <form class="control-form" hidden>
                 <input name="target_run_id" type="hidden">
                 <div class="control-fields">
@@ -246,35 +246,31 @@
                 <button class="secondary request-control" type="submit">Send request</button>
                 <p class="requeue-help field-help" hidden>Review the task details and provenance first. Requeueing records your identity as the last editor and makes the task eligible for a fresh claim.</p>
               </form>
+              </details>
             </section>
             <div class="escalation-list" aria-label="Task decisions"></div>
-            <ol class="message-list" aria-label="Task conversation"></ol>
+            <ol class="message-list" aria-label="Task messages"></ol>
             <form class="message-form">
               <input name="reply_to_id" type="hidden">
               <input name="supersedes_id" type="hidden">
               <div class="message-context" hidden><span></span><button class="text-button clear-message-context" type="button">Clear</button></div>
-              <div class="message-controls">
-                <label>Kind<select name="kind"><option value="note">Note</option><option value="instruction">Instruction</option><option value="question">Question</option><option value="answer">Answer</option></select></label>
-                <label>Target<select name="target_run_id"><option value="">Task context</option></select></label>
+              <div class="message-mode" role="radiogroup" aria-label="Send as" hidden>
+                <label><input type="radio" name="channel" value="live"> Live chat</label>
+                <label><input type="radio" name="channel" value="queued"> Note for next check-in</label>
               </div>
-              <label>Message<textarea name="body" maxlength="4000" rows="3" required placeholder="Add context or give the active agent a direction"></textarea></label>
-              <div class="message-submit-row">
+                            <textarea name="body" maxlength="4000" rows="2" required aria-label="Message"></textarea>
+              <p class="live-status field-help" role="status" aria-live="polite" hidden></p>
+              <details class="message-options">
+                <summary>More options</summary>
+                <div class="message-controls">
+                  <label>Kind<select name="kind"><option value="note">Note</option><option value="instruction">Instruction</option><option value="question">Question</option><option value="answer">Answer</option></select></label>
+                  <label>Target<select name="target_run_id"><option value="">Task context</option></select></label>
+                </div>
                 <label class="ack-option"><input name="requires_ack" type="checkbox"> Require acknowledgement</label>
-                <button class="primary send-message" type="submit">Send</button>
-              </div>
-            </form>
-          </div>
-        </details>
-        <details class="discussion" hidden>
-          <summary>Discuss live</summary>
-          <div class="discussion-panel">
-            <p class="discussion-status" role="status" aria-live="polite"></p>
-            <ol class="discussion-list" aria-label="Live discussion"></ol>
-            <form class="discussion-form">
-              <label>Message<textarea name="body" maxlength="4000" rows="2" required placeholder="Ask the agent about this task"></textarea></label>
+              </details>
               <div class="message-submit-row">
-                <button class="text-button end-discussion" type="button" hidden>End discussion</button>
-                <button class="primary send-discussion" type="submit">Send</button>
+                <button class="text-button end-discussion" type="button" hidden>End live chat</button>
+                <button class="primary send-message" type="submit">Send</button>
               </div>
             </form>
           </div>
@@ -284,9 +280,10 @@
           <button class="text-button move-up" type="button" aria-label="Move task up">↑</button>
           <button class="text-button move-down" type="button" aria-label="Move task down">↓</button>
           <button class="text-button review-task" type="button">Reviewed</button>
+          <button class="text-button add-link" type="button">Add link</button>
           <button class="text-button cancel-task" type="button">Cancel task</button>
         </div>
-        <div class="task-footer"><span class="repository"></span><span class="run-state"></span></div>
+        <div class="task-footer"><span class="repository"></span><details class="run-details"><summary><span class="run-state"></span></summary><div class="run-list"></div></details></div>
       </div>
     </article>
   </template>
