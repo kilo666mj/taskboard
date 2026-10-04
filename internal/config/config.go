@@ -114,7 +114,7 @@ func Load() (Config, error) {
 		AdminGroups:                split(os.Getenv("TASKBOARD_ADMIN_GROUPS")),
 		MemberGroups:               split(os.Getenv("TASKBOARD_MEMBER_GROUPS")),
 		ViewerGroups:               split(os.Getenv("TASKBOARD_VIEWER_GROUPS")),
-		AgentCapabilities:          split(env("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:create,task:claim,task:update,task:message,task:escalate,task:control,task:reference,task:handoff,task:evidence,task:session,task:usage,task:complete,worker:advertise,template:read,template:manage")),
+		AgentCapabilities:          split(env("TASKBOARD_AGENT_CAPABILITIES", "task:read,task:create,task:claim,task:update,task:message,task:escalate,task:control,task:reference,task:handoff,task:evidence,task:session,task:usage,task:complete,task:skip,worker:advertise,template:read,template:manage")),
 		AgentMaxConcurrentRuns:     envInt("TASKBOARD_AGENT_MAX_CONCURRENT_RUNS", 8),
 		AgentMaxPickupsPerMinute:   envInt("TASKBOARD_AGENT_MAX_PICKUPS_PER_MINUTE", 30),
 		AgentMaxRunDuration:        time.Duration(envInt("TASKBOARD_AGENT_MAX_RUN_SECONDS", 28800)) * time.Second,
@@ -328,7 +328,7 @@ func envInt(name string, fallback int) int {
 func validateAgentPolicies(cfg Config) error {
 	known := map[string]bool{
 		"task:read": true, "task:create": true, "task:claim": true, "task:update": true,
-		"task:message": true, "task:escalate": true, "task:control": true, "task:reference": true, "task:handoff": true, "task:evidence": true, "task:session": true, "task:usage": true, "task:complete": true, "task:sensitive": true, "worker:advertise": true, "template:read": true, "template:manage": true,
+		"task:message": true, "task:escalate": true, "task:control": true, "task:reference": true, "task:handoff": true, "task:evidence": true, "task:session": true, "task:usage": true, "task:complete": true, "task:skip": true, "task:sensitive": true, "worker:advertise": true, "template:read": true, "template:manage": true,
 	}
 	validateCapabilities := func(name string, capabilities []string) error {
 		for _, capability := range capabilities {

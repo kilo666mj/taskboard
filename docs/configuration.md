@@ -83,12 +83,15 @@ authorization model; automated-agent capabilities are configured separately.
 
 Service principals receive named capabilities instead of inheriting browser
 roles. The supported labels are `task:read`, `task:create`, `task:claim`,
-`task:update`, `task:message`, `task:escalate`, `task:control`, `task:reference`, `task:handoff`, `task:evidence`, `task:session`, `task:usage`, `task:complete`, `task:sensitive`, `worker:advertise`, `template:read`,
+`task:update`, `task:message`, `task:escalate`, `task:control`, `task:reference`, `task:handoff`, `task:evidence`, `task:session`, `task:usage`, `task:complete`, `task:skip`, `task:sensitive`, `worker:advertise`, `template:read`,
 and `template:manage`. `task:message` permits an owned active run to append
 conversation and record explicit receipts; it does not permit task mutation.
-Cancelling a task or skipping checklist items requires the
-separate `task:sensitive` capability. It is excluded from the default policy,
-so granting it is the operator approval gate for those irreversible actions.
+`task:skip` lets the owning run skip checklist items with a recorded reason,
+so it can finish work whose remaining steps no longer apply; skips and their
+reasons stay visible on the task. Cancelling a task or marking it a duplicate
+requires the separate `task:sensitive` capability, which also permits skipping.
+It is excluded from the default policy, so granting it is the operator approval
+gate for those irreversible actions.
 
 Per-principal policies use the canonical authenticated actor ID. For example,
 this policy gives a Cloudflare service token read/claim access, one concurrent

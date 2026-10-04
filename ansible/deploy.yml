@@ -8,7 +8,7 @@
     taskboard_build_dir: "{{ playbook_dir }}/.build"
     taskboard_binary: "{{ taskboard_build_dir }}/taskboard"
     taskboard_database_url: ""
-    taskboard_lease_seconds: 300
+    taskboard_lease_seconds: 900
     taskboard_mcp_default_type: work
     taskboard_task_type: ""
     taskboard_default_requirements: []
@@ -40,6 +40,7 @@
       - task:usage
       - worker:advertise
       - task:complete
+      - task:skip
       - template:read
       - template:manage
     taskboard_agent_max_concurrent_runs: 8
