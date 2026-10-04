@@ -437,9 +437,6 @@ func (s *Service) SetFixedTaskType(taskType model.TaskType) {
 	s.fixedType = taskType
 }
 
-// SetDefaultRequirements sets the operational requirements given to
-// agent-lane tasks that are created, or moved into the agent lane, without
-// any. An empty list disables defaults.
 // ValidateRequirements reports whether requirement tokens are acceptable as
 // instance defaults, without needing a running service.
 func ValidateRequirements(values []string) error {
@@ -447,6 +444,9 @@ func ValidateRequirements(values []string) error {
 	return err
 }
 
+// SetDefaultRequirements sets the operational requirements given to
+// agent-lane tasks that are created, or moved into the agent lane, without
+// any. An empty list disables defaults.
 func (s *Service) SetDefaultRequirements(values []string) error {
 	items, err := normalizeRequirements(values)
 	if err != nil {
