@@ -199,3 +199,4 @@ html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .can
 .view-picker select{appearance:none;height:34px;line-height:1.1;padding-block:0}
 .search-box input{height:34px;padding-block:0}
 @media(max-width:720px){html:not([data-runtime="desktop"]) .view-picker select,html:not([data-runtime="desktop"]) .search-box input{height:42px}}
+.app-dialog form{display:grid;gap:4px}.app-dialog h2{font-size:1.25rem}.app-dialog p{white-space:pre-wrap;overflow-wrap:anywhere}.primary.danger{background:var(--red);color:#1a0705}.primary.danger:hover{background:#ff9a92}

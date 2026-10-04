@@ -176,7 +176,7 @@ func TestTaskCancellationUsesAcknowledgedControlsForActiveRuns(t *testing.T) {
 		`run.status==='active'&&!run.ended_at`,
 		`kind:'cancel'`,
 		`status:'cancelled'`,
-		`window.confirm(prompt)`,
+		`await appDialog({title:activeRun?'Request cancellation':'Cancel task'`,
 	} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
@@ -251,5 +251,17 @@ func TestDuplicatePanelLinksBothCards(t *testing.T) {
 	}
 	if !strings.Contains(css, `.dependency-form,.duplicate-form,.requirements-form{grid-template-columns:1fr}`) {
 		t.Error("app.css missing responsive duplicate form layout")
+	}
+}
+
+// TestNoNativeDialogs guards against window.confirm, prompt and alert: the
+// desktop webview does not support them, so they return at once and the
+// action they guard silently does nothing.
+func TestNoNativeDialogs(t *testing.T) {
+	javascript := embeddedText(t, "app.js")
+	for _, native := range []string{"window.confirm(", "window.prompt(", "window.alert(", " confirm(", " prompt(", " alert("} {
+		if strings.Contains(javascript, native) {
+			t.Errorf("app.js uses %q; use appDialog or notify instead", native)
+		}
 	}
 }
