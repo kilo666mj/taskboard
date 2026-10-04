@@ -1414,3 +1414,31 @@ func TestMCPEscalationAnswerRequiresDelegationAllowlist(t *testing.T) {
 		t.Fatalf("escalations = %+v, %v", answered, err)
 	}
 }
+
+func TestMCPTaskGetReturnsUnownedTaskWithoutHandoffs(t *testing.T) {
+	tasks, _, logger := serverFixture(t)
+	session := mcpkittest.Connect(t, newMCPServer(tasks, model.TaskWork, logger))
+	created, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_create", Arguments: map[string]any{"title": "Producer task"}})
+	if err != nil || created.IsError {
+		t.Fatalf("create = %+v, %v", created, err)
+	}
+	items, err := tasks.List(t.Context(), nil, 10)
+	if err != nil || len(items) != 1 || items[0].Owner != "" {
+		t.Fatalf("created tasks = %+v, %v", items, err)
+	}
+	got, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_get", Arguments: map[string]any{"task_id": items[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IsError {
+		t.Fatalf("task_get on an unowned agent task failed: %+v", got.Content)
+	}
+	// The dedicated handoff tool stays restricted to the owner.
+	handoffs, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_handoff_list", Arguments: map[string]any{"task_id": items[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handoffs.IsError {
+		t.Fatal("task_handoff_list on an unowned task succeeded")
+	}
+}

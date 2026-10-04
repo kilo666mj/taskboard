@@ -634,7 +634,13 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		if err != nil {
 			return nil, taskOutput{}, err
 		}
+		// Handoffs are for the agent that owns the work. Any other agent that
+		// may view the task, such as the producer of unclaimed pickup work,
+		// still gets the task without them, as the REST API does.
 		handoffs, err := tasks.ListRunHandoffsFor(ctx, input.TaskID, mcpPrincipal(ctx))
+		if errors.Is(err, service.ErrForbidden) {
+			handoffs, err = nil, nil
+		}
 		return nil, taskOutput{Task: task, Handoffs: handoffs}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status and visibility. Queued and stale tasks appear only when ready and matching this worker's advertised capabilities. Follow next_cursor until it is absent to see every task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
