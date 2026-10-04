@@ -363,6 +363,9 @@ func (s *Store) GetTask(ctx context.Context, id string) (model.Task, error) {
 	if task.Requirements, err = s.ListTaskRequirements(ctx, id); err != nil {
 		return model.Task{}, err
 	}
+	if err := s.loadDuplicateLinks(ctx, &task); err != nil {
+		return model.Task{}, err
+	}
 	return task, nil
 }
 
@@ -502,6 +505,9 @@ func (s *Store) listTasks(ctx context.Context, filter TaskQuery, visibilityClaus
 		}
 		tasks[index].Requirements, err = s.ListTaskRequirements(ctx, tasks[index].ID)
 		if err != nil {
+			return nil, nil, err
+		}
+		if err := s.loadDuplicateLinks(ctx, &tasks[index]); err != nil {
 			return nil, nil, err
 		}
 	}

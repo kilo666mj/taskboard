@@ -83,12 +83,34 @@ type Task struct {
 	Dependencies []TaskDependency `json:"dependencies,omitempty"`
 	Ready        bool             `json:"ready"`
 	Requirements []string         `json:"requirements,omitempty"`
+	// DuplicateOf links a cancelled duplicate to the task that was kept.
+	DuplicateOf *TaskLink `json:"duplicate_of,omitempty"`
+	// Duplicates lists tasks cancelled as duplicates of this one.
+	Duplicates []TaskLink `json:"duplicates,omitempty"`
 	// DecisionRequested is set for a person when the task has an open,
 	// unexpired escalation they may answer. It depends on the viewer.
 	DecisionRequested bool `json:"decision_requested,omitempty"`
 	// Discussable is set for a person when the task's owning controller
 	// currently accepts live discussions.
 	Discussable bool `json:"discussable,omitempty"`
+}
+
+// TaskLink identifies another task by ID with enough context to display it.
+type TaskLink struct {
+	TaskID string     `json:"task_id"`
+	Title  string     `json:"title"`
+	Status TaskStatus `json:"status"`
+}
+
+// DuplicateCandidate is an open task whose title and scope resemble a task an
+// agent is about to start or create.
+type DuplicateCandidate struct {
+	TaskID     string     `json:"task_id"`
+	Title      string     `json:"title"`
+	Status     TaskStatus `json:"status"`
+	Owner      string     `json:"owner,omitempty"`
+	Repository string     `json:"repository,omitempty"`
+	Version    int64      `json:"version"`
 }
 
 type TaskDependency struct {
@@ -648,8 +670,12 @@ type StartRequest struct {
 	Agent           string         `json:"agent,omitempty"`
 	Client          string         `json:"client,omitempty"`
 	AgentSessionKey string         `json:"agent_session_key,omitempty" jsonschema:"Opaque stable identifier for this agent session; reuse it across task starts and claims in the same session"`
+	ForceNew        bool           `json:"force_new,omitempty" jsonschema:"Start separate work even though similar open tasks exist; set only after checking the tasks a previous refusal listed"`
 	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
 	IdempotencyHash string         `json:"-"`
+	// OverriddenDuplicates records, for audit, the candidates a forced start
+	// went past. It is set by the service, never by clients.
+	OverriddenDuplicates []string `json:"-"`
 }
 
 type CreateRequest struct {
@@ -669,8 +695,12 @@ type CreateRequest struct {
 	// only tokens their policy allows; agent-lane tasks created without any
 	// receive the instance defaults.
 	Requirements    []string `json:"requirements,omitempty"`
+	ForceNew        bool     `json:"force_new,omitempty" jsonschema:"Create separate work even though similar open tasks exist; set only after checking the tasks a previous refusal listed"`
 	IdempotencyKey  string   `json:"idempotency_key,omitempty"`
 	IdempotencyHash string   `json:"-"`
+	// OverriddenDuplicates records, for audit, the candidates a forced create
+	// went past. It is set by the service, never by clients.
+	OverriddenDuplicates []string `json:"-"`
 	// DelegatedVia is set by the service, never by clients, when an agent
 	// creates the task on behalf of the person operating it.
 	DelegatedVia string `json:"-"`
@@ -702,8 +732,11 @@ type UpdateRequest struct {
 	SkipItemIDs     []string        `json:"skip_item_ids,omitempty"`
 	SkipReason      string          `json:"skip_reason,omitempty"`
 	AddItems        []string        `json:"add_items,omitempty"`
-	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
-	IdempotencyHash string          `json:"-"`
+	// DuplicateOf cancels the task as a duplicate of the named task. An empty
+	// string clears the link without changing status.
+	DuplicateOf     *string `json:"duplicate_of,omitempty" jsonschema:"Task ULID to cancel this task as a duplicate of; the kept task should hold any unique checklist items first"`
+	IdempotencyKey  string  `json:"idempotency_key,omitempty"`
+	IdempotencyHash string  `json:"-"`
 }
 
 type StartResult struct {

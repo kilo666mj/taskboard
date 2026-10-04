@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 18
+const latestSchemaVersion = 19
 
 type schemaMigration struct {
 	Version  int
@@ -255,6 +255,13 @@ var schemaMigrations = []schemaMigration{
 		`ALTER TABLE task_escalations ADD COLUMN IF NOT EXISTS delegated_by TEXT NOT NULL DEFAULT ''`,
 	}},
 	{Version: 18, Name: "task_discussions", SQLite: discussionStatements, Postgres: discussionStatements},
+	{Version: 19, Name: "task_duplicates", SQLite: []string{
+		`ALTER TABLE tasks ADD COLUMN duplicate_of TEXT REFERENCES tasks(id) ON DELETE SET NULL`,
+		`CREATE INDEX idx_tasks_duplicate_of ON tasks(duplicate_of) WHERE duplicate_of IS NOT NULL`,
+	}, Postgres: []string{
+		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS duplicate_of TEXT REFERENCES tasks(id) ON DELETE SET NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_duplicate_of ON tasks(duplicate_of) WHERE duplicate_of IS NOT NULL`,
+	}},
 }
 
 var discussionStatements = []string{
@@ -282,6 +289,9 @@ var discussionSchema = map[string][]string{
 	"task_discussions":         {"id", "task_id", "controller", "status", "agent_status", "requested_by", "end_reason", "created_at", "started_at", "last_activity_at", "ended_at"},
 	"task_discussion_messages": {"id", "discussion_id", "task_id", "author", "role", "body", "created_at"},
 }
+
+var duplicateSchema = map[string][]string{"tasks": {"duplicate_of"}}
+var duplicateIndexes = []string{"idx_tasks_duplicate_of"}
 
 var discussionIndexes = []string{"idx_task_discussions_task", "idx_task_discussions_controller", "idx_task_discussion_messages_discussion"}
 
@@ -483,6 +493,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := validateSchemaParts(ctx, tx, s.db.dialect, discussionSchema, discussionIndexes, "discussion"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, duplicateSchema, duplicateIndexes, "duplicate"); err != nil {
 		return err
 	}
 	if err := validateSchemaParts(ctx, tx, s.db.dialect, runControlSchema, runControlIndexes, "run control"); err != nil {

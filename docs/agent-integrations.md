@@ -294,6 +294,34 @@ Dependency edits are human-owned, task-versioned, and cycle-safe. Deleting a
 task removes its incident edges through referential integrity. Controllers
 should not reinterpret an unmet dependency as the execution `blocked` status.
 
+## Duplicate tasks
+
+Agents most often duplicate work by starting a new task when they should have
+claimed an existing one. `task_start` and `task_create` therefore compare the
+new title with open tasks (queued, active, waiting, blocked, or stale) that the
+agent can see. When titles share most of their words, and the repository and
+project match or one side leaves them unset, the call fails with a conflict that
+lists up to five matching tasks with their IDs, statuses, owners, and versions.
+The agent should claim the matching task with `task_claim` and continue it. If
+the work really is separate, retrying with `force_new: true` creates it, and the
+start or create event records the overridden matches in
+`overridden_duplicates`. People starting or creating tasks are not checked.
+
+To clean up duplicates that already exist, update the copy with
+`duplicate_of` set to the task that should be kept. That cancels the copy,
+sets its note to "Duplicate of <title>" unless a note is supplied, and records a
+`task.duplicate_linked` event on the kept task. Tasks return `duplicate_of` and
+`duplicates` links, and the web card shows them both ways. Links stay one level
+deep: marking a kept task as a duplicate moves its duplicates to the new kept
+task, and links that would form a cycle are rejected. Move any unique checklist
+items onto the kept task first; nothing is merged automatically.
+
+Marking a duplicate is a cancellation, so agents need the `task:sensitive`
+capability, as they do to cancel. The update is refused while another
+principal's agent run on the copy is active; request a cancel control first.
+Claiming a duplicate fails with an error naming the kept task. Reopening a
+duplicate, or sending an empty `duplicate_of`, clears the link.
+
 ## Shared-task edit provenance
 
 Every task response includes immutable `created_by` and server-controlled

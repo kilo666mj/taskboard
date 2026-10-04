@@ -153,7 +153,7 @@ func TestControlPlaneExpansionUIIsWiredAndResponsive(t *testing.T) {
 	for _, expected := range []string{
 		`.session-actions`,
 		`.analytics-grid`,
-		`.dependency-form,.requirements-form{grid-template-columns:1fr}`,
+		`.dependency-form,.duplicate-form,.requirements-form{grid-template-columns:1fr}`,
 		`.reference,.handoff,.completion-requirement,.dependency{grid-template-columns:1fr}`,
 	} {
 		if !strings.Contains(css, expected) {
@@ -232,5 +232,24 @@ func TestFixedTaskTypeHidesTypeSelector(t *testing.T) {
 	}
 	if !strings.Contains(css, `.modal label[hidden]{display:none}`) {
 		t.Error("app.css does not hide a hidden dialog label")
+	}
+}
+
+func TestDuplicatePanelLinksBothCards(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{`<details class="duplicate-panel" hidden>`, `<input name="duplicate_of" required maxlength="26"`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`renderDuplicates(task,card);`, `duplicate_of:''`, `merged here`, `prefers-reduced-motion: reduce`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	if !strings.Contains(css, `.dependency-form,.duplicate-form,.requirements-form{grid-template-columns:1fr}`) {
+		t.Error("app.css missing responsive duplicate form layout")
 	}
 }

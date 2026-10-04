@@ -595,7 +595,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	if _, err = insertAgentRun(ctx, tx, model.AgentRun{ID: runID, TaskID: taskID, Agent: request.Agent, Client: request.Client, Status: model.TaskActive, LeaseExpires: lease, LastHeartbeat: now, StartedAt: now}, request.AgentSessionKey); err != nil {
 		return model.StartResult{}, err
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.started", Actor: request.Agent, Message: request.Title, Payload: idempotencyPayload("task_start", request.IdempotencyKey, request.IdempotencyHash), CreatedAt: now}
+	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.started", Actor: request.Agent, Message: request.Title, Payload: mergePayload(idempotencyPayload("task_start", request.IdempotencyKey, request.IdempotencyHash), overriddenDuplicatesPayload(request.OverriddenDuplicates)), CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.StartResult{}, err
 	}
@@ -659,6 +659,11 @@ func (s *Service) StartFor(ctx context.Context, request model.StartRequest, prin
 		if err := s.enforceAgentPickupLimits(ctx, principal); err != nil {
 			return model.StartResult{}, err
 		}
+		overridden, err := s.checkDuplicates(ctx, principal, request.ForceNew, request.Title, request.Project, request.Repository)
+		if err != nil {
+			return model.StartResult{}, err
+		}
+		request.OverriddenDuplicates = overridden
 	}
 	return s.Start(ctx, request, principal.ID)
 }
@@ -742,7 +747,7 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 	if request.DelegatedVia != "" {
 		eventPayload["delegated_via"] = request.DelegatedVia
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: mergePayload(eventPayload, idempotencyPayload("task_create", request.IdempotencyKey, request.IdempotencyHash)), CreatedAt: now}
+	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: mergePayload(mergePayload(eventPayload, idempotencyPayload("task_create", request.IdempotencyKey, request.IdempotencyHash)), overriddenDuplicatesPayload(request.OverriddenDuplicates)), CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return model.Task{}, err
 	}
@@ -804,6 +809,11 @@ func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, pr
 		if replay {
 			return s.GetFor(ctx, event.TaskID, principal)
 		}
+		overridden, err := s.checkDuplicates(ctx, principal, request.ForceNew, request.Title, request.Project, request.Repository)
+		if err != nil {
+			return model.Task{}, err
+		}
+		request.OverriddenDuplicates = overridden
 	}
 	return s.Create(ctx, request, principal.ID)
 }
@@ -1101,6 +1111,9 @@ func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.Cla
 	if err != nil {
 		return model.StartResult{}, err
 	}
+	if task.DuplicateOf != nil {
+		return model.StartResult{}, duplicateClaimError(task.DuplicateOf.TaskID)
+	}
 	if task.Status != model.TaskQueued && task.Status != model.TaskStale {
 		return model.StartResult{}, fmt.Errorf("%w: only queued or stale work can be claimed", ErrValidation)
 	}
@@ -1158,6 +1171,9 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 		return model.StartResult{}, ErrConflict
 	}
 	if current.Status == model.TaskDone || current.Status == model.TaskCancelled {
+		if keptID, err := store.DuplicateOf(ctx, tx, taskID); err == nil && keptID != "" {
+			return model.StartResult{}, duplicateClaimError(keptID)
+		}
 		return model.StartResult{}, fmt.Errorf("%w: terminal tasks cannot be claimed", ErrValidation)
 	}
 	var unmetDependencies int
@@ -1210,6 +1226,18 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" || request.ExpectedVersion < 1 {
 		return model.Task{}, fmt.Errorf("%w: task_id and expected_version are required", ErrValidation)
+	}
+	if request.DuplicateOf != nil {
+		value := strings.TrimSpace(*request.DuplicateOf)
+		request.DuplicateOf = &value
+		if value != "" {
+			if request.Status == "" {
+				request.Status = model.TaskCancelled
+			}
+			if request.Status != model.TaskCancelled {
+				return model.Task{}, fmt.Errorf("%w: duplicate_of cancels the task and cannot be combined with another status", ErrValidation)
+			}
+		}
 	}
 	if request.Status != "" && !model.IsTaskStatus(request.Status) {
 		return model.Task{}, fmt.Errorf("%w: unknown task status", ErrValidation)
@@ -1431,6 +1459,21 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.Status != "" {
 		status = request.Status
 	}
+	keptTitle := ""
+	if request.DuplicateOf != nil && *request.DuplicateOf != "" {
+		keptID, title, err := resolveDuplicateRoot(ctx, tx, *request.DuplicateOf, taskID)
+		if err != nil {
+			return model.Task{}, err
+		}
+		request.DuplicateOf, keptTitle = &keptID, title
+		var activeRuns int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE task_id=? AND id<>? AND agent<>? AND status=? AND ended_at IS NULL`, taskID, request.RunID, strings.TrimSpace(actor), model.TaskActive).Scan(&activeRuns); err != nil {
+			return model.Task{}, err
+		}
+		if activeRuns > 0 {
+			return model.Task{}, fmt.Errorf("%w: request cancellation of the active agent run before marking this task a duplicate", ErrValidation)
+		}
+	}
 	if status == model.TaskDone {
 		var remaining int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM checklist_items WHERE task_id=? AND required=TRUE AND status NOT IN (?,?)`, taskID, model.ItemDone, model.ItemSkipped).Scan(&remaining); err != nil {
@@ -1530,6 +1573,8 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	}
 	if request.CurrentNote != nil {
 		currentNote = clipped(*request.CurrentNote, 1000)
+	} else if keptTitle != "" {
+		currentNote = clipped("Duplicate of "+keptTitle, 1000)
 	}
 	if request.Blocker != nil {
 		blocker = clipped(*request.Blocker, 1000)
@@ -1567,6 +1612,29 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return model.Task{}, ErrConflict
+	}
+	var keptEvent *model.Event
+	switch {
+	case request.DuplicateOf != nil && *request.DuplicateOf != "":
+		keptID := *request.DuplicateOf
+		// Keep links one level deep: duplicates of this task now point at the kept task.
+		if _, err := tx.ExecContext(ctx, `UPDATE tasks SET duplicate_of=? WHERE id=? OR duplicate_of=?`, keptID, taskID, taskID); err != nil {
+			return model.Task{}, err
+		}
+		// The editor's own open runs on the duplicate end with it.
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_runs SET status=?,ended_at=? WHERE task_id=? AND id<>? AND agent=? AND ended_at IS NULL`, model.TaskCancelled, stamp(now), taskID, request.RunID, strings.TrimSpace(actor)); err != nil {
+			return model.Task{}, err
+		}
+		event := model.Event{ID: newID(now), TaskID: keptID, Kind: "task.duplicate_linked", Actor: editor, Message: clipped(title+" was marked a duplicate of this task", 1000), Payload: map[string]any{"duplicate_task_id": taskID}, CreatedAt: now}
+		if err := store.InsertEvent(ctx, tx, event); err != nil {
+			return model.Task{}, err
+		}
+		keptEvent = &event
+	case request.DuplicateOf != nil || current.Status == model.TaskCancelled && status != model.TaskCancelled:
+		// An explicit empty duplicate_of or reopening the task clears the link.
+		if _, err := tx.ExecContext(ctx, `UPDATE tasks SET duplicate_of=NULL WHERE id=?`, taskID); err != nil {
+			return model.Task{}, err
+		}
 	}
 	var defaultedRequirements []string
 	if request.Visibility != nil && visibility == model.VisibilityAgent && current.Visibility != model.VisibilityAgent {
@@ -1665,6 +1733,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if len(completedItemIDs) > 0 {
 		payload["completed_item_ids"] = completedItemIDs
 	}
+	if request.DuplicateOf != nil {
+		payload["duplicate_of"] = *request.DuplicateOf
+	}
 	mergePayload(payload, idempotencyPayload("task_update", request.IdempotencyKey, request.IdempotencyHash))
 	event := model.Event{ID: newID(now), TaskID: taskID, RunID: request.RunID, Kind: "task.updated", Actor: defaultActor(actor, current.Owner), Message: currentNote, Payload: payload, CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
@@ -1678,6 +1749,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		s.publish(event)
 		if recurringEvent != nil {
 			s.publish(*recurringEvent)
+		}
+		if keptEvent != nil {
+			s.publish(*keptEvent)
 		}
 		if request.RunID != "" && (status == model.TaskDone || status == model.TaskCancelled) {
 			_ = s.ensureDerivedHandoff(ctx, taskID, request.RunID, model.HandoffFinal)
@@ -1698,7 +1772,8 @@ func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.Up
 		if request.Status == model.TaskDone && !principal.HasCapability(CapabilityTaskComplete) {
 			return model.Task{}, ErrForbidden
 		}
-		if (request.Status == model.TaskCancelled || len(request.SkipItemIDs) > 0) && !principal.HasCapability(CapabilityTaskSensitive) {
+		marksDuplicate := request.DuplicateOf != nil && strings.TrimSpace(*request.DuplicateOf) != ""
+		if (request.Status == model.TaskCancelled || marksDuplicate || len(request.SkipItemIDs) > 0) && !principal.HasCapability(CapabilityTaskSensitive) {
 			return model.Task{}, ErrForbidden
 		}
 		hash, err := requestHash(struct {
@@ -1731,6 +1806,14 @@ func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.Up
 	}
 	if principal.Agent && request.Owner != nil && strings.TrimSpace(*request.Owner) != principal.ID {
 		return model.Task{}, ErrForbidden
+	}
+	if request.DuplicateOf != nil && strings.TrimSpace(*request.DuplicateOf) != "" {
+		if _, err := s.GetFor(ctx, strings.TrimSpace(*request.DuplicateOf), principal); err != nil {
+			if errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrForbidden) {
+				return model.Task{}, fmt.Errorf("%w: duplicate_of task not found", ErrValidation)
+			}
+			return model.Task{}, err
+		}
 	}
 	return s.Update(ctx, taskID, request, principal.ID)
 }
