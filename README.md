@@ -64,6 +64,8 @@ and audit history.*
 - Append-only run handoffs for reliable replacement-agent continuation
 - Human-owned completion contracts with verified evidence gates
 - Cycle-safe `blocked_by` dependencies with derived pickup readiness
+- Duplicate prevention for agent-started work, and duplicate links that cancel
+  a copy in favor of the task that was kept
 - Short-lived worker advertisements for operational requirement matching
 - Privacy-bounded delivery analytics and optional numeric usage accounting
   produce an ordered delivery timeline without duplicating provider state.
