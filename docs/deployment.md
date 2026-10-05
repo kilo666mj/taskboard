@@ -210,7 +210,8 @@ When people sign in to MCP through the Access OAuth flow, their assertions carry
 a person's subject rather than a service token. Set
 `TASKBOARD_MCP_HUMAN_DELEGATION=true` (Ansible
 `taskboard_mcp_human_delegation`) if tasks they capture through `task_create`
-should belong to them instead of the agent pickup lane. Service tokens are
+or start with `task_start` should belong to them, private by default, instead
+of the agent pickup lane. Service tokens are
 never delegated. When those people reach Taskboard through Switchboard, also
 give Switchboard a dedicated agent credential and list it in
 `taskboard_mcp_delegation_principals`; see

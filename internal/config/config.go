@@ -208,8 +208,10 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("TASKBOARD_ANSWER_DELEGATION_PRINCIPALS entries must be dedicated agent credential or Cloudflare Access service token principals, not %q", principal)
 		}
 	}
-	if len(cfg.MCPDelegationPrincipals) > 0 && (!cfg.MCPHumanDelegation || cfg.BrowserAuthMode != BrowserAuthCloudflareAccess) {
-		return Config{}, fmt.Errorf("TASKBOARD_MCP_DELEGATION_PRINCIPALS requires TASKBOARD_MCP_HUMAN_DELEGATION=true and TASKBOARD_BROWSER_AUTH_MODE=cloudflare_access")
+	// A forwarded person must match a browser principal: a Cloudflare Access
+	// subject, or an OAuth subject from the browser's own OIDC issuer.
+	if len(cfg.MCPDelegationPrincipals) > 0 && (!cfg.MCPHumanDelegation || cfg.BrowserAuthMode != BrowserAuthCloudflareAccess && cfg.BrowserAuthMode != BrowserAuthOIDC) {
+		return Config{}, fmt.Errorf("TASKBOARD_MCP_DELEGATION_PRINCIPALS requires TASKBOARD_MCP_HUMAN_DELEGATION=true and TASKBOARD_BROWSER_AUTH_MODE=cloudflare_access or oidc")
 	}
 	if cfg.TaskType != "" && cfg.TaskType != "personal" && cfg.TaskType != "work" {
 		return Config{}, fmt.Errorf("TASKBOARD_TASK_TYPE must be personal, work, or empty")

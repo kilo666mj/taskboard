@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,8 +115,8 @@ func TestOperatorReviewRequeuesStaleTaskAndClaimsEditProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := model.ReviewRequeueRequest{TargetRunID: started.Run.ID, ExpectedVersion: stale.Version, ReviewNote: "Reviewed the partial work and remaining checklist"}
-	if _, err := tasks.ReviewAndRequeueFor(t.Context(), stale.ID, request, member); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("member recovery error = %v, want forbidden", err)
+	if _, err := tasks.ReviewAndRequeueFor(t.Context(), stale.ID, request, HumanPrincipalWithRole("human:viewer", RoleViewer)); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer recovery error = %v, want forbidden", err)
 	}
 	if _, err := tasks.ReviewAndRequeueFor(t.Context(), stale.ID, request, agent); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("agent recovery error = %v, want forbidden", err)
@@ -145,6 +146,50 @@ func TestOperatorReviewRequeuesStaleTaskAndClaimsEditProvenance(t *testing.T) {
 	claimed, err := tasks.ClaimFor(t.Context(), stale.ID, model.ClaimRequest{ExpectedVersion: recovered.Task.Version, IdempotencyKey: "review-requeue-claim"}, replacement)
 	if err != nil || claimed.Run.ID == started.Run.ID {
 		t.Fatalf("fresh claim = %+v, %v", claimed, err)
+	}
+}
+
+func TestMembersRecoverAgentWorkAndTheirOwnButNotOtherPeoplesTasks(t *testing.T) {
+	tasks := testService(t, -time.Second)
+	staleClaim := func(title string, creator Principal) (model.Task, string) {
+		t.Helper()
+		created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: title, Visibility: model.VisibilityAgent, IdempotencyKey: "create-" + strings.ReplaceAll(title, " ", "-")}, creator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: created.Version, IdempotencyKey: "claim-" + strings.ReplaceAll(title, " ", "-")}, AgentPrincipal("agent:worker"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tasks.SweepStale(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		stale, err := tasks.GetFor(t.Context(), created.ID, HumanPrincipalWithRole("human:owner", RoleOwner))
+		if err != nil || stale.Status != model.TaskStale {
+			t.Fatalf("stale task = %+v, %v", stale, err)
+		}
+		return stale, claimed.Run.ID
+	}
+	member := HumanPrincipalWithRole("human:member", RoleMember)
+	recover := func(task model.Task, runID string, principal Principal) error {
+		_, err := tasks.ReviewAndRequeueFor(t.Context(), task.ID, model.ReviewRequeueRequest{TargetRunID: runID, ExpectedVersion: task.Version, ReviewNote: "Reviewed"}, principal)
+		return err
+	}
+
+	agentWork, run := staleClaim("Raised by an agent", AgentPrincipal("agent:monitor"))
+	if err := recover(agentWork, run, member); err != nil {
+		t.Fatalf("member recovering agent work = %v", err)
+	}
+	theirs, run := staleClaim("Raised by another person", HumanPrincipalWithRole("human:alice", RoleMember))
+	if err := recover(theirs, run, member); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("member recovering another person's task = %v, want forbidden", err)
+	}
+	if err := recover(theirs, run, HumanPrincipalWithRole("human:alice", RoleMember)); err != nil {
+		t.Fatalf("creator recovering their own task = %v", err)
+	}
+	other, run := staleClaim("Owner recovery", HumanPrincipalWithRole("human:alice", RoleMember))
+	if err := recover(other, run, HumanPrincipalWithRole("human:owner", RoleOwner)); err != nil {
+		t.Fatalf("owner recovery = %v", err)
 	}
 }
 
