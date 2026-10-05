@@ -122,8 +122,37 @@ ansible-playbook -i ansible/inventory.local.ini ansible/deploy.yml
 Both local files are ignored. Never put production hostnames, addresses, or
 credentials back into tracked examples.
 
-The playbook stages the binary and environment as `.candidate` files, runs
-`-check-config` on them, and only then installs them and restarts Taskboard.
+The playbook builds from the checkout it runs in. Check out the release tag or
+commit you want to deploy first:
+
+```sh
+git switch --detach v0.17.0
+ansible-playbook -i ansible/inventory.local.ini ansible/deploy.yml
+```
+
+A deployment then:
+
+1. Refuses to build from a checkout with uncommitted or untracked changes, so
+   the binary always matches a commit. Set `taskboard_allow_dirty_build: true`
+   only for test deployments.
+2. Stamps the binary with `git describe --tags`, so `taskboard -version`
+   reports `v0.17.0` for a tag and `v0.17.0-2-g<commit>` for a later commit,
+   followed by the full revision.
+3. Stages the binary and environment as `.candidate` files and runs
+   `-check-config` on them.
+4. With SQLite, takes an online backup to
+   `/var/lib/taskboard/taskboard.db.pre-<revision>-<UTC time>` and fails if its
+   integrity check does not pass. It keeps the newest `taskboard_backup_keep`
+   backups (default 10; `0` keeps all) and removes older files matching
+   `taskboard.db.pre-*`. Set `taskboard_backup_enabled: false` to skip it.
+   PostgreSQL deployments are not backed up by the playbook.
+5. Installs the files, restarts Taskboard, waits for `/readyz`, and checks
+   that `taskboard -version` reports the built version and revision and that
+   the running process is the installed binary.
+
+Nothing is replaced if a step before installation fails. To roll back, check
+out the previous release and run the playbook again; restore a backup only
+when the newer release migrated the database schema.
 
 An instance that serves only one kind of work should set `taskboard_task_type`
 to `personal` or `work` in `private.yml`. Every new task then gets that type
