@@ -279,7 +279,10 @@ func (s *Service) resolveEscalation(ctx context.Context, taskID, escalationID st
 		if current.Visibility == model.VisibilityAgent {
 			owner = ""
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE tasks SET status=?,owner=?,waiting_for='',version=version+1,updated_at=? WHERE id=? AND version=? AND status=?`, model.TaskQueued, owner, stamp(now), taskID, current.Version, model.TaskWaiting)
+		// Answering requeues the work, so the answerer becomes its last
+		// editor: runners that admit only work their operators last edited
+		// pick up the answered task, as after Review & requeue.
+		result, err := tx.ExecContext(ctx, `UPDATE tasks SET status=?,owner=?,waiting_for='',last_edited_by=?,version=version+1,updated_at=? WHERE id=? AND version=? AND status=?`, model.TaskQueued, owner, principal.ID, stamp(now), taskID, current.Version, model.TaskWaiting)
 		if err != nil {
 			return model.TaskEscalation{}, err
 		}

@@ -48,6 +48,9 @@ func TestBlockingEscalationEndsRunAndAnswerQueuesReplacement(t *testing.T) {
 	if queued.Status != model.TaskQueued || queued.Owner != "" || queued.WaitingFor != "" || queued.Version != waiting.Version+1 {
 		t.Fatalf("queued task = %+v", queued)
 	}
+	if queued.LastEditedBy != "human:operator" || queued.CreatedBy != started.Task.CreatedBy {
+		t.Fatalf("answer provenance = creator %q editor %q, want the answerer as last editor", queued.CreatedBy, queued.LastEditedBy)
+	}
 	replacement, err := tasks.ClaimFor(t.Context(), queued.ID, model.ClaimRequest{ExpectedVersion: queued.Version, IdempotencyKey: "replacement-claim"}, agent)
 	if err != nil {
 		t.Fatal(err)
