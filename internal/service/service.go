@@ -181,6 +181,11 @@ func CanView(task model.Task, principal Principal) bool {
 		return false
 	}
 	if principal.Agent {
+		if task.Visibility == model.VisibilityPrivate {
+			// A private task belongs to the person who created it; an agent
+			// sees it only while acting for that person.
+			return principal.OnBehalfOf != nil && task.CreatedBy != "" && task.CreatedBy == principal.OnBehalfOf.ID
+		}
 		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && task.Owner == principal.ID
 	}
 	return task.Visibility != model.VisibilityPrivate || task.CreatedBy != "" && task.CreatedBy == principal.ID
@@ -676,14 +681,24 @@ func (s *Service) StartFor(ctx context.Context, request model.StartRequest, prin
 	if !principal.Agent && !principal.Can(PermissionTaskWrite) {
 		return model.StartResult{}, ErrForbidden
 	}
+	// An agent acting for a person starts work as that person's private
+	// task: the person is its creator, and the agent owns the run.
+	delegated := principal.Agent && principal.OnBehalfOf != nil && (request.Visibility == "" || request.Visibility == model.VisibilityPrivate)
 	if principal.Agent {
 		if !principal.HasCapability(CapabilityTaskCreate) {
 			return model.StartResult{}, ErrForbidden
 		}
+		if delegated {
+			person := *principal.OnBehalfOf
+			if person.Agent || person.ID == "" || !person.Can(PermissionTaskWrite) {
+				return model.StartResult{}, ErrForbidden
+			}
+			request.Visibility = model.VisibilityPrivate
+		}
 		if request.Visibility == "" {
 			request.Visibility = model.VisibilityAgent
 		}
-		if request.Visibility == model.VisibilityPrivate {
+		if request.Visibility == model.VisibilityPrivate && !delegated {
 			return model.StartResult{}, ErrForbidden
 		}
 		request.Agent = principal.ID
@@ -726,6 +741,9 @@ func (s *Service) StartFor(ctx context.Context, request model.StartRequest, prin
 			return model.StartResult{}, err
 		}
 		request.OverriddenDuplicates = overridden
+	}
+	if delegated {
+		return s.Start(ctx, request, principal.OnBehalfOf.ID)
 	}
 	return s.Start(ctx, request, principal.ID)
 }

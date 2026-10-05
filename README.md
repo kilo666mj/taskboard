@@ -101,8 +101,8 @@ impersonating a person or another service in task history.
 
 A person who connects their own MCP client through Cloudflare Access is still an
 agent by default. Set `TASKBOARD_MCP_HUMAN_DELEGATION=true` to have their
-`task_create` calls record the task as that person, private by default, while
-every other MCP tool keeps agent authority. When people reach Taskboard through
+`task_create` and `task_start` calls record the task as that person, private by
+default; an agent sees such a task only while acting for that person. When people reach Taskboard through
 Switchboard, list Switchboard's dedicated credential in
 `TASKBOARD_MCP_DELEGATION_PRINCIPALS` so Taskboard trusts the person Switchboard
 forwards. See [MCP human delegation](docs/configuration.md#mcp-human-delegation).
@@ -129,9 +129,11 @@ allowlist before admitting work. Claims and automatic lease maintenance do not
 overwrite edit provenance. Legacy tasks keep an empty last editor until their
 first authenticated edit so consumers can fail closed instead of trusting an
 invented history. When an agent run goes stale, or an agent leaves its task
-blocked or waiting and its run lease lapses, an owner or administrator can
-explicitly review and requeue it; that audited recovery records the reviewer as
-the last editor before the task becomes eligible for a fresh claim.
+blocked or waiting and its run lease lapses, a person can explicitly review
+and requeue it: anyone who can edit may recover work an agent created and their
+own tasks, and owners and administrators may recover any task. That audited
+recovery records the reviewer as the last editor before the task becomes
+eligible for a fresh claim.
 
 Every task has a `personal` or `work` type. When one instance serves only one
 kind of work, set `TASKBOARD_TASK_TYPE=personal` or `TASKBOARD_TASK_TYPE=work`:

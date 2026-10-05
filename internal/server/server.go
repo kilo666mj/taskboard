@@ -1520,14 +1520,32 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 // principals and ignored for every other caller.
 const switchboardAccessSubjectHeader = "X-Switchboard-Access-Subject"
 
+// switchboardOAuthSubjectHeader carries the subject of a person Switchboard
+// verified through its OAuth server. With the same OIDC issuer as browser
+// sign-in, that subject is the person's Taskboard principal. It is trusted
+// only from configured delegation principals and ignored for every other caller.
+const switchboardOAuthSubjectHeader = "X-Switchboard-OAuth-Subject"
+
 func forwardedAccessPerson(cfg config.Config, database *store.Store, r *http.Request, principalID string) (service.Principal, bool, error) {
-	values := r.Header.Values(switchboardAccessSubjectHeader)
-	if len(values) == 0 || !cfg.MCPHumanDelegation || !slices.Contains(cfg.MCPDelegationPrincipals, principalID) {
+	access, oauth := r.Header.Values(switchboardAccessSubjectHeader), r.Header.Values(switchboardOAuthSubjectHeader)
+	if len(access)+len(oauth) == 0 || !cfg.MCPHumanDelegation || !slices.Contains(cfg.MCPDelegationPrincipals, principalID) {
 		return service.Principal{}, false, nil
 	}
-	subject := values[0]
-	if len(values) != 1 || !strings.HasPrefix(subject, "cloudflare_access:") || strings.HasPrefix(subject, "cloudflare_access:service_token:") || !safeAccessClaim(strings.TrimPrefix(subject, "cloudflare_access:")) {
+	var subject string
+	switch {
+	case len(access) > 0 && len(oauth) > 0:
 		return service.Principal{}, false, errInvalidCloudflareAccess
+	case len(oauth) > 0:
+		subject = oauth[0]
+		if len(oauth) != 1 || len(subject) > 200 || strings.ContainsAny(subject, " \t") || !safeAccessClaim(subject) ||
+			strings.HasPrefix(subject, "agent:") || strings.HasPrefix(subject, "cloudflare_access:") {
+			return service.Principal{}, false, errInvalidCloudflareAccess
+		}
+	default:
+		subject = access[0]
+		if len(access) != 1 || !strings.HasPrefix(subject, "cloudflare_access:") || strings.HasPrefix(subject, "cloudflare_access:service_token:") || !safeAccessClaim(strings.TrimPrefix(subject, "cloudflare_access:")) {
+			return service.Principal{}, false, errInvalidCloudflareAccess
+		}
 	}
 	revoked, err := database.PrincipalRevoked(r.Context(), subject)
 	if err != nil || revoked {

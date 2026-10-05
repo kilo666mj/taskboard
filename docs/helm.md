@@ -175,7 +175,8 @@ it. Service-token assertions can identify automated MCP workloads individually.
 
 When people connect their own MCP clients through Access, set
 `taskboard.agentPolicy.humanDelegation: true` so that tasks they capture with
-`task_create` are recorded as theirs and private by default. If they reach
+`task_create` or start with `task_start` are recorded as theirs and private by
+default. If they reach
 Taskboard through Switchboard, also list Switchboard's dedicated agent
 credential principal in `taskboard.agentPolicy.delegationPrincipals`; see
 [Through Switchboard](configuration.md#through-switchboard).
