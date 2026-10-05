@@ -327,6 +327,12 @@ Typical use: refresh the summary when the detected condition changes, and
 cancel with a note such as "Resolved: …" when it clears before anyone picks the
 task up.
 
+After the task is claimed, the producer may still read its conversation and
+decisions (`task_message_list` and `task_escalation_list`) if it holds the
+`task:message` capability, so it can act on what people decided there, for
+example treating an answered approval question as the go-ahead for work it
+carries out itself. It gains no write access.
+
 ## Duplicate tasks
 
 Agents most often duplicate work by starting a new task when they should have

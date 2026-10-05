@@ -11,14 +11,11 @@ import (
 )
 
 func (s *Service) ListMessagesFor(ctx context.Context, taskID, before string, limit int, principal Principal) ([]model.TaskMessage, error) {
-	if principal.Agent && !principal.HasCapability(CapabilityTaskMessage) {
-		return nil, ErrForbidden
-	}
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
 		return nil, err
 	}
-	if principal.Agent && !canMutate(task, principal) {
+	if principal.Agent && !producerMayRead(task, principal) && (!principal.HasCapability(CapabilityTaskMessage) || !canMutate(task, principal)) {
 		return nil, ErrForbidden
 	}
 	return s.store.ListTaskMessages(ctx, task.ID, strings.TrimSpace(before), limit)

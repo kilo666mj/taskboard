@@ -515,7 +515,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		result, err := tasks.HeartbeatFor(ctx, input.TaskID, input.RunID, mcpPrincipal(ctx))
 		return nil, result, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_message_list", Description: "List the append-only conversation for an owned task. Workflow transitions remain in task events rather than duplicate status messages.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input messageListInput) (*mcp.CallToolResult, messagesOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_message_list", Description: "List the append-only conversation for an owned task, or one you created. Workflow transitions remain in task events rather than duplicate status messages.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input messageListInput) (*mcp.CallToolResult, messagesOutput, error) {
 		messages, err := tasks.ListMessagesFor(ctx, input.TaskID, input.Before, input.Limit, mcpPrincipal(ctx))
 		return nil, messagesOutput{Messages: messages}, err
 	})
@@ -527,7 +527,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		pending, err := tasks.RecordMessageReceiptsFor(ctx, input.TaskID, input.RunID, input.MessageReceiptRequest, mcpPrincipal(ctx))
 		return nil, messagesOutput{Messages: pending}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_escalation_list", Description: "List structured questions, choices, recommendations, and recorded answers for an owned task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationListInput) (*mcp.CallToolResult, escalationsOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_escalation_list", Description: "List structured questions, choices, recommendations, and recorded answers for an owned task, or one you created.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input escalationListInput) (*mcp.CallToolResult, escalationsOutput, error) {
 		items, err := tasks.ListEscalationsFor(ctx, input.TaskID, mcpPrincipal(ctx))
 		return nil, escalationsOutput{Escalations: items}, err
 	})
