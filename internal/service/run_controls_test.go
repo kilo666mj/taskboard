@@ -148,6 +148,50 @@ func TestOperatorReviewRequeuesStaleTaskAndClaimsEditProvenance(t *testing.T) {
 	}
 }
 
+func TestOperatorReviewRequeuesBlockedTaskOnlyAfterItsRunLeaseLapses(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Blocked worker", Checklist: []string{"Work"}, IdempotencyKey: "blocked-requeue-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: started.Task.Version, RunID: started.Run.ID, Status: model.TaskBlocked, Blocker: ptr("Worker error")}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.Runs[0].EndedAt != nil {
+		t.Fatalf("blocked run ended = %+v; this test needs an open blocked run", blocked.Runs[0])
+	}
+	if _, err := tasks.CreateRunControlFor(t.Context(), blocked.ID, model.CreateRunControlRequest{TargetRunID: started.Run.ID, Kind: model.RunControlResume, ExpectedVersion: blocked.Version}, HumanPrincipalWithRole("human:member", RoleMember)); !errors.Is(err, ErrValidation) {
+		t.Fatalf("resume of an open run error = %v, want validation", err)
+	}
+	operator := HumanPrincipalWithRole("human:operator", RoleOwner)
+	request := model.ReviewRequeueRequest{TargetRunID: started.Run.ID, ExpectedVersion: blocked.Version, ReviewNote: "Worker fixed; retry"}
+	if _, err := tasks.ReviewAndRequeueFor(t.Context(), blocked.ID, request, operator); !errors.Is(err, ErrConflict) {
+		t.Fatalf("requeue while the run lease is live error = %v, want conflict", err)
+	}
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE agent_runs SET lease_expires_at=? WHERE id=?`, stamp(time.Now().UTC().Add(-time.Minute)), started.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := tasks.ReviewAndRequeueFor(t.Context(), blocked.ID, request, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Task.Status != model.TaskQueued || recovered.Task.Owner != "" || recovered.Task.Blocker != "" || recovered.Task.LastEditedBy != operator.ID {
+		t.Fatalf("requeued task = %+v", recovered.Task)
+	}
+	if recovered.Control.Kind != model.RunControlResume || recovered.Control.Status != model.RunControlCompleted {
+		t.Fatalf("recovery control = %+v", recovered.Control)
+	}
+	if len(recovered.Task.Runs) != 1 || recovered.Task.Runs[0].Status != model.TaskBlocked || recovered.Task.Runs[0].EndedAt == nil {
+		t.Fatalf("blocked run after recovery = %+v", recovered.Task.Runs)
+	}
+	claimed, err := tasks.ClaimFor(t.Context(), blocked.ID, model.ClaimRequest{ExpectedVersion: recovered.Task.Version, IdempotencyKey: "blocked-requeue-claim"}, AgentPrincipal("agent:replacement"))
+	if err != nil || claimed.Run.ID == started.Run.ID {
+		t.Fatalf("fresh claim = %+v, %v", claimed, err)
+	}
+}
+
 func TestControlCompletionConflictsAfterReplacementAndDoesNotTransfer(t *testing.T) {
 	tasks := testService(t, -time.Second)
 	agent := AgentPrincipal("agent:worker")

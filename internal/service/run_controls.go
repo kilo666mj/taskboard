@@ -46,32 +46,54 @@ func (s *Service) ReviewAndRequeueFor(ctx context.Context, taskID string, reques
 	if current.Version != request.ExpectedVersion {
 		return ReviewRequeueResult{}, ErrConflict
 	}
-	if current.Status != model.TaskStale {
-		return ReviewRequeueResult{}, fmt.Errorf("%w: only stale work can be reviewed and requeued", ErrConflict)
+	if current.Status != model.TaskStale && current.Status != model.TaskBlocked && current.Status != model.TaskWaiting {
+		return ReviewRequeueResult{}, fmt.Errorf("%w: only stale, blocked, or waiting work can be reviewed and requeued", ErrConflict)
 	}
 	var runStatus model.TaskStatus
 	var targetAgent, ended string
 	if err := tx.QueryRowContext(ctx, `SELECT status,agent,COALESCE(ended_at,'') FROM agent_runs WHERE id=? AND task_id=?`, request.TargetRunID, taskID).Scan(&runStatus, &targetAgent, &ended); err != nil {
 		if err == sql.ErrNoRows {
-			return ReviewRequeueResult{}, fmt.Errorf("%w: stale run not found", ErrValidation)
+			return ReviewRequeueResult{}, fmt.Errorf("%w: target run not found", ErrValidation)
 		}
 		return ReviewRequeueResult{}, err
 	}
-	if runStatus != model.TaskStale || ended == "" {
-		return ReviewRequeueResult{}, fmt.Errorf("%w: target run is not the ended stale run", ErrConflict)
+	kind := model.RunControlRetry
+	if current.Status == model.TaskStale {
+		if runStatus != model.TaskStale || ended == "" {
+			return ReviewRequeueResult{}, fmt.Errorf("%w: target run is not the ended stale run", ErrConflict)
+		}
+	} else {
+		// A run that marks its task blocked or waiting stays open, and Resume
+		// needs an ended run, so an agent that blocked and exited would strand
+		// the task. Recover it only once no run holds a live lease, so a run
+		// its agent updated within the lease period is left alone.
+		kind = model.RunControlResume
+		var live int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE task_id=? AND ended_at IS NULL AND lease_expires_at>=?`, taskID, stamp(now)).Scan(&live); err != nil {
+			return ReviewRequeueResult{}, err
+		}
+		if live > 0 {
+			return ReviewRequeueResult{}, fmt.Errorf("%w: an agent run still holds a live lease on this task", ErrConflict)
+		}
+		if ended == "" {
+			result, err := tx.ExecContext(ctx, `UPDATE agent_runs SET ended_at=? WHERE id=? AND task_id=? AND ended_at IS NULL`, stamp(now), request.TargetRunID, taskID)
+			if err := oneRow(result, err); err != nil {
+				return ReviewRequeueResult{}, err
+			}
+		}
 	}
 
 	owner := current.Owner
 	if current.Visibility == model.VisibilityAgent {
 		owner = ""
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE tasks SET status=?,owner=?,current_note=?,waiting_for='',blocker='',last_edited_by=?,version=version+1,updated_at=?,completed_at=NULL WHERE id=? AND version=? AND status=?`, model.TaskQueued, owner, clipped(request.ReviewNote, 1000), principal.ID, stamp(now), taskID, current.Version, model.TaskStale)
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET status=?,owner=?,current_note=?,waiting_for='',blocker='',last_edited_by=?,version=version+1,updated_at=?,completed_at=NULL WHERE id=? AND version=? AND status=?`, model.TaskQueued, owner, clipped(request.ReviewNote, 1000), principal.ID, stamp(now), taskID, current.Version, current.Status)
 	if err := oneRow(result, err); err != nil {
 		return ReviewRequeueResult{}, err
 	}
 
 	controlID := ""
-	err = tx.QueryRowContext(ctx, `SELECT id FROM run_control_requests WHERE task_id=? AND target_run_id=? AND kind=? AND status IN (?,?,?) ORDER BY id DESC LIMIT 1`, taskID, request.TargetRunID, model.RunControlRetry, model.RunControlRequested, model.RunControlAcknowledged, model.RunControlAccepted).Scan(&controlID)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM run_control_requests WHERE task_id=? AND target_run_id=? AND kind=? AND status IN (?,?,?) ORDER BY id DESC LIMIT 1`, taskID, request.TargetRunID, kind, model.RunControlRequested, model.RunControlAcknowledged, model.RunControlAccepted).Scan(&controlID)
 	switch {
 	case err == nil:
 		result, err = tx.ExecContext(ctx, `UPDATE run_control_requests SET status=?,outcome_note=?,updated_at=?,decided_at=?,completed_at=? WHERE id=? AND status IN (?,?,?)`, model.RunControlCompleted, request.ReviewNote, stamp(now), stamp(now), stamp(now), controlID, model.RunControlRequested, model.RunControlAcknowledged, model.RunControlAccepted)
@@ -80,7 +102,7 @@ func (s *Service) ReviewAndRequeueFor(ctx context.Context, taskID string, reques
 		}
 	case err == sql.ErrNoRows:
 		stampNow := now
-		control := model.RunControlRequest{ID: newID(now), TaskID: taskID, TargetRunID: request.TargetRunID, TargetAgent: targetAgent, Kind: model.RunControlRetry, Status: model.RunControlCompleted, RequestedBy: principal.ID, Reason: request.ReviewNote, OutcomeNote: request.ReviewNote, TaskVersion: current.Version, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(runControlLifetime), DecidedAt: &stampNow, CompletedAt: &stampNow}
+		control := model.RunControlRequest{ID: newID(now), TaskID: taskID, TargetRunID: request.TargetRunID, TargetAgent: targetAgent, Kind: kind, Status: model.RunControlCompleted, RequestedBy: principal.ID, Reason: request.ReviewNote, OutcomeNote: request.ReviewNote, TaskVersion: current.Version, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(runControlLifetime), DecidedAt: &stampNow, CompletedAt: &stampNow}
 		if err := store.InsertRunControl(ctx, tx, control); err != nil {
 			return ReviewRequeueResult{}, err
 		}
@@ -89,7 +111,7 @@ func (s *Service) ReviewAndRequeueFor(ctx context.Context, taskID string, reques
 		return ReviewRequeueResult{}, err
 	}
 
-	event := model.Event{ID: newID(now), TaskID: taskID, RunID: request.TargetRunID, Kind: "task.reviewed_requeued", Actor: principal.ID, Message: request.ReviewNote, Payload: map[string]any{"control_id": controlID, "control_kind": model.RunControlRetry, "control_status": model.RunControlCompleted, "target_run_id": request.TargetRunID, "previous_last_edited_by": current.LastEditedBy, "last_edited_by": principal.ID, "version": current.Version + 1}, CreatedAt: now}
+	event := model.Event{ID: newID(now), TaskID: taskID, RunID: request.TargetRunID, Kind: "task.reviewed_requeued", Actor: principal.ID, Message: request.ReviewNote, Payload: map[string]any{"control_id": controlID, "control_kind": kind, "control_status": model.RunControlCompleted, "target_run_id": request.TargetRunID, "previous_last_edited_by": current.LastEditedBy, "last_edited_by": principal.ID, "version": current.Version + 1}, CreatedAt: now}
 	if err := store.InsertEvent(ctx, tx, event); err != nil {
 		return ReviewRequeueResult{}, err
 	}
