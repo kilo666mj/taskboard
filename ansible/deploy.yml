@@ -5,6 +5,7 @@
   vars_files:
     - private.yml
   vars:
+    taskboard_source_dir: "{{ playbook_dir }}/.."
     taskboard_build_dir: "{{ playbook_dir }}/.build"
     taskboard_binary: "{{ taskboard_build_dir }}/taskboard"
     taskboard_database_url: ""
@@ -55,6 +56,14 @@
     taskboard_retention_days: 0
     taskboard_webhook_url: ""
     taskboard_webhook_max_attempts: 8
+    # Build from a checkout with uncommitted changes. Leave false for
+    # production, so the deployed binary always matches a commit.
+    taskboard_allow_dirty_build: false
+    # Back up the SQLite database before installing. Backups are written next
+    # to it as taskboard.db.pre-<revision>-<UTC time>; the newest
+    # taskboard_backup_keep are kept, and 0 keeps them all.
+    taskboard_backup_enabled: true
+    taskboard_backup_keep: 10
 
   pre_tasks:
     - name: Validate deployment inputs
@@ -81,10 +90,61 @@
           - taskboard_agent_max_run_seconds | int >= 60
           - taskboard_retention_days | int >= 0
           - taskboard_webhook_max_attempts | int >= 1
+          - taskboard_backup_keep | int >= 0
           - taskboard_webhook_url | length == 0 or taskboard_webhook_secret | length >= 32
           - "'replace' not in (taskboard_auth_token | lower)"
         fail_msg: Run go run ./cmd/taskboard-init-config before deploying.
       no_log: true
+
+    - name: Read source revision
+      ansible.builtin.command:
+        argv: [git, rev-parse, HEAD]
+        chdir: "{{ taskboard_source_dir }}"
+      register: taskboard_source_revision
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+
+    # Release builds stamp the tag; a later commit gets tag-count-gsha.
+    - name: Read source version
+      ansible.builtin.command:
+        argv: [git, describe, --tags, --always, --match, "v*"]
+        chdir: "{{ taskboard_source_dir }}"
+      register: taskboard_source_version
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+
+    # Go marks a build as modified when git status reports any change,
+    # including untracked files, so check the same way.
+    - name: Read source status
+      ansible.builtin.command:
+        argv: [git, status, --porcelain]
+        chdir: "{{ taskboard_source_dir }}"
+      register: taskboard_source_status
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+
+    - name: Require a clean checkout
+      ansible.builtin.assert:
+        that: taskboard_allow_dirty_build | bool or taskboard_source_status.stdout | length == 0
+        fail_msg: >-
+          The checkout has uncommitted or untracked changes, so the binary would
+          not match a commit. Commit or stash them, or set
+          taskboard_allow_dirty_build=true for a test deployment.
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Record build identity
+      ansible.builtin.set_fact:
+        taskboard_build_revision: "{{ taskboard_source_revision.stdout }}"
+        taskboard_build_version: "{{ taskboard_source_version.stdout }}"
+        taskboard_build_modified: "{{ taskboard_source_status.stdout | length > 0 }}"
 
     - name: Create local build directory
       ansible.builtin.file:
@@ -97,8 +157,15 @@
 
     - name: Build Taskboard on the controller
       ansible.builtin.command:
-        argv: [go, build, -trimpath, -ldflags=-s -w, -o, "{{ taskboard_binary }}", ./cmd/taskboard]
-        chdir: "{{ playbook_dir }}/.."
+        argv:
+          - go
+          - build
+          - -trimpath
+          - -ldflags=-s -w -X github.com/kilo666mj/taskboard/internal/server.Version={{ taskboard_build_version }}
+          - -o
+          - "{{ taskboard_binary }}"
+          - ./cmd/taskboard
+        chdir: "{{ taskboard_source_dir }}"
       environment:
         GOCACHE: /tmp/taskboard-ansible-go-cache
         # Build for the target, not the controller. The SQLite driver is
@@ -163,6 +230,54 @@
           - /etc/taskboard/taskboard.env.candidate
       changed_when: false
 
+    - name: Check for an existing SQLite database
+      ansible.builtin.stat:
+        path: /var/lib/taskboard/taskboard.db
+      register: taskboard_database_file
+      when: taskboard_backup_enabled | bool and taskboard_database_url | length == 0
+
+    # An online backup is consistent while Taskboard keeps running, and the
+    # integrity check fails the deployment before anything is replaced.
+    - name: Back up SQLite database
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_facts['python']['executable'] }}"
+          - -c
+          - |
+            import os, sqlite3, sys
+            source, target = sys.argv[1], sys.argv[2]
+            os.umask(0o077)
+            reader = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+            writer = sqlite3.connect(target)
+            reader.backup(writer)
+            reader.close()
+            result = writer.execute("PRAGMA integrity_check").fetchone()[0]
+            writer.close()
+            if result != "ok":
+                sys.exit(f"backup integrity check failed: {result}")
+            print(target)
+          - /var/lib/taskboard/taskboard.db
+          - "/var/lib/taskboard/taskboard.db.pre-{{ taskboard_build_revision[:7] }}-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+      register: taskboard_backup
+      changed_when: true
+      when: taskboard_database_file.stat is defined and taskboard_database_file.stat.exists
+
+    - name: Find database backups
+      ansible.builtin.find:
+        paths: /var/lib/taskboard
+        patterns: taskboard.db.pre-*
+      register: taskboard_backups
+      when: taskboard_backup is changed and taskboard_backup_keep | int > 0
+
+    - name: Remove old database backups
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ (taskboard_backups.files | sort(attribute='mtime', reverse=true))[taskboard_backup_keep | int:] }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: taskboard_backups.files is defined
+
     - name: Install Taskboard binary
       ansible.builtin.copy:
         src: /usr/local/bin/taskboard.candidate
@@ -210,6 +325,34 @@
       retries: 10
       delay: 1
       until: readiness.status == 200
+
+    - name: Read installed version
+      ansible.builtin.command:
+        argv: [/usr/local/bin/taskboard, -version]
+      register: taskboard_installed_version
+      changed_when: false
+
+    - name: Read running executable
+      ansible.builtin.shell: readlink "/proc/$(systemctl show -p MainPID --value taskboard)/exe"
+      register: taskboard_running_executable
+      changed_when: false
+
+    # A running executable shown as deleted is an older binary that the
+    # restart did not replace.
+    - name: Verify the deployed build is running
+      ansible.builtin.assert:
+        that:
+          - taskboard_installed_version.stdout.startswith(taskboard_expected_version)
+          - taskboard_running_executable.stdout == '/usr/local/bin/taskboard'
+        fail_msg: >-
+          Expected {{ taskboard_expected_version }} running from
+          /usr/local/bin/taskboard, found "{{ taskboard_installed_version.stdout }}"
+          running from "{{ taskboard_running_executable.stdout }}".
+        success_msg: "{{ taskboard_installed_version.stdout }}"
+      vars:
+        taskboard_expected_version: >-
+          taskboard {{ taskboard_build_version }} ({{ taskboard_build_revision
+          }}{{ ', modified' if taskboard_build_modified | bool else '' }})
 
   handlers:
     - name: Restart Taskboard
