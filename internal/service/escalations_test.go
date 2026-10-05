@@ -311,3 +311,36 @@ func TestMarkDecisionsForShowsOnlyQuestionsTheViewerMayAnswer(t *testing.T) {
 		t.Fatalf("agent flags = %v", agent)
 	}
 }
+
+func TestProducerReadsDecisionsOnTheTaskItCreated(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	producer, worker := AgentPrincipal("agent:producer"), AgentPrincipal("agent:worker")
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Raised by a service", IdempotencyKey: "producer-create"}, producer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: created.Version, IdempotencyKey: "producer-claim"}, worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.CreateEscalationFor(t.Context(), created.ID, model.CreateEscalationRequest{
+		RunID: claimed.Run.ID, ExpectedVersion: claimed.Task.Version, Question: "Apply it?", Options: []string{"Yes", "No"}, Blocking: true, IdempotencyKey: "producer-escalate",
+	}, worker); err != nil {
+		t.Fatal(err)
+	}
+	escalations, err := tasks.ListEscalationsFor(t.Context(), created.ID, producer)
+	if err != nil || len(escalations) != 1 {
+		t.Fatalf("producer escalations = %+v, %v", escalations, err)
+	}
+	messages, err := tasks.ListMessagesFor(t.Context(), created.ID, "", 10, producer)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("producer messages = %+v, %v", messages, err)
+	}
+	outsider := AgentPrincipal("agent:outsider")
+	if _, err := tasks.ListEscalationsFor(t.Context(), created.ID, outsider); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("outsider escalations error = %v, want forbidden", err)
+	}
+	if _, err := tasks.ListMessagesFor(t.Context(), created.ID, "", 10, outsider); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("outsider messages error = %v, want forbidden", err)
+	}
+}

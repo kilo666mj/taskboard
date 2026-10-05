@@ -16,7 +16,7 @@ func (s *Service) ListEscalationsFor(ctx context.Context, taskID string, princip
 	if err != nil {
 		return nil, err
 	}
-	if principal.Agent && (!principal.HasCapability(CapabilityTaskEscalate) || !canMutate(task, principal)) {
+	if principal.Agent && !producerMayRead(task, principal) && (!principal.HasCapability(CapabilityTaskEscalate) || !canMutate(task, principal)) {
 		return nil, ErrForbidden
 	}
 	return s.store.ListTaskEscalations(ctx, task.ID)

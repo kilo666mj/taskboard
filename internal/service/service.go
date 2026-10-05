@@ -220,6 +220,14 @@ func canMutate(task model.Task, principal Principal) bool {
 	return task.Owner != "" && task.Owner == principal.ID
 }
 
+// producerMayRead lets the agent that created a task read its conversation
+// and decisions (with task:message) after another agent claims it, so a
+// service that raised work can act on what people decided there. It grants
+// no writes.
+func producerMayRead(task model.Task, principal Principal) bool {
+	return principal.Agent && task.CreatedBy != "" && task.CreatedBy == principal.ID && principal.HasCapability(CapabilityTaskMessage)
+}
+
 // producerMayUpdate lets the agent that created a task keep it current
 // until someone claims it: a monitoring service can refresh the description
 // of work it raised, or cancel it when the condition clears, without claiming
