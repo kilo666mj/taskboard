@@ -127,8 +127,10 @@ The playbook stages the binary and environment as `.candidate` files, runs
 
 An instance that serves only one kind of work should set `taskboard_task_type`
 to `personal` or `work` in `private.yml`. Every new task then gets that type
-and the browser hides the type selector. The older `taskboard_mcp_default_type`
-applies only while `taskboard_task_type` is empty.
+and the browser hides the type selector. Leave `taskboard_task_type` empty for
+an instance that holds both kinds; MCP-created tasks then default to `work`.
+The deprecated `taskboard_mcp_default_type` is written to the environment only
+when set, and applies only while `taskboard_task_type` is empty.
 
 ## TLS and proxy controls
 
