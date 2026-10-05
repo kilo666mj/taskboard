@@ -119,6 +119,10 @@ remediation:
 The escalation's question message is immutable, so an answer always applies to
 the exact proposal text the agent asked about.
 
+Answering a blocking escalation queues the task with the answerer (the person,
+also when a delegate forwarded the answer) as `last_edited_by`, so a runner
+that admits only work its operators last edited picks the answered task up.
+
 A service that collects decisions elsewhere, such as a notification card, can
 forward them with `task_escalation_answer`. The caller must be listed in
 `TASKBOARD_ANSWER_DELEGATION_PRINCIPALS`, must have authenticated the person
