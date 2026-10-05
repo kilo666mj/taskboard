@@ -12,14 +12,15 @@ decisions.
 ## Capturing tasks for a person
 
 When the deployment enables `TASKBOARD_MCP_HUMAN_DELEGATION` and the MCP caller
-is a person authenticated by Cloudflare Access, `task_create` records the task
-as that person: `created_by` is their subject and visibility defaults to
-`private`. The returned task is the only view the agent gets of a private task;
-later reads and updates stay agent-scoped. Pass `visibility: "team"` to share
-it, or `visibility: "agent"` when the person asks for pickup work. Service-token
-callers and every other tool are unaffected. The same applies through Switchboard
-when it forwards the person in `X-Switchboard-Access-Subject` from a credential
-listed in `TASKBOARD_MCP_DELEGATION_PRINCIPALS`.
+is a person authenticated by Cloudflare Access, `task_create` and `task_start`
+record the task as that person: `created_by` is their subject and visibility
+defaults to `private`. A started task's run belongs to the agent, which can see
+and update the person's private tasks only while acting for them. Pass
+`visibility: "team"` to share it, or `visibility: "agent"` when the person asks
+for pickup work. Service-token callers are unaffected. The same applies through
+Switchboard when it forwards the person in `X-Switchboard-Access-Subject` or
+`X-Switchboard-OAuth-Subject` from a credential listed in
+`TASKBOARD_MCP_DELEGATION_PRINCIPALS`.
 
 ## Incremental checklist progress
 
@@ -374,7 +375,8 @@ edit, allowing runners to reject unknown historical provenance by default.
 
 Lease expiry remains fail-closed: it marks the task and run stale without
 changing provenance or automatically retrying the work. A Taskboard owner or
-administrator may use the browser's **Review & requeue** action after inspecting
+administrator, or anyone who can edit when an agent created the task or it is
+their own, may use the browser's **Review & requeue** action after inspecting
 the current task details. The action is version-checked and audited, records
 that human principal in `last_edited_by`, closes any open retry control for the
 stale run, clears agent-pickup ownership, and queues the task for a fresh claim.

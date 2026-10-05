@@ -215,9 +215,13 @@ func TestAnswerDelegationPrincipalsConfiguration(t *testing.T) {
 func TestMCPDelegationPrincipalsConfiguration(t *testing.T) {
 	t.Setenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS", "agent:switchboard")
 	if _, err := Load(); err == nil {
-		t.Fatal("delegation principals without delegation and Cloudflare Access were accepted")
+		t.Fatal("delegation principals without delegation were accepted")
 	}
 	t.Setenv("TASKBOARD_MCP_HUMAN_DELEGATION", "true")
+	// OIDC browser sign-in (the default) pairs with forwarded OAuth subjects.
+	if cfg, err := Load(); err != nil || len(cfg.MCPDelegationPrincipals) != 1 {
+		t.Fatalf("delegation principals with OIDC sign-in = %v, %v", cfg.MCPDelegationPrincipals, err)
+	}
 	t.Setenv("TASKBOARD_BROWSER_AUTH_MODE", "cloudflare_access")
 	t.Setenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN", "https://team.cloudflareaccess.com")
 	t.Setenv("TASKBOARD_CF_ACCESS_AUD", "access-audience")

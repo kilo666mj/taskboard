@@ -16,8 +16,8 @@ disable their feature.
 | `TASKBOARD_TASK_TYPE` | none | Fix every new task on this instance to `personal` or `work` and hide the type selector. Type changes to existing tasks are ignored. Leave empty to choose a type per task. |
 | `TASKBOARD_DEFAULT_REQUIREMENTS` | none | Comma-separated requirement tokens, such as `runner:k8s-job`, given to agent-lane tasks that are created, moved into the agent lane, or recur without any. Routes this instance's pickup work to one execution backend. See [Dispatchers](dispatchers.md). |
 | `TASKBOARD_MCP_DEFAULT_TYPE` | `work` | Deprecated; use `TASKBOARD_TASK_TYPE`. Default type for MCP-created tasks when `TASKBOARD_TASK_TYPE` is empty. |
-| `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp` have `task_create` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
-| `TASKBOARD_MCP_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential principals, such as `agent:switchboard`, allowed to forward a Cloudflare Access person in `X-Switchboard-Access-Subject`. Requires delegation and Cloudflare Access browser mode; `agent:shared` is refused. |
+| `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp`, or forwarded by a delegation principal, have `task_create` and `task_start` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
+| `TASKBOARD_MCP_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential principals, such as `agent:switchboard`, allowed to forward a person in `X-Switchboard-Access-Subject` (Cloudflare Access) or `X-Switchboard-OAuth-Subject` (OAuth with the browser's OIDC issuer). Requires delegation and `cloudflare_access` or `oidc` browser mode; `agent:shared` is refused. |
 | `TASKBOARD_ANSWER_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential or Cloudflare Access service token principals, such as `agent:tintwire`, allowed to forward a person's answer with `task_escalation_answer`. Only escalations that name their answerers accept delegated answers, and the person acts with `TASKBOARD_DEFAULT_ROLE`. `agent:shared` and `agent:local` are refused. See [Approval decisions](agent-integrations.md#approval-decisions). |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
 | `TASKBOARD_VAPID_PUBLIC_KEY` | none | Web Push VAPID public key. |
@@ -169,19 +169,24 @@ By default every `/mcp` caller is an agent, so a person who connects their own
 MCP client through Cloudflare Access still creates agent-lane tasks. With
 `TASKBOARD_MCP_HUMAN_DELEGATION=true`, an MCP request carrying a Cloudflare
 Access identity for a person (never a service token) is still an agent
-principal, but `task_create` records the task as that person:
+principal, but the work it records belongs to that person:
 
-- `created_by` is the person's subject and visibility defaults to `private`,
-  as in the browser; `team` may be requested explicitly.
+- `task_create` records the task as the person: `created_by` is the person's
+  subject and visibility defaults to `private`, as in the browser; `team` may
+  be requested explicitly. The `task.created` event carries
+  `delegated_via: "mcp"`.
+- `task_start` also defaults to a private task created by the person. The agent
+  owns the task and its run, so it can keep the work current.
+- Passing `visibility: "agent"` (or `team` for `task_start`) keeps the
+  agent-lane behavior: the agent is the creator and the task is shared.
 - The person's role must allow task writes and the agent policy must grant
   `task:create`.
-- The `task.created` event carries `delegated_via: "mcp"`.
-- Passing `visibility: "agent"` keeps the previous agent-lane behavior.
 
-Delegation covers only `task_create`. `task_start`, claims, updates and every
-human-owned control (acceptance criteria, dependencies, reviews) keep agent
-authority, so an agent cannot see or change a private task after creating it
-for the person.
+An agent sees a private task only while it acts for the person who created it,
+so a session acting for one person never sees another person's private tasks,
+and an agent acting for nobody sees none. Claims, updates and controls keep
+agent authority within what the agent can see; human-owned controls
+(acceptance criteria, dependencies, reviews) stay with people.
 
 #### Through Switchboard
 
@@ -197,6 +202,14 @@ bearer instead of the person's Access assertion. To delegate in that topology:
    `X-Switchboard-Access-Subject`, and never for service tokens.
 3. Set `TASKBOARD_MCP_HUMAN_DELEGATION=true` and
    `TASKBOARD_MCP_DELEGATION_PRINCIPALS=agent:switchboard`.
+
+When Switchboard authenticates people with OAuth against the same OIDC issuer
+that Taskboard uses for browser sign-in, enable `forward_oauth_subject`
+instead of step 2. Switchboard then sends the verified subject in
+`X-Switchboard-OAuth-Subject`. That subject is the person's Taskboard
+principal, so the delegated work appears in that person's browser and desktop
+sessions. Taskboard rejects a request that carries both headers, or an OAuth
+subject that looks like an agent or Access principal.
 
 Taskboard reads the header only from a listed principal and ignores it from
 every other caller, including the shared bearer. It rejects the request when

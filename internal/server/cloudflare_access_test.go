@@ -217,6 +217,7 @@ func TestSwitchboardForwardedAccessSubjectIsTrustedOnlyFromDelegationPrincipals(
 	base := config.Config{AuthToken: shared, DefaultRole: "member", LeaseDuration: time.Minute, BrowserAuthMode: config.BrowserAuthCloudflareAccess, MCPHumanDelegation: true, MCPDelegationPrincipals: []string{"agent:switchboard"}}
 	for _, test := range []struct {
 		name, token, subject string
+		oauthSubject         string
 		disabled             bool
 		wantStatus           int
 		wantPerson           string
@@ -229,6 +230,11 @@ func TestSwitchboardForwardedAccessSubjectIsTrustedOnlyFromDelegationPrincipals(
 		{name: "service token subject", token: trusted, subject: "cloudflare_access:service_token:build.access", wantStatus: http.StatusUnauthorized},
 		{name: "unprefixed subject", token: trusted, subject: "person-1", wantStatus: http.StatusUnauthorized},
 		{name: "revoked person", token: trusted, subject: "cloudflare_access:departed", wantStatus: http.StatusUnauthorized},
+		{name: "oauth subject", token: trusted, oauthSubject: "c04f726d-person", wantStatus: http.StatusNoContent, wantPerson: "c04f726d-person"},
+		{name: "oauth subject from other credential", token: other, oauthSubject: "c04f726d-person", wantStatus: http.StatusNoContent},
+		{name: "oauth subject naming an agent", token: trusted, oauthSubject: "agent:worker", wantStatus: http.StatusUnauthorized},
+		{name: "oauth subject naming an access identity", token: trusted, oauthSubject: "cloudflare_access:person-1", wantStatus: http.StatusUnauthorized},
+		{name: "both subjects", token: trusted, subject: "cloudflare_access:person-1", oauthSubject: "c04f726d-person", wantStatus: http.StatusUnauthorized},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := base
@@ -242,6 +248,9 @@ func TestSwitchboardForwardedAccessSubjectIsTrustedOnlyFromDelegationPrincipals(
 			request.Header.Set("Authorization", "Bearer "+test.token)
 			if test.subject != "" {
 				request.Header.Set(switchboardAccessSubjectHeader, test.subject)
+			}
+			if test.oauthSubject != "" {
+				request.Header.Set(switchboardOAuthSubjectHeader, test.oauthSubject)
 			}
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)

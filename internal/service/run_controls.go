@@ -19,7 +19,7 @@ type ReviewRequeueResult struct {
 }
 
 func (s *Service) ReviewAndRequeueFor(ctx context.Context, taskID string, request model.ReviewRequeueRequest, principal Principal) (ReviewRequeueResult, error) {
-	if principal.Agent || principal.Role != RoleOwner && principal.Role != RoleAdmin {
+	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return ReviewRequeueResult{}, ErrForbidden
 	}
 	taskID, request.TargetRunID, request.ReviewNote = strings.TrimSpace(taskID), strings.TrimSpace(request.TargetRunID), strings.TrimSpace(request.ReviewNote)
@@ -45,6 +45,9 @@ func (s *Service) ReviewAndRequeueFor(ctx context.Context, taskID string, reques
 	}
 	if current.Version != request.ExpectedVersion {
 		return ReviewRequeueResult{}, ErrConflict
+	}
+	if !mayRecover(current, principal) {
+		return ReviewRequeueResult{}, ErrForbidden
 	}
 	if current.Status != model.TaskStale && current.Status != model.TaskBlocked && current.Status != model.TaskWaiting {
 		return ReviewRequeueResult{}, fmt.Errorf("%w: only stale, blocked, or waiting work can be reviewed and requeued", ErrConflict)
@@ -392,6 +395,14 @@ func completeRunControl(ctx context.Context, tx *store.Tx, task model.Task, item
 	default:
 		return fmt.Errorf("%w: unknown control kind", ErrValidation)
 	}
+}
+
+// mayRecover reports whether a person may review and requeue a task: owners
+// and administrators any task, anyone who can edit the work an agent raised
+// and their own tasks.
+func mayRecover(task model.Task, principal Principal) bool {
+	return principal.Role == RoleOwner || principal.Role == RoleAdmin ||
+		strings.HasPrefix(task.CreatedBy, "agent:") || task.CreatedBy != "" && task.CreatedBy == principal.ID
 }
 
 func oneRow(result interface{ RowsAffected() (int64, error) }, err error) error {
