@@ -265,3 +265,11 @@ func TestNoNativeDialogs(t *testing.T) {
 		}
 	}
 }
+
+func TestChecklistNoteWrapsBelowItsLabel(t *testing.T) {
+	// A note in the row's auto-width column squeezed the label to one
+	// character per line; it spans the label column on its own line instead.
+	if css := embeddedText(t, "app.css"); !strings.Contains(css, ".item-note{grid-column:2/-1;") {
+		t.Error("app.css: .item-note must span from the label column on its own row")
+	}
+}
