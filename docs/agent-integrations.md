@@ -376,6 +376,13 @@ that human principal in `last_edited_by`, closes any open retry control for the
 stale run, clears agent-pickup ownership, and queues the task for a fresh claim.
 It is intentionally unavailable through the agent MCP surface.
 
+The same action recovers a task an agent marked `blocked` or `waiting` and then
+abandoned. Such a run stays open, so **Resume** (which needs an ended run) is
+not offered. Once no run on the task holds a live lease, **Review & requeue**
+ends the run, records a completed `resume` control, and queues the task with
+the reviewer as last editor. While any run on the task holds a live lease
+(its agent updated the task within the lease period), the action is refused.
+
 ## Worker matching
 
 Task requirements are human-maintained lowercase tokens such as

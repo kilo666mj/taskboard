@@ -128,7 +128,8 @@ so external runners can require both principals to belong to their operator
 allowlist before admitting work. Claims and automatic lease maintenance do not
 overwrite edit provenance. Legacy tasks keep an empty last editor until their
 first authenticated edit so consumers can fail closed instead of trusting an
-invented history. When an agent run goes stale, an owner or administrator can
+invented history. When an agent run goes stale, or an agent leaves its task
+blocked or waiting and its run lease lapses, an owner or administrator can
 explicitly review and requeue it; that audited recovery records the reviewer as
 the last editor before the task becomes eligible for a fresh claim.
 
