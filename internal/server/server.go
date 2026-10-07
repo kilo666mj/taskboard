@@ -1557,7 +1557,7 @@ func forwardedAccessPerson(cfg config.Config, database *store.Store, r *http.Req
 func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAccess) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.AllowInsecure && cfg.AuthToken == "" {
-			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "auth_mode": "local", "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": "local", "principal": "local", "role": roleForGroups(cfg, nil), "task_type": cfg.TaskType})
+			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "auth_mode": "local", "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": "local", "principal": "local", "role": roleForGroups(cfg, nil), "task_type": cfg.TaskType, "routine_producers": cfg.RoutineProducers})
 			return
 		}
 		if cloudflare != nil {
@@ -1580,6 +1580,7 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 				"role":                      roleForGroups(cfg, identity.Groups),
 				"logout_url":                "/cdn-cgi/access/logout",
 				"task_type":                 cfg.TaskType,
+				"routine_producers":         cfg.RoutineProducers,
 			})
 			return
 		}
@@ -1593,7 +1594,7 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 		if valid {
 			role = roleForGroups(cfg, identity.Groups)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": valid, "auth_mode": config.BrowserAuthOIDC, "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": identityActor(identity), "principal": identity.Subject, "role": role, "task_type": cfg.TaskType})
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": valid, "auth_mode": config.BrowserAuthOIDC, "oidc_enabled": cfg.OIDCEnabled(), "cloudflare_access_enabled": false, "identity": identityActor(identity), "principal": identity.Subject, "role": role, "task_type": cfg.TaskType, "routine_producers": cfg.RoutineProducers})
 	}
 }
 

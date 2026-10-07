@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // IANA review timezones also work in the scratch container.
 
 	"github.com/kilo666mj/taskboard/internal/model"
 	pwakit "go.michaelspost.com/pwa-kit"
@@ -35,6 +36,8 @@ type Config struct {
 	VAPIDPublicKey             string
 	VAPIDPrivateKey            string
 	VAPIDContact               string
+	RoutineProducers           []string
+	ReviewTimezone             string
 	OIDCIssuer                 string
 	OIDCClientID               string
 	OIDCClientSecret           string
@@ -95,6 +98,8 @@ func Load() (Config, error) {
 		VAPIDPublicKey:             strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PUBLIC_KEY")),
 		VAPIDPrivateKey:            strings.TrimSpace(os.Getenv("TASKBOARD_VAPID_PRIVATE_KEY")),
 		VAPIDContact:               env("TASKBOARD_VAPID_CONTACT", "mailto:admin@localhost"),
+		RoutineProducers:           split(os.Getenv("TASKBOARD_ROUTINE_PRODUCERS")),
+		ReviewTimezone:             env("TASKBOARD_REVIEW_TIMEZONE", "UTC"),
 		OIDCIssuer:                 strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_ISSUER")),
 		OIDCClientID:               strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_ID")),
 		OIDCClientSecret:           strings.TrimSpace(os.Getenv("TASKBOARD_OIDC_CLIENT_SECRET")),
@@ -247,6 +252,9 @@ func Load() (Config, error) {
 		if len(cfg.WebhookSecret) < 32 {
 			return Config{}, fmt.Errorf("TASKBOARD_WEBHOOK_SECRET must contain at least 32 characters")
 		}
+	}
+	if _, err := time.LoadLocation(cfg.ReviewTimezone); err != nil {
+		return Config{}, fmt.Errorf("TASKBOARD_REVIEW_TIMEZONE: %w", err)
 	}
 	if (cfg.VAPIDPublicKey == "") != (cfg.VAPIDPrivateKey == "") {
 		return Config{}, fmt.Errorf("TASKBOARD_VAPID_PUBLIC_KEY and TASKBOARD_VAPID_PRIVATE_KEY must be configured together")

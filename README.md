@@ -228,6 +228,17 @@ across upgrades:
 go run ./cmd/taskboard-keygen
 ```
 
+To batch routine automation notifications, set `TASKBOARD_ROUTINE_PRODUCERS` to
+comma-separated task creator principals (for example `agent:monitor,agent:updates`)
+and `TASKBOARD_REVIEW_TIMEZONE` to an IANA timezone (default `UTC`). Normal and
+low-priority updates from those producers appear in one daily Web Push review
+after 09:00, instead of individual progress notifications. High and urgent tasks
+retain immediate notifications. The **Automatic work** view collects current
+waiting, blocked, and stale tasks from those producers, excluding deferred work.
+The daily review respects each subscription's progress preference and task
+visibility; it uses current task state and persists delivery receipts across
+restarts. These settings default to disabled and require database schema 20.
+
 Set the resulting `TASKBOARD_VAPID_PUBLIC_KEY` and
 `TASKBOARD_VAPID_PRIVATE_KEY`, plus a real `TASKBOARD_VAPID_CONTACT` mailto or
 HTTPS contact. The public key is sent to authenticated browsers; the private

@@ -80,6 +80,7 @@ func TestUpgradeReleasedBaselineBeforeEditProvenance(t *testing.T) {
 		mutateSQLite(t, path, `ALTER TABLE task_escalations DROP COLUMN `+column)
 	}
 	mutateSQLite(t, path, `ALTER TABLE tasks DROP COLUMN last_edited_by`)
+	mutateSQLite(t, path, `DROP TABLE push_review_deliveries`)
 	mutateSQLite(t, path, `DELETE FROM schema_migrations WHERE version>=16`)
 	mutateSQLite(t, path, `UPDATE schema_migrations SET checksum='`+released+`' WHERE version=1`)
 	mutateSQLite(t, path, `INSERT INTO tasks(id,title,status,created_at,updated_at) VALUES('existing','Keep this task','queued','2026-09-23T00:00:00Z','2026-09-23T00:00:00Z')`)
