@@ -1797,10 +1797,12 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.RunID != "" {
 		runStatus := status
 		var ended any
-		if status == model.TaskDone || status == model.TaskCancelled {
+		leaseExpires := now.Add(s.leaseDuration)
+		if status == model.TaskDone || status == model.TaskCancelled || status == model.TaskWaiting || status == model.TaskBlocked {
 			ended = stamp(now)
+			leaseExpires = now
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE agent_runs SET status=?,lease_expires_at=?,last_heartbeat_at=?,ended_at=? WHERE id=? AND task_id=?`, runStatus, stamp(now.Add(s.leaseDuration)), stamp(now), ended, request.RunID, taskID)
+		result, err := tx.ExecContext(ctx, `UPDATE agent_runs SET status=?,lease_expires_at=?,last_heartbeat_at=?,ended_at=? WHERE id=? AND task_id=?`, runStatus, stamp(leaseExpires), stamp(now), ended, request.RunID, taskID)
 		if err != nil {
 			return model.Task{}, err
 		}

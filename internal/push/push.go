@@ -16,15 +16,17 @@ import (
 )
 
 type Service struct {
-	database   *store.Store
-	tasks      *service.Service
-	publicKey  string
-	privateKey string
-	contact    string
-	logger     *slog.Logger
-	client     *http.Client
-	wait       sync.WaitGroup
-	metrics    *observability.Metrics
+	database         *store.Store
+	tasks            *service.Service
+	publicKey        string
+	privateKey       string
+	contact          string
+	logger           *slog.Logger
+	client           *http.Client
+	wait             sync.WaitGroup
+	metrics          *observability.Metrics
+	routineProducers map[string]bool
+	reviewLocation   *time.Location
 }
 
 type notification struct {
@@ -63,6 +65,8 @@ func (s *Service) Run(ctx context.Context) {
 	go func() {
 		defer s.wait.Done()
 		defer cancel()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
 		for {
 			select {
 			case event, ok := <-events:
@@ -70,6 +74,10 @@ func (s *Service) Run(ctx context.Context) {
 					return
 				}
 				s.deliver(ctx, event)
+			case now := <-ticker.C:
+				if err := s.deliverReview(ctx, now); err != nil {
+					s.logger.Error("daily review delivery", "error", err)
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -92,6 +100,9 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 	if err != nil {
 		s.logger.Error("load task for push", "error", err)
 		return
+	}
+	if s.routine(task) {
+		return // Current unresolved state appears in the daily review.
 	}
 	var notifications []notification
 	if event.Kind == "task.escalated" {

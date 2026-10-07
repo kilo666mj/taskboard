@@ -82,6 +82,7 @@ func main() {
 		logger.Warn("TASKBOARD_MCP_DEFAULT_TYPE is deprecated; set TASKBOARD_TASK_TYPE to fix one task type for this instance")
 	}
 	notifications := push.New(database, tasks, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDContact, logger, metrics)
+	notifications.ConfigureReview(cfg.RoutineProducers, cfg.ReviewTimezone)
 	webhooks := webhook.New(database, cfg.WebhookURL, cfg.WebhookSecret, cfg.WebhookMaxAttempts, logger)
 	runContext, stopNotifications := context.WithCancel(context.Background())
 	notifications.Run(runContext)

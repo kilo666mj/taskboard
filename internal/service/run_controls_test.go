@@ -204,8 +204,9 @@ func TestOperatorReviewRequeuesBlockedTaskOnlyAfterItsRunLeaseLapses(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blocked.Runs[0].EndedAt != nil {
-		t.Fatalf("blocked run ended = %+v; this test needs an open blocked run", blocked.Runs[0])
+	// Model a legacy pre-upgrade blocked run, whose lease remained live.
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE agent_runs SET ended_at=NULL,lease_expires_at=? WHERE id=?`, stamp(time.Now().UTC().Add(time.Minute)), started.Run.ID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := tasks.CreateRunControlFor(t.Context(), blocked.ID, model.CreateRunControlRequest{TargetRunID: started.Run.ID, Kind: model.RunControlResume, ExpectedVersion: blocked.Version}, HumanPrincipalWithRole("human:member", RoleMember)); !errors.Is(err, ErrValidation) {
 		t.Fatalf("resume of an open run error = %v, want validation", err)

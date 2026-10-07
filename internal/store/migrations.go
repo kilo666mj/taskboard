@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 19
+const latestSchemaVersion = 20
 
 type schemaMigration struct {
 	Version  int
@@ -262,6 +262,11 @@ var schemaMigrations = []schemaMigration{
 		`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS duplicate_of TEXT REFERENCES tasks(id) ON DELETE SET NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_duplicate_of ON tasks(duplicate_of) WHERE duplicate_of IS NOT NULL`,
 	}},
+	{Version: 20, Name: "daily_review_delivery", SQLite: reviewDeliveryStatements, Postgres: reviewDeliveryStatements},
+}
+
+var reviewDeliveryStatements = []string{
+	`CREATE TABLE push_review_deliveries (endpoint TEXT NOT NULL REFERENCES push_subscriptions(endpoint) ON DELETE CASCADE,day TEXT NOT NULL,lease_until TEXT NOT NULL,sent_at TEXT,PRIMARY KEY(endpoint,day))`,
 }
 
 var discussionStatements = []string{
