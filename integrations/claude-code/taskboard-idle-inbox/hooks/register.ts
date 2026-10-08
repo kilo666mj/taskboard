@@ -69,6 +69,8 @@ async function check($: EngineInterface) {
     return
   }
   inFlight = true
+  // A waiting read can take 25 seconds; runs started meanwhile are not in its answer.
+  const asked = new Set(watched.map(run => run.runId))
   let inbox: Inbox
   try {
     const waiting = canWait === true && digest !== undefined
@@ -99,8 +101,10 @@ async function check($: EngineInterface) {
   canWait = typeof inbox.digest === 'string' && inbox.digest !== ''
   digest = canWait ? inbox.digest : undefined
 
-  const open = new Set(inbox.runs.filter(run => !FINISHED.has(run.task_status)).map(run => run.run_id))
-  await update($, runs, list => list.filter(run => open.has(run.runId)))
+  // Drop a run only if this read asked about it and it is finished or no longer listed.
+  const listed = new Set(inbox.runs.filter(run => !FINISHED.has(run.task_status)).map(run => run.run_id))
+  await update($, runs, list => list.filter(run => !asked.has(run.runId) || listed.has(run.runId)))
+  const open = new Set((await read($, runs)).map(run => run.runId))
 
   const items = inboxItems(inbox)
   const known = new Set(await read($, seen))

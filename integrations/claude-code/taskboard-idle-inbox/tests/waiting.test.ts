@@ -89,3 +89,43 @@ test('waits on a digest server and delivers while busy and while idle', async ($
   await clock.advance(3_600_000)
   expect(polls.length).toBe(6)
 })
+
+test('a run started during a waiting read stays watched', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.session(on)
+  const polls: { runs: { run_id: string }[] }[] = []
+  let release: (() => void) | undefined
+  let started = 'R1'
+
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  on('tool.call', { tool: START }, () => ({ result: {}, text: JSON.stringify({ run: { id: started, task_id: `T${started.slice(1)}` } }) }))
+  on('tool.call', { tool: INBOX }, async ($, e) => {
+    const call = e as unknown as { runs: { run_id: string }[]; wait_seconds?: number }
+    polls.push(call)
+    // Hold the waiting read open until the test releases it.
+    if (call.wait_seconds) await new Promise<void>(resolve => { release = resolve })
+    // The server answers only for the runs it was asked about.
+    const runs = call.runs.map(run => ({ task_id: `T${run.run_id.slice(1)}`, run_id: run.run_id, task_status: 'active', active: true }))
+    return { result: {}, text: JSON.stringify({ ...emptyInbox, runs }) }
+  })
+
+  await $.turn.start({ text: 'work', turnId: 't1' })
+  await $.tool.call({ tool: START, title: 'One', checklist: ['One'] })
+  await clock.advance(0)
+  await clock.advance(2_000)
+  expect(polls.length).toBe(2)
+  expect(release).toBeDefined()
+
+  started = 'R2'
+  await $.tool.call({ tool: START, title: 'Two', checklist: ['Two'] })
+  release!()
+  await clock.advance(0)
+  release = undefined
+  await clock.advance(2_000)
+  expect(polls.length).toBe(3)
+  expect(polls[2].runs.map(run => run.run_id)).toEqual(['R1', 'R2'])
+})
