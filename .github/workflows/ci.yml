@@ -59,6 +59,8 @@ jobs:
           node --check web/app.js
           node --check web/sw.js
           node --check desktop/src/app.js
+      - name: Test Codex delivery adapter
+        run: node --test integrations/codex/taskboard-delivery/test/
       - name: Validate Compose
         run: |
           cp .env.example .env
