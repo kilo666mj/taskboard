@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { setTimeout as sleep } from 'node:timers/promises'
 
 import { attach, WAIT_SECONDS } from '../adapter.mjs'
 import { deliveryText, inboxItems, openRuns, pendingItems, runFromItem, SEEN_LIMIT } from '../inbox.mjs'
@@ -366,17 +364,20 @@ test('delivered keys stay remembered while listed, and at most SEEN_LIMIT are ou
 })
 
 test('a connection that never opens is closed when it times out', async () => {
-  // Accepts the TCP connection and never answers the WebSocket handshake.
-  // Node 22 drops a closed handshake about four seconds later; newer ones at once.
-  const server = createServer()
+  // A WebSocket whose handshake never completes. When the TCP connection
+  // actually drops after close() varies by Node release, so this checks the
+  // adapter's own call.
   const sockets = []
-  const closed = new Promise(resolve => server.on('connection', socket => { sockets.push(socket); socket.on('close', () => resolve(true)) }))
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  try {
-    await assert.rejects(connectCodex(`ws://127.0.0.1:${server.address().port}`, { timeout: 100 }), /connection closed/)
-    assert.equal(await Promise.race([closed, sleep(8_000).then(() => false)]), true, 'the adapter left the connection open')
-  } finally {
-    for (const socket of sockets) socket.destroy()
-    server.close()
+  class Stalled extends EventTarget {
+    constructor(url) { super(); this.url = url; this.closed = false; sockets.push(this) }
+    close() { this.closed = true }
+    send() { throw new Error('not open') }
   }
+  const real = globalThis.WebSocket
+  globalThis.WebSocket = Stalled
+  try {
+    await assert.rejects(connectCodex('ws://127.0.0.1:4500', { timeout: 50 }), /connection closed/)
+  } finally { globalThis.WebSocket = real }
+  assert.equal(sockets.length, 1)
+  assert.equal(sockets[0].closed, true, 'the adapter left the connection open')
 })
