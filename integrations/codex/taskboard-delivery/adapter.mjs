@@ -11,8 +11,12 @@ const ENDED = ['thread/closed', 'thread/archived', 'thread/deleted', 'connection
 // learned from the thread's own task_start and task_claim calls; the inbox is
 // read through the thread's own MCP server, so the adapter holds no Taskboard
 // credential. An idle thread gets a turn of its own; a busy one is steered.
+//
+// The adapter does not resume the thread, so this connection is not
+// subscribed to its events and item notifications may never arrive. The
+// history is read again every pollMs to learn runs started since.
 export async function attach({ rpc, thread, state, signal, log = () => {},
-  pollMs = 30_000, gapMs = 2_000, retryMs = 5_000, maxRetryMs = 300_000, wait = sleep }) {
+  pollMs = 30_000, gapMs = 2_000, retryMs = 5_000, maxRetryMs = 300_000, wait = sleep, now = Date.now }) {
   let activeTurn
   let wake = () => {}
   let stopped
@@ -29,7 +33,7 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
     if (note.method === 'turn/completed') { if (activeTurn === params.turn?.id) activeTurn = undefined; kick() }
     if (note.method === 'item/completed') {
       const run = runFromItem(params.item)
-      if (run) void remember(run)
+      if (run && !known.has(run.runId)) void remember(run)
     }
   })
   const pause = ms => new Promise(resolve => {
@@ -41,7 +45,11 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
   let digest
   let canWait
   let retry = retryMs
+  // Every run learned in this process, so a finished run is not learned again.
+  const known = new Set()
+  let scannedAt
   async function remember(run) {
+    known.add(run.runId)
     current = { ...current, runs: addRun(current.runs, run) }
     await state.save(current)
     digest = undefined
@@ -50,14 +58,22 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
 
   try {
     await readThread()
-    for (const item of await history()) {
-      const run = runFromItem(item)
-      if (run) current = { ...current, runs: addRun(current.runs, run) }
+    for (const run of await historyRuns()) {
+      known.add(run.runId)
+      current = { ...current, runs: addRun(current.runs, run) }
     }
     await state.save(current)
     log(`watching ${current.runs.length} Taskboard run${current.runs.length === 1 ? '' : 's'} in thread ${thread}`)
 
     while (!signal?.aborted && !stopped) {
+      if (now() - scannedAt >= pollMs) {
+        try {
+          for (const run of await historyRuns()) if (!known.has(run.runId)) await remember(run)
+        } catch (error) {
+          if (signal?.aborted || stopped) break
+          log(`history unavailable: ${error.message}`)
+        }
+      }
       const runs = current.runs
       if (runs.length === 0) { await pause(pollMs); continue }
       const latest = runs.at(-1)
@@ -104,6 +120,11 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       throw new AdapterError('The Codex thread must already be loaded and persistent in the interactive client')
     }
     return t
+  }
+
+  async function historyRuns() {
+    scannedAt = now()
+    return (await history()).map(runFromItem).filter(Boolean)
   }
 
   // thread/items/list needs a store that pages items; legacy-history threads

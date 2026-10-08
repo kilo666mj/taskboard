@@ -15,8 +15,11 @@ an approval: those stay with the interactive client.
 
 1. On start, it checks that the thread is loaded and persistent, then reads the
    thread's history for completed `task_start` and `task_claim` calls on a
-   Taskboard MCP server. It keeps the latest 20 runs and learns new ones as the
-   thread makes those calls.
+   Taskboard MCP server. It keeps the latest 20 runs. Because it does not resume
+   the thread, its connection is not subscribed to the thread's events, so it
+   reads the history again every 30 seconds to learn runs started since. Threads
+   whose history cannot be paged with `thread/items/list` are read through
+   `thread/read` with their turns.
 2. It reads the [controller
    inbox](../../../docs/agent-integrations.md#controller-inbox) by asking Codex to
    call `task_inbox` on that same MCP server (`mcpServer/tool/call`). The call

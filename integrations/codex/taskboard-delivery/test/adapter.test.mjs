@@ -220,3 +220,27 @@ test('legacy-history threads are read through their turns', async () => {
     assert.deepEqual(rpc.calls.find(call => call.method === 'mcpServer/tool/call').params.arguments.runs, [{ task_id: 'T1', run_id: 'R1' }])
   })
 })
+
+test('runs started after attaching are learned from the history without notifications', async () => {
+  await withState(async state => {
+    const controller = new AbortController()
+    const items = []
+    let clock = 0
+    let pauses = 0
+    const rpc = fakeCodex({ items, inboxes: [inbox({ runs: [{ task_id: 'T1', run_id: 'R1', task_status: 'done', active: false }] })] })
+    await attach({
+      rpc, thread: THREAD, state, signal: controller.signal, pollMs: 30_000, now: () => clock,
+      wait: async ms => {
+        clock += ms
+        if (++pauses === 1) items.push(startItem('R1', 'T1'))
+        if (pauses === 4) controller.abort()
+      },
+    })
+    const reads = rpc.calls.filter(call => call.method === 'mcpServer/tool/call')
+    // R1 is read once; once the inbox reports it done, later scans do not bring it back.
+    assert.equal(reads.length, 1)
+    assert.deepEqual(reads[0].params.arguments.runs, [{ task_id: 'T1', run_id: 'R1' }])
+    assert.ok(rpc.calls.filter(call => call.method === 'thread/items/list').length >= 3)
+    assert.deepEqual(state.get().runs, [])
+  })
+})
