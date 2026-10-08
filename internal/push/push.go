@@ -101,8 +101,12 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 		s.logger.Error("load task for push", "error", err)
 		return
 	}
-	if s.routine(task) {
-		return // Current unresolved state appears in the daily review.
+	// A routine task's unresolved state waits for the daily review, which lists
+	// waiting, blocked and stale tasks. A nonblocking question leaves the task
+	// active, so it would never surface there: notify it now.
+	blocking, _ := event.Payload["blocking"].(bool)
+	if s.routine(task) && (event.Kind != "task.escalated" || blocking) {
+		return
 	}
 	var notifications []notification
 	if event.Kind == "task.escalated" {
@@ -112,7 +116,6 @@ func (s *Service) deliver(ctx context.Context, event model.Event) {
 			s.logger.Error("load escalation question for push", "error", err)
 			return
 		}
-		blocking, _ := event.Payload["blocking"].(bool)
 		notifications = []notification{notificationForEscalation(task, question.Body, blocking)}
 	} else {
 		notifications = notificationsFor(task, status, completedItemIDs)

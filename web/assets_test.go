@@ -273,3 +273,12 @@ func TestChecklistNoteWrapsBelowItsLabel(t *testing.T) {
 		t.Error("app.css: .item-note must span from the label column on its own row")
 	}
 }
+
+func TestRoutineSuppressionKeepsNonblockingQuestions(t *testing.T) {
+	javascript := embeddedText(t, "app.js")
+	for _, expected := range []string{`const nonblockingQuestion=event.kind==='task.escalated'&&!event.payload?.blocking`, `&&!nonblockingQuestion)return;`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+}
