@@ -34,6 +34,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The Node release the Codex adapter and desktop scripts run on.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
       - name: Lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:

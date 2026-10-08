@@ -367,13 +367,14 @@ test('delivered keys stay remembered while listed, and at most SEEN_LIMIT are ou
 
 test('a connection that never opens is closed when it times out', async () => {
   // Accepts the TCP connection and never answers the WebSocket handshake.
+  // Node 22 drops a closed handshake about four seconds later; newer ones at once.
   const server = createServer()
   const sockets = []
   const closed = new Promise(resolve => server.on('connection', socket => { sockets.push(socket); socket.on('close', () => resolve(true)) }))
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     await assert.rejects(connectCodex(`ws://127.0.0.1:${server.address().port}`, { timeout: 100 }), /connection closed/)
-    assert.equal(await Promise.race([closed, sleep(2_000).then(() => false)]), true, 'the adapter left the connection open')
+    assert.equal(await Promise.race([closed, sleep(8_000).then(() => false)]), true, 'the adapter left the connection open')
   } finally {
     for (const socket of sockets) socket.destroy()
     server.close()
