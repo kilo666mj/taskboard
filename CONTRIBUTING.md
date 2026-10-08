@@ -16,6 +16,7 @@ go vet ./...
 node --check web/app.js
 node --check web/sw.js
 node --check desktop/src/app.js
+node --test 'integrations/codex/taskboard-delivery/test/*.test.mjs'
 (cd desktop/src-tauri && cargo fmt --check && cargo clippy --locked -- -D warnings && cargo test --locked)
 docker build -t taskboard:test .
 ```

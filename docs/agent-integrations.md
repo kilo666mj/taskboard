@@ -180,19 +180,53 @@ the inbox changes nothing: act through the specific tools, which keep their own
 lifecycles. Answered and expired escalations stay listed, so clients remember
 what they have handled by ID and update time.
 
+`digest` identifies what the inbox holds: every item with its status, and every
+run with its own and its task's status. It changes when any of them does and
+ignores ordering and unrelated task edits. To wait for the next change instead
+of polling, pass the previous result's digest with `wait_seconds` (1-25):
+
+```json
+{"runs": [{"task_id": "01J...", "run_id": "01J..."}], "wait_seconds": 25, "digest": "9f2c..."}
+```
+
+The call returns as soon as the inbox differs from that digest, and returns at
+once if it already does. Otherwise it holds until a task event on one of the
+named tasks, or a periodic recheck, shows a change, or until the wait ends; then
+it returns the inbox as it stands, possibly with the same digest. Loop on it to
+receive items within seconds over the session's existing MCP connection. The
+server holds at most 32 waiting calls per principal and answers further calls
+at once, so pause briefly between calls. A server without this feature returns
+no `digest`; poll it instead.
+
 The inbox is scoped to named runs rather than to the calling principal because
 several agent sessions may share one principal, for example through
 Switchboard. Each run must belong to the caller; categories the caller's
-policy does not allow are returned empty. Poll it when the agent is idle, back
-off while nothing changes, and stop once every named task is done or
-cancelled. An idle poll is not progress: do not heartbeat merely to keep an
-idle run's lease alive.
+policy does not allow are returned empty. Stop reading once every named task is
+done or cancelled. Without `digest`, poll when the agent is idle and back off
+while nothing changes. A read is not progress: do not heartbeat merely to keep
+an idle run's lease alive.
 
-For Claude Code, the
-[taskboard-idle-inbox](../integrations/claude-code/taskboard-idle-inbox/README.md)
-plugin does this: it tracks the session's runs, reads the inbox while the
-session is idle, and wakes the agent only for items it has not reported
-before.
+### Session delivery
+
+Two adapters bring inbox items into a running agent session, so a pause, a
+question or an answered escalation reaches the agent without a manual check.
+Both learn the session's runs from its own `task_start` and `task_claim` calls,
+read `task_inbox` through the session's own MCP connection (so they use its
+principal and hold no Taskboard credential), wait on `digest`, and report each
+item once. They name each item by kind and ID and leave out people's text; the
+agent reads the details with `task_inbox` and acts through the specific tools.
+
+- Claude Code: the
+  [taskboard-idle-inbox](../integrations/claude-code/taskboard-idle-inbox/README.md)
+  plugin submits a prompt to an idle session and adds a note to a working
+  session's running turn, which the model reads at its next step.
+- Codex: the
+  [taskboard-delivery](../integrations/codex/taskboard-delivery/README.md)
+  adapter attaches to the app-server the interactive client uses. It starts a
+  turn on an idle thread and steers the active turn of a busy one.
+
+Delivery never claims work, acknowledges messages or changes a run: the agent
+still does that through the tools, under its own authority.
 
 ## Acknowledged run controls
 

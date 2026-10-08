@@ -113,3 +113,118 @@ func TestInboxRejectsPeopleAndRunsOfOtherAgents(t *testing.T) {
 		t.Fatalf("unknown run error = %v", err)
 	}
 }
+
+func TestInboxWaitReturnsWhenTheInboxChanges(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent, person := AgentPrincipal("agent:worker"), HumanPrincipal("human:operator")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Waiting", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := model.InboxRequest{Runs: []model.InboxRun{{TaskID: started.Task.ID, RunID: started.Run.ID}}}
+	before, err := tasks.InboxFor(t.Context(), request, agent)
+	if err != nil || before.Digest == "" {
+		t.Fatalf("inbox = %+v, %v", before, err)
+	}
+
+	request.WaitSeconds, request.Digest = 20, before.Digest
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		if _, err := tasks.AddMessageFor(t.Context(), started.Task.ID, model.AddMessageRequest{TargetRunID: started.Run.ID, Kind: model.MessageInstruction, Body: "Check the logs"}, person); err != nil {
+			t.Error(err)
+		}
+	}()
+	began := time.Now()
+	after, err := tasks.InboxFor(t.Context(), request, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(began); elapsed > 5*time.Second {
+		t.Fatalf("wait took %s; want an early return on the new message", elapsed)
+	}
+	if after.Digest == before.Digest || len(after.Messages) != 1 {
+		t.Fatalf("inbox after message = %+v", after)
+	}
+}
+
+func TestInboxWaitAnswersAtOnceWhenTheDigestIsStale(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Stale", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := model.InboxRequest{Runs: []model.InboxRun{{TaskID: started.Task.ID, RunID: started.Run.ID}}, WaitSeconds: 20, Digest: "previous"}
+	began := time.Now()
+	inbox, err := tasks.InboxFor(t.Context(), request, agent)
+	if err != nil || inbox.Digest == "previous" || time.Since(began) > 5*time.Second {
+		t.Fatalf("inbox = %+v, %v after %s", inbox, err, time.Since(began))
+	}
+}
+
+func TestInboxWaitEndsUnchangedAfterTheWait(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Quiet", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Busy elsewhere", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := model.InboxRequest{Runs: []model.InboxRun{{TaskID: started.Task.ID, RunID: started.Run.ID}}}
+	before, err := tasks.InboxFor(t.Context(), request, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.WaitSeconds, request.Digest = 1, before.Digest
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		if _, err := tasks.AddMessageFor(t.Context(), other.Task.ID, model.AddMessageRequest{AuthorRunID: other.Run.ID, Kind: model.MessageNote, Body: "Unrelated"}, agent); err != nil {
+			t.Error(err)
+		}
+	}()
+	began := time.Now()
+	after, err := tasks.InboxFor(t.Context(), request, agent)
+	if err != nil || after.Digest != before.Digest {
+		t.Fatalf("inbox = %+v, %v", after, err)
+	}
+	if elapsed := time.Since(began); elapsed < 900*time.Millisecond {
+		t.Fatalf("returned after %s; an unrelated task's event must not end the wait", elapsed)
+	}
+}
+
+func TestInboxWaitRejectsOutOfRangeWaits(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Range", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wait := range []int{-1, inboxMaxWaitSeconds + 1} {
+		request := model.InboxRequest{Runs: []model.InboxRun{{TaskID: started.Task.ID, RunID: started.Run.ID}}, WaitSeconds: wait}
+		if _, err := tasks.InboxFor(t.Context(), request, agent); !errors.Is(err, ErrValidation) {
+			t.Fatalf("wait %d error = %v", wait, err)
+		}
+	}
+}
+
+func TestInboxWaitersAreBoundedPerPrincipal(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	for range inboxWaitersPerPrincipal {
+		if !tasks.acquireInboxWaiter("agent:worker") {
+			t.Fatal("acquire within the bound failed")
+		}
+	}
+	if tasks.acquireInboxWaiter("agent:worker") {
+		t.Fatal("acquire beyond the bound succeeded")
+	}
+	if !tasks.acquireInboxWaiter("agent:other") {
+		t.Fatal("another principal was limited")
+	}
+	tasks.releaseInboxWaiter("agent:worker")
+	if !tasks.acquireInboxWaiter("agent:worker") {
+		t.Fatal("released slot was not reusable")
+	}
+}

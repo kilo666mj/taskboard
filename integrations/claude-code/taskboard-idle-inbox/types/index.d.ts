@@ -11,6 +11,8 @@ declare module 'claude-code' {
       runs: WatchedRun[]
       /** Keys of inbox items the agent has already been woken for. */
       seen: string[]
+      /** Bumped on each load, so a read in flight from an earlier load stops. */
+      generation: number
     }
   }
 }

@@ -430,6 +430,9 @@ type Service struct {
 	// defaultRequirements route agent-lane tasks created without
 	// requirements to this instance's execution backend.
 	defaultRequirements []string
+	// inboxWaiters counts each principal's task_inbox calls holding a wait.
+	inboxWaitMu  sync.Mutex
+	inboxWaiters map[string]int
 }
 
 type recentEvent struct {

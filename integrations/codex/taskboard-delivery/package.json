@@ -1,0 +1,11 @@
+{
+  "name": "taskboard-codex-delivery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Delivers Taskboard inbox items into a running Codex thread through the shared app-server.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "bin": { "taskboard-codex-delivery": "./run.mjs" },
+  "scripts": { "test": "node --test 'test/*.test.mjs'" }
+}
