@@ -18,7 +18,7 @@ type ReviewRequeueResult struct {
 	Control model.RunControlRequest
 }
 
-func (s *Service) ReviewAndRequeueFor(ctx context.Context, taskID string, request model.ReviewRequeueRequest, principal Principal) (ReviewRequeueResult, error) {
+func (s *Service) reviewAndRequeueFor(ctx context.Context, taskID string, request model.ReviewRequeueRequest, principal Principal) (ReviewRequeueResult, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return ReviewRequeueResult{}, ErrForbidden
 	}

@@ -67,7 +67,7 @@ func (s *Service) applyDefaultRequirements(ctx context.Context, tx *store.Tx, ta
 	return s.defaultRequirements, insertRequirements(ctx, tx, taskID, s.defaultRequirements, actor, now)
 }
 
-func (s *Service) SetTaskRequirementsFor(ctx context.Context, taskID string, request model.SetTaskRequirementsRequest, principal Principal) (model.Task, error) {
+func (s *Service) setTaskRequirementsFor(ctx context.Context, taskID string, request model.SetTaskRequirementsRequest, principal Principal) (model.Task, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}

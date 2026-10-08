@@ -282,3 +282,12 @@ func TestRoutineSuppressionKeepsNonblockingQuestions(t *testing.T) {
 		}
 	}
 }
+
+func TestHiddenLinksAreLabelledNotShown(t *testing.T) {
+	javascript := embeddedText(t, "app.js")
+	for _, expected := range []string{`dependency.hidden?'A task you cannot see':dependency.blocked_by_title`, `link.hidden?'A task you cannot see':link.title`, `if(!link.hidden){const show=`} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+}

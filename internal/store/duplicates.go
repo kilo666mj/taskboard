@@ -72,3 +72,14 @@ func (s *Store) ListOpenTaskHeads(ctx context.Context, limit int) ([]model.Task,
 	}
 	return tasks, rows.Err()
 }
+
+// TaskAccess returns the fields that decide who may see a task: its ID,
+// visibility, creator and owner.
+func (s *Store) TaskAccess(ctx context.Context, id string) (model.Task, error) {
+	var task model.Task
+	err := s.db.QueryRowContext(ctx, `SELECT id,visibility,created_by,owner FROM tasks WHERE id=?`, id).Scan(&task.ID, &task.Visibility, &task.CreatedBy, &task.Owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Task{}, ErrNotFound
+	}
+	return task, err
+}
