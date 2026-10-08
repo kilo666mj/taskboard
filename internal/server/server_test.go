@@ -1014,6 +1014,43 @@ func TestEventStreamDisconnectsOffboardedPrincipal(t *testing.T) {
 	}
 }
 
+func TestEventStreamEndsWhenItsBrowserSessionIsLoggedOut(t *testing.T) {
+	tasks, database, _ := serverFixture(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sessions := newBrowserSessions(database, true, logger)
+	token, _, err := database.CreateBrowserSession(t.Context(), store.BrowserIdentity{Subject: "person@example.com", Email: "person@example.com"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := auth(config.Config{AuthToken: strings.Repeat("token", 8)}, sessions, nil, logger)(eventsWithKeepalive(tasks, database, time.Millisecond, newEventStreamLimiter(10, 10)))
+	request := httptest.NewRequest(http.MethodGet, "https://taskboard.example.com/api/v1/events", nil).WithContext(t.Context())
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: token})
+	response := newFlushingRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(response, request)
+		close(done)
+	}()
+	select {
+	case <-response.flushed:
+	case <-time.After(time.Second):
+		t.Fatal("timed out opening event stream")
+	}
+	select {
+	case <-done:
+		t.Fatal("the stream closed while its session was valid")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := database.DeleteBrowserSession(t.Context(), token); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the event stream stayed open after its browser session was logged out")
+	}
+}
+
 type failingRevocationChecker struct{}
 
 func (failingRevocationChecker) PrincipalRevoked(context.Context, string) (bool, error) {

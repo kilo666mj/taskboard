@@ -35,6 +35,11 @@ var Version = "dev"
 
 type principalKey struct{}
 
+// sessionCheckKey holds a func reporting whether the browser session that
+// authenticated a request is still valid, so a long-lived response such as
+// the event stream can end when that session is logged out or expires.
+type sessionCheckKey struct{}
+
 type taskIDInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 }
@@ -1361,6 +1366,15 @@ func eventsWithKeepalive(tasks *service.Service, revocations principalRevocation
 			return
 		}
 		flusher.Flush()
+		// Before each event and keepalive: the principal is not offboarded and
+		// the browser session that opened the stream, if any, is still valid.
+		sessionValid, _ := r.Context().Value(sessionCheckKey{}).(func(context.Context) bool)
+		stillAuthorized := func() bool {
+			if revoked, err := revocations.PrincipalRevoked(r.Context(), principalID); err != nil || revoked {
+				return false
+			}
+			return sessionValid == nil || sessionValid(r.Context())
+		}
 		keepalive := time.NewTicker(keepaliveInterval)
 		defer keepalive.Stop()
 		for {
@@ -1369,7 +1383,7 @@ func eventsWithKeepalive(tasks *service.Service, revocations principalRevocation
 				if !ok {
 					return
 				}
-				if revoked, err := revocations.PrincipalRevoked(r.Context(), principalID); err != nil || revoked {
+				if !stillAuthorized() {
 					return
 				}
 				if _, err := tasks.GetFor(r.Context(), event.TaskID, principal(r.Context())); err != nil {
@@ -1384,7 +1398,7 @@ func eventsWithKeepalive(tasks *service.Service, revocations principalRevocation
 				}
 				flusher.Flush()
 			case <-keepalive.C:
-				if revoked, err := revocations.PrincipalRevoked(r.Context(), principalID); err != nil || revoked {
+				if !stillAuthorized() {
 					return
 				}
 				if _, err := fmt.Fprint(w, "event: ping\ndata: {}\n\n"); err != nil {
@@ -1429,6 +1443,7 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			}
 			valid, mechanism := false, "session"
 			authenticatedPrincipal := service.Principal{}
+			var sessionValid func(context.Context) bool
 			if mcpRequest {
 				mechanism = "token"
 				values := r.Header.Values("Authorization")
@@ -1478,6 +1493,10 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 			} else if identity, ok := sessions.identity(r.Context(), r); ok {
 				valid = true
 				authenticatedPrincipal = browserPrincipal(cfg, identity)
+				sessionValid = func(ctx context.Context) bool {
+					_, ok := sessions.identity(ctx, r)
+					return ok
+				}
 			}
 			if !valid {
 				if !authFailures.allow(requestRateKey(r), time.Now()) {
@@ -1510,7 +1529,11 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many mutations"})
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)))
+			ctx := context.WithValue(r.Context(), principalKey{}, authenticatedPrincipal)
+			if sessionValid != nil {
+				ctx = context.WithValue(ctx, sessionCheckKey{}, sessionValid)
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
