@@ -76,17 +76,24 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       }
       const runs = current.runs
       if (runs.length === 0) { await pause(pollMs); continue }
-      const latest = runs.at(-1)
-      const waiting = canWait === true && digest !== undefined
+      // Each run is read through the server and tool that started it. A digest
+      // covers one read, so the adapter waits only when every run shares one.
+      const groups = groupRuns(runs)
+      const waiting = groups.length === 1 && canWait === true && digest !== undefined
       let inbox
       try {
-        const result = await rpc.call('mcpServer/tool/call', {
-          server: latest.server, threadId: thread, tool: latest.inboxTool,
-          arguments: { runs: runs.map(run => ({ task_id: run.taskId, run_id: run.runId })), ...(waiting ? { wait_seconds: WAIT_SECONDS, digest } : {}) },
-        }, (WAIT_SECONDS + 20) * 1000)
-        if (result?.isError) throw new AdapterError(`task_inbox failed: ${toolResult(result)?.error ?? 'error result'}`)
-        inbox = toolResult(result)
-        if (!inbox || !Array.isArray(inbox.runs)) throw new AdapterError('task_inbox returned an unexpected result')
+        const inboxes = []
+        for (const group of groups) {
+          const result = await rpc.call('mcpServer/tool/call', {
+            server: group.server, threadId: thread, tool: group.inboxTool,
+            arguments: { runs: group.runs.map(run => ({ task_id: run.taskId, run_id: run.runId })), ...(waiting ? { wait_seconds: WAIT_SECONDS, digest } : {}) },
+          }, (WAIT_SECONDS + 20) * 1000)
+          if (result?.isError) throw new AdapterError(`task_inbox failed: ${toolResult(result)?.error ?? 'error result'}`)
+          const read = toolResult(result)
+          if (!read || !Array.isArray(read.runs)) throw new AdapterError('task_inbox returned an unexpected result')
+          inboxes.push(read)
+        }
+        inbox = mergeInboxes(inboxes)
       } catch (error) {
         if (signal?.aborted || stopped) break
         log(`inbox unavailable: ${error.message}`)
@@ -99,11 +106,16 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       canWait = typeof inbox.digest === 'string' && inbox.digest !== ''
       digest = canWait ? inbox.digest : undefined
 
-      const open = openRuns(current.runs, inbox)
       const seen = new Set(current.seen)
       const fresh = inboxItems(inbox).filter(item => !seen.has(item.key))
-      if (open.length !== current.runs.length) current = { ...current, runs: open }
-      if (fresh.length > 0 && await deliver(fresh)) {
+      // Drop finished runs only once their items landed, so a failed delivery
+      // reads them again rather than losing them.
+      const delivered = fresh.length === 0 || await deliver(fresh)
+      if (delivered) {
+        const open = openRuns(current.runs, inbox)
+        if (open.length !== current.runs.length) current = { ...current, runs: open }
+      }
+      if (fresh.length > 0 && delivered) {
         current = { ...current, seen: [...current.seen, ...fresh.map(item => item.key)].slice(-SEEN_LIMIT) }
         log(`delivered ${fresh.length} Taskboard item${fresh.length === 1 ? '' : 's'}`)
       }
@@ -179,4 +191,25 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       return false
     }
   }
+}
+
+function groupRuns(runs) {
+  const groups = new Map()
+  for (const run of runs) {
+    const key = JSON.stringify([run.server, run.inboxTool])
+    if (!groups.has(key)) groups.set(key, { server: run.server, inboxTool: run.inboxTool, runs: [] })
+    groups.get(key).runs.push(run)
+  }
+  return [...groups.values()]
+}
+
+// One server's inbox keeps its digest; several are merged without one.
+function mergeInboxes(inboxes) {
+  if (inboxes.length === 1) return inboxes[0]
+  const merged = { count: 0 }
+  for (const read of inboxes) {
+    merged.count += read.count ?? 0
+    for (const [key, value] of Object.entries(read)) if (Array.isArray(value)) merged[key] = [...(merged[key] ?? []), ...value]
+  }
+  return merged
 }

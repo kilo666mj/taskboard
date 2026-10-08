@@ -18,7 +18,7 @@ const inbox = (fields = {}) => ({
   controls: [], session_requests: [], discussions: [], escalations: [], messages: [], ...fields,
 })
 
-function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, steer, legacy = false } = {}) {
+function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, steer, start, legacy = false } = {}) {
   const calls = []
   const listeners = new Set()
   const thread = { status }
@@ -42,7 +42,7 @@ function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, s
           return { content: [{ type: 'text', text: JSON.stringify(next) }] }
         }
         case 'turn/steer': if (steer) return steer(params); return { turnId: params.expectedTurnId }
-        case 'turn/start': return { turn: { id: 'turn-new' } }
+        case 'turn/start': if (start) return start(params); return { turn: { id: 'turn-new' } }
         default: throw new Error(`unexpected ${method}`)
       }
     },
@@ -242,5 +242,45 @@ test('runs started after attaching are learned from the history without notifica
     assert.deepEqual(reads[0].params.arguments.runs, [{ task_id: 'T1', run_id: 'R1' }])
     assert.ok(rpc.calls.filter(call => call.method === 'thread/items/list').length >= 3)
     assert.deepEqual(state.get().runs, [])
+  })
+})
+
+test('a finished run whose items failed to deliver is read again', async () => {
+  await withState(async state => {
+    const controller = new AbortController()
+    // Ends the loop if the expected reads never come, so a regression fails instead of hanging.
+    let rounds = 0
+    let starts = 0
+    const rpc = fakeCodex({
+      items: [startItem('R1', 'T1')],
+      inboxes: [inbox({ digest: 'd2', runs: [{ task_id: 'T1', run_id: 'R1', task_status: 'done', active: false }],
+        messages: [{ id: 'M1', task_id: 'T1', kind: 'note', requires_ack: false }] })],
+      start: () => { starts++; if (starts === 1) throw new Error('busy'); return { turn: { id: 'turn-new' } } },
+      onInbox(count) { if (count === 2) controller.abort() },
+    })
+    await attach({ rpc, thread: THREAD, state, signal: controller.signal, wait: async () => { if (++rounds > 20) controller.abort() } })
+    const reads = rpc.calls.filter(call => call.method === 'mcpServer/tool/call')
+    assert.equal(reads.length, 2)
+    assert.deepEqual(reads[1].params.arguments.runs, [{ task_id: 'T1', run_id: 'R1' }])
+    assert.equal(starts, 2)
+    assert.deepEqual(state.get().seen, ['message:M1'])
+    assert.deepEqual(state.get().runs, [])
+  })
+})
+
+test('runs from different Taskboard servers are read through their own server, without waiting', async () => {
+  await withState(async state => {
+    const controller = new AbortController()
+    // Ends the loop if the expected reads never come, so a regression fails instead of hanging.
+    let rounds = 0
+    const rpc = fakeCodex({
+      items: [startItem('R1', 'T1'), startItem('R2', 'T2', { server: 'taskboard-direct' })],
+      inboxes: [inbox()],
+      onInbox(count) { if (count === 4) controller.abort() },
+    })
+    await attach({ rpc, thread: THREAD, state, signal: controller.signal, wait: async () => { if (++rounds > 20) controller.abort() } })
+    const reads = rpc.calls.filter(call => call.method === 'mcpServer/tool/call')
+    assert.deepEqual(reads.slice(0, 2).map(read => [read.params.server, read.params.arguments.runs.map(run => run.run_id)]), [['switchboard', ['R1']], ['taskboard-direct', ['R2']]])
+    assert.ok(reads.every(read => read.params.arguments.wait_seconds === undefined))
   })
 })
