@@ -189,3 +189,16 @@ test('state refuses a second adapter and another thread\'s directory', async () 
     Object.assign(state, again)
   })
 })
+
+test('concurrent saves land in call order and finish before the lock is released', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'taskboard-delivery-'))
+  try {
+    const state = await openState(join(directory, 'state'), THREAD)
+    // Earlier snapshots are larger, so unserialized writes would finish out of order.
+    for (let i = 0; i < 20; i++) void state.save({ runs: [], seen: Array.from({ length: 200 - i * 10 }, (_, j) => `message:${i}-${j}`) })
+    await state.close()
+    const saved = JSON.parse(await readFile(join(directory, 'state', 'state.json'), 'utf8'))
+    assert.equal(saved.seen[0], 'message:19-0')
+    assert.equal(saved.seen.length, 10)
+  } finally { await rm(directory, { recursive: true }) }
+})

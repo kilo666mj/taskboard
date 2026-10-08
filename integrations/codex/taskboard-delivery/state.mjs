@@ -32,21 +32,31 @@ export async function openState(directory, thread) {
   } catch (error) {
     if (error.code !== 'ENOENT') { await rmdir(lock); throw error }
   }
+  // Saves run one at a time in call order, so an older snapshot never lands
+  // after a newer one; close waits for them before releasing the lock.
+  let writing = Promise.resolve()
+  async function write(data) {
+    const temporary = join(directory, `.state-${randomUUID()}.tmp`)
+    try {
+      const file = await open(temporary, 'wx', 0o600)
+      try { await file.writeFile(data); await file.sync() } finally { await file.close() }
+      await rename(temporary, path)
+    } finally {
+      await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error })
+    }
+  }
   return {
     get: () => value,
     async save(next) {
       value = { thread, runs: next.runs, seen: next.seen }
       const data = JSON.stringify(value)
       if (Buffer.byteLength(data) > MAX_BYTES) throw new AdapterError('Adapter state too large')
-      const temporary = join(directory, `.state-${randomUUID()}.tmp`)
-      try {
-        const file = await open(temporary, 'wx', 0o600)
-        try { await file.writeFile(data); await file.sync() } finally { await file.close() }
-        await rename(temporary, path)
-      } finally {
-        await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error })
-      }
+      writing = writing.catch(() => {}).then(() => write(data))
+      return writing
     },
-    close: () => rmdir(lock),
+    async close() {
+      await writing.catch(() => {})
+      await rmdir(lock)
+    },
   }
 }
