@@ -1,19 +1,19 @@
 {
   "name": "taskboard-idle-inbox",
-  "version": "0.1.0",
-  "description": "While the session is idle, checks Taskboard's inbox for the runs this session started or claimed and wakes the agent only when something new is waiting.",
+  "version": "0.2.0",
+  "description": "Delivers Taskboard inbox items for the runs this session started or claimed: within seconds while idle or busy on servers whose inbox can wait, otherwise by checking while idle.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "minIntervalSeconds": {
       "type": "number",
       "title": "First check after idle (seconds)",
-      "description": "Wait after a turn ends before the first inbox check; also the interval right after new items arrive.",
+      "description": "On servers that cannot wait: wait after a turn ends before the first inbox check; also the interval right after new items arrive. Also the first retry after a failed read.",
       "default": 30
     },
     "maxIntervalSeconds": {
       "type": "number",
       "title": "Longest interval (seconds)",
-      "description": "The interval doubles while nothing changes, up to this.",
+      "description": "On servers that cannot wait, the interval doubles while nothing changes, up to this. Also the longest retry interval after failed reads.",
       "default": 600
     }
   }
