@@ -18,7 +18,7 @@ const inbox = (fields = {}) => ({
   controls: [], session_requests: [], discussions: [], escalations: [], messages: [], ...fields,
 })
 
-function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, steer } = {}) {
+function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, steer, legacy = false } = {}) {
   const calls = []
   const listeners = new Set()
   const thread = { status }
@@ -31,8 +31,11 @@ function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, s
     async call(method, params) {
       calls.push({ method, params })
       switch (method) {
-        case 'thread/read': return { thread: { id: THREAD, ephemeral: false, status: { type: thread.status } } }
-        case 'thread/items/list': return { data: items.map(item => ({ item, turnId: 'turn-0' })) }
+        case 'thread/read': return { thread: { id: THREAD, ephemeral: false, status: { type: thread.status }, turns: params.includeTurns ? [{ id: 'turn-0', status: 'completed', items }] : [] } }
+        case 'thread/items/list': {
+          if (!legacy) return { data: items.map(item => ({ item, turnId: 'turn-0' })) }
+          throw Object.assign(new Error('thread/items/list is not supported for this thread'), { code: -32601 })
+        }
         case 'mcpServer/tool/call': {
           const next = queue.length > 1 ? queue.shift() : queue[0]
           onInbox(calls.filter(call => call.method === 'mcpServer/tool/call').length, params)
@@ -201,4 +204,19 @@ test('concurrent saves land in call order and finish before the lock is released
     assert.equal(saved.seen[0], 'message:19-0')
     assert.equal(saved.seen.length, 10)
   } finally { await rm(directory, { recursive: true }) }
+})
+
+test('legacy-history threads are read through their turns', async () => {
+  await withState(async state => {
+    const controller = new AbortController()
+    const rpc = fakeCodex({
+      legacy: true,
+      items: [startItem('R1', 'T1')],
+      inboxes: [inbox()],
+      onInbox() { controller.abort() },
+    })
+    await attach({ rpc, thread: THREAD, state, signal: controller.signal, wait: async () => {} })
+    assert.ok(rpc.calls.some(call => call.method === 'thread/read' && call.params.includeTurns === true))
+    assert.deepEqual(rpc.calls.find(call => call.method === 'mcpServer/tool/call').params.arguments.runs, [{ task_id: 'T1', run_id: 'R1' }])
+  })
 })

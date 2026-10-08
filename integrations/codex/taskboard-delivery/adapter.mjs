@@ -106,12 +106,20 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
     return t
   }
 
+  // thread/items/list needs a store that pages items; legacy-history threads
+  // reject it, so their items come from the turns thread/read returns.
   async function history() {
     const items = []
     const cursors = new Set()
     let cursor
     do {
-      const page = await rpc.call('thread/items/list', { threadId: thread, limit: 100, sortDirection: 'asc', ...(cursor ? { cursor } : {}) })
+      let page
+      try {
+        page = await rpc.call('thread/items/list', { threadId: thread, limit: 100, sortDirection: 'asc', ...(cursor ? { cursor } : {}) })
+      } catch (error) {
+        if (cursor || error.code === undefined) throw error
+        return legacyHistory()
+      }
       if (!Array.isArray(page?.data)) throw new AdapterError('Invalid Codex history page')
       items.push(...page.data.map(entry => entry.item))
       cursor = page.nextCursor
@@ -119,6 +127,12 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       cursors.add(cursor)
     } while (cursor)
     return items
+  }
+
+  async function legacyHistory() {
+    const turns = (await rpc.call('thread/read', { threadId: thread, includeTurns: true }))?.thread?.turns
+    if (!Array.isArray(turns)) throw new AdapterError('Invalid Codex thread history')
+    return turns.flatMap(turn => Array.isArray(turn?.items) ? turn.items : [])
   }
 
   // Never passes model, approval, sandbox or cwd overrides: Taskboard items
