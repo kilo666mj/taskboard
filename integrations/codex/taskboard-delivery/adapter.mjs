@@ -6,6 +6,10 @@ import { AdapterError } from './rpc.mjs'
 // Server cap on task_inbox waits; Codex's default MCP tool timeout is 60 s.
 export const WAIT_SECONDS = 25
 const ENDED = ['thread/closed', 'thread/archived', 'thread/deleted', 'connection/closed']
+// Codex answers a history method that the thread's store cannot page with
+// "method not found"; other errors (such as an unloaded thread) are real.
+const UNSUPPORTED = -32601
+const TURN_PAGE = 20
 
 // Delivers Taskboard inbox items into one loaded Codex thread. Runs are
 // learned from the thread's own task_start and task_claim calls; the inbox is
@@ -13,11 +17,11 @@ const ENDED = ['thread/closed', 'thread/archived', 'thread/deleted', 'connection
 // credential. An idle thread gets a turn of its own; a busy one is steered.
 //
 // The adapter does not resume the thread, so this connection is not
-// subscribed to its events and item notifications may never arrive. The
-// history is read again every pollMs to learn runs started since.
+// subscribed to its events and notifications may never arrive. Every pollMs
+// it reads the turns started since its last look to learn new runs, and it
+// asks for the thread's running turn when it delivers.
 export async function attach({ rpc, thread, state, signal, log = () => {},
   pollMs = 30_000, gapMs = 2_000, retryMs = 5_000, maxRetryMs = 300_000, wait = sleep, now = Date.now }) {
-  let activeTurn
   let wake = () => {}
   let stopped
   const kick = () => wake()
@@ -29,8 +33,7 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       return
     }
     if (params.threadId !== thread) return
-    if (note.method === 'turn/started') activeTurn = params.turn?.id
-    if (note.method === 'turn/completed') { if (activeTurn === params.turn?.id) activeTurn = undefined; kick() }
+    if (note.method === 'turn/completed') kick()
     if (note.method === 'item/completed') {
       const run = runFromItem(params.item)
       if (run && !known.has(run.runId)) void remember(run)
@@ -48,6 +51,11 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
   // Every run learned in this process, so a finished run is not learned again.
   const known = new Set()
   let scannedAt
+  // The newest finished turn whose items have been read; later scans stop there.
+  let scannedThrough
+  // Set once the thread's store refuses paged history; its turns then come
+  // whole from thread/read.
+  let legacy = false
   async function remember(run) {
     known.add(run.runId)
     current = { ...current, runs: addRun(current.runs, run) }
@@ -58,7 +66,7 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
 
   try {
     await readThread()
-    for (const run of await historyRuns()) {
+    for (const run of await newRuns()) {
       known.add(run.runId)
       current = { ...current, runs: addRun(current.runs, run) }
     }
@@ -68,7 +76,9 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
     while (!signal?.aborted && !stopped) {
       if (now() - scannedAt >= pollMs) {
         try {
-          for (const run of await historyRuns()) if (!known.has(run.runId)) await remember(run)
+          const status = (await rpc.call('thread/read', { threadId: thread }))?.thread?.status?.type
+          if (status === 'notLoaded') { stopped = new AdapterError('Codex thread is no longer loaded; delivery stopped'); break }
+          for (const run of await newRuns()) if (!known.has(run.runId)) await remember(run)
         } catch (error) {
           if (signal?.aborted || stopped) break
           log(`history unavailable: ${error.message}`)
@@ -134,38 +144,90 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
     return t
   }
 
-  async function historyRuns() {
+  // Runs named in the turns since the last scan, oldest first. Only the newest
+  // turn can still be running; it is read again until it finishes.
+  async function newRuns() {
     scannedAt = now()
-    return (await history()).map(runFromItem).filter(Boolean)
+    const turns = await unscannedTurns()
+    const finished = turns.find(turn => turn.status !== 'inProgress')
+    const runs = turns.toReversed().flatMap(turn => turn.items.map(runFromItem).filter(Boolean))
+    if (finished) scannedThrough = finished.id
+    return runs
   }
 
-  // thread/items/list needs a store that pages items; legacy-history threads
-  // reject it, so their items come from the turns thread/read returns.
-  async function history() {
+  // The turns after scannedThrough, newest first, with their items.
+  async function unscannedTurns() {
+    if (!legacy) {
+      try { return await pagedTurns() } catch (error) {
+        if (error.code !== UNSUPPORTED) throw error
+        legacy = true
+      }
+    }
+    const turns = []
+    for (const turn of (await legacyTurns()).toReversed()) {
+      if (turn?.id === scannedThrough) break
+      turns.push({ id: turn?.id, status: turn?.status, items: Array.isArray(turn?.items) ? turn.items : [] })
+    }
+    return turns
+  }
+
+  async function pagedTurns() {
+    const turns = []
+    const cursors = new Set()
+    let cursor
+    pages: do {
+      const page = await rpc.call('thread/turns/list', { threadId: thread, limit: TURN_PAGE, sortDirection: 'desc', itemsView: 'notLoaded', ...(cursor ? { cursor } : {}) })
+      if (!Array.isArray(page?.data)) throw new AdapterError('Invalid Codex turn page')
+      for (const turn of page.data) {
+        if (typeof turn?.id !== 'string') throw new AdapterError('Invalid Codex turn')
+        if (turn.id === scannedThrough) break pages
+        turns.push({ id: turn.id, status: turn.status })
+      }
+      cursor = advance(cursors, page.nextCursor)
+    } while (cursor)
+    for (const turn of turns) turn.items = await turnItems(turn.id)
+    return turns
+  }
+
+  async function turnItems(turnId) {
     const items = []
     const cursors = new Set()
     let cursor
     do {
-      let page
-      try {
-        page = await rpc.call('thread/items/list', { threadId: thread, limit: 100, sortDirection: 'asc', ...(cursor ? { cursor } : {}) })
-      } catch (error) {
-        if (cursor || error.code === undefined) throw error
-        return legacyHistory()
-      }
+      const page = await rpc.call('thread/items/list', { threadId: thread, turnId, limit: 100, sortDirection: 'asc', ...(cursor ? { cursor } : {}) })
       if (!Array.isArray(page?.data)) throw new AdapterError('Invalid Codex history page')
       items.push(...page.data.map(entry => entry.item))
-      cursor = page.nextCursor
-      if (cursor && cursors.has(cursor)) throw new AdapterError('Codex history pagination did not advance')
-      cursors.add(cursor)
+      cursor = advance(cursors, page.nextCursor)
     } while (cursor)
     return items
   }
 
-  async function legacyHistory() {
+  function advance(cursors, cursor) {
+    if (cursor && cursors.has(cursor)) throw new AdapterError('Codex history pagination did not advance')
+    cursors.add(cursor)
+    return cursor
+  }
+
+  // Legacy-history threads cannot be paged, so each look reads them whole.
+  async function legacyTurns() {
     const turns = (await rpc.call('thread/read', { threadId: thread, includeTurns: true }))?.thread?.turns
     if (!Array.isArray(turns)) throw new AdapterError('Invalid Codex thread history')
-    return turns.flatMap(turn => Array.isArray(turn?.items) ? turn.items : [])
+    return turns
+  }
+
+  // The thread's running turn, which turn/steer must name.
+  async function runningTurn() {
+    let newest
+    if (!legacy) {
+      try {
+        newest = (await rpc.call('thread/turns/list', { threadId: thread, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }))?.data?.[0]
+      } catch (error) {
+        if (error.code !== UNSUPPORTED) throw error
+        legacy = true
+      }
+    }
+    if (legacy) newest = (await legacyTurns()).at(-1)
+    return newest?.status === 'inProgress' ? newest.id : undefined
   }
 
   // Never passes model, approval, sandbox or cwd overrides: Taskboard items
@@ -175,15 +237,16 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       const t = await readThread()
       const busy = t.status.type === 'active'
       const input = [{ type: 'text', text: deliveryText(fresh, busy), text_elements: [] }]
-      if (busy && activeTurn) {
+      const turn = busy ? await runningTurn() : undefined
+      if (turn) {
         try {
-          await rpc.call('turn/steer', { threadId: thread, expectedTurnId: activeTurn, input })
+          await rpc.call('turn/steer', { threadId: thread, expectedTurnId: turn, input })
           return true
         } catch (error) {
           log(`steer refused (${error.message}); queueing the items as the next turn`)
         }
       }
-      // On an active turn whose ID this adapter has not seen, Codex queues it.
+      // On a turn that is still running, Codex queues this as the next turn.
       await rpc.call('turn/start', { threadId: thread, input })
       return true
     } catch (error) {

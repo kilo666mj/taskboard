@@ -18,23 +18,35 @@ const inbox = (fields = {}) => ({
   controls: [], session_requests: [], discussions: [], escalations: [], messages: [], ...fields,
 })
 
-function fakeCodex({ items = [], status = 'idle', inboxes, onInbox = () => {}, steer, start, legacy = false } = {}) {
+function fakeCodex({ items = [], turns = [{ id: 'turn-0', status: 'completed', items }], status = 'idle', inboxes, onInbox = () => {}, steer, start, legacy = false } = {}) {
   const calls = []
   const listeners = new Set()
   const thread = { status }
   const queue = [...inboxes]
+  const unsupported = method => Object.assign(new Error(`${method} is not supported yet`), { code: -32601 })
   const rpc = {
     calls,
     thread,
+    // Oldest first, as Codex stores them; tests add turns as the thread goes on.
+    turns,
     notify: note => { for (const listener of listeners) listener(note) },
     onNotification(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     async call(method, params) {
       calls.push({ method, params })
       switch (method) {
-        case 'thread/read': return { thread: { id: THREAD, ephemeral: false, status: { type: thread.status }, turns: params.includeTurns ? [{ id: 'turn-0', status: 'completed', items }] : [] } }
+        case 'thread/read': return { thread: { id: THREAD, ephemeral: false, status: { type: thread.status }, turns: params.includeTurns ? rpc.turns : [] } }
+        case 'thread/turns/list': {
+          if (legacy) throw unsupported(method)
+          const newest = rpc.turns.toReversed()
+          const from = Number(params.cursor ?? 0)
+          const page = newest.slice(from, from + params.limit).map(turn => ({ id: turn.id, status: turn.status, items: [] }))
+          return { data: page, nextCursor: from + params.limit < newest.length ? String(from + params.limit) : null }
+        }
         case 'thread/items/list': {
-          if (!legacy) return { data: items.map(item => ({ item, turnId: 'turn-0' })) }
-          throw Object.assign(new Error('thread/items/list is not supported for this thread'), { code: -32601 })
+          if (legacy) throw unsupported(method)
+          const turn = rpc.turns.find(candidate => candidate.id === params.turnId)
+          if (!turn) throw Object.assign(new Error('turn not found'), { code: -32600 })
+          return { data: turn.items.map(item => ({ item, turnId: turn.id })) }
         }
         case 'mcpServer/tool/call': {
           const next = queue.length > 1 ? queue.shift() : queue[0]
@@ -71,7 +83,7 @@ test('learns runs from history, waits on the digest, starts a turn when idle and
       onInbox(count) {
         if (count === 3) {
           rpc.thread.status = 'active'
-          rpc.notify({ method: 'turn/started', params: { threadId: THREAD, turn: { id: 'turn-9' } } })
+          rpc.turns.push({ id: 'turn-9', status: 'inProgress', items: [] })
         }
         if (count === 4) controller.abort()
       },
@@ -113,7 +125,7 @@ test('a refused steer is queued as the next turn, and a delivered item is not re
       inboxes: [inbox({ digest: 'd2', messages: [{ id: 'M1', task_id: 'T1', kind: 'note', requires_ack: false }] })],
       steer: () => { throw new Error('turn mismatch') },
       onInbox(count) {
-        if (count === 1) rpc.notify({ method: 'turn/started', params: { threadId: THREAD, turn: { id: 'turn-old' } } })
+        if (count === 1) rpc.turns.push({ id: 'turn-old', status: 'inProgress', items: [] })
         if (count === 3) controller.abort()
       },
     })
@@ -221,27 +233,72 @@ test('legacy-history threads are read through their turns', async () => {
   })
 })
 
-test('runs started after attaching are learned from the history without notifications', async () => {
+test('runs started after attaching are learned from new turns without notifications', async () => {
   await withState(async state => {
     const controller = new AbortController()
-    const items = []
     let clock = 0
     let pauses = 0
-    const rpc = fakeCodex({ items, inboxes: [inbox({ runs: [{ task_id: 'T1', run_id: 'R1', task_status: 'done', active: false }] })] })
+    const rpc = fakeCodex({ turns: [{ id: 'turn-0', status: 'completed', items: [] }], inboxes: [inbox({ runs: [{ task_id: 'T1', run_id: 'R1', task_status: 'done', active: false }] })] })
     await attach({
       rpc, thread: THREAD, state, signal: controller.signal, pollMs: 30_000, now: () => clock,
       wait: async ms => {
         clock += ms
-        if (++pauses === 1) items.push(startItem('R1', 'T1'))
-        if (pauses === 4) controller.abort()
+        pauses++
+        if (pauses === 1) rpc.turns.push({ id: 'turn-1', status: 'inProgress', items: [startItem('R1', 'T1')] })
+        if (pauses === 2) rpc.turns.at(-1).status = 'completed'
+        if (pauses === 5) controller.abort()
       },
     })
     const reads = rpc.calls.filter(call => call.method === 'mcpServer/tool/call')
     // R1 is read once; once the inbox reports it done, later scans do not bring it back.
     assert.equal(reads.length, 1)
     assert.deepEqual(reads[0].params.arguments.runs, [{ task_id: 'T1', run_id: 'R1' }])
-    assert.ok(rpc.calls.filter(call => call.method === 'thread/items/list').length >= 3)
+    // Each finished turn's items are read once; later scans only list the newest turns.
+    const itemReads = turn => rpc.calls.filter(call => call.method === 'thread/items/list' && call.params.turnId === turn).length
+    assert.equal(itemReads('turn-0'), 1)
+    assert.equal(itemReads('turn-1'), 2)
+    assert.ok(rpc.calls.filter(call => call.method === 'thread/turns/list').length >= 4)
     assert.deepEqual(state.get().runs, [])
+  })
+})
+
+test('a busy thread is steered on the turn Codex reports running', async () => {
+  await withState(async state => {
+    const controller = new AbortController()
+    const rpc = fakeCodex({
+      status: 'active',
+      turns: [{ id: 'turn-0', status: 'completed', items: [startItem('R1', 'T1')] }, { id: 'turn-7', status: 'inProgress', items: [] }],
+      inboxes: [inbox({ messages: [{ id: 'M1', task_id: 'T1', kind: 'note', requires_ack: false }] })],
+      onInbox(count) { if (count === 2) controller.abort() },
+    })
+    await attach({ rpc, thread: THREAD, state, signal: controller.signal, wait: async () => {} })
+    const steers = rpc.calls.filter(call => call.method === 'turn/steer')
+    assert.deepEqual(steers.map(call => call.params.expectedTurnId), ['turn-7'])
+    assert.equal(rpc.calls.filter(call => call.method === 'turn/start').length, 0)
+  })
+})
+
+test('history errors other than an unsupported method are not hidden by a whole-thread read', async () => {
+  await withState(async state => {
+    const rpc = fakeCodex({ items: [startItem('R1', 'T1')], inboxes: [inbox()] })
+    const call = rpc.call
+    rpc.call = async (method, params) => {
+      if (method === 'thread/turns/list') throw Object.assign(new Error('thread not loaded'), { code: -32600 })
+      return call(method, params)
+    }
+    await assert.rejects(attach({ rpc, thread: THREAD, state, wait: async () => {} }), /thread not loaded/)
+    assert.ok(!rpc.calls.some(entry => entry.method === 'thread/read' && entry.params.includeTurns))
+  })
+})
+
+test('stops once the thread is no longer loaded', async () => {
+  await withState(async state => {
+    let clock = 0
+    const rpc = fakeCodex({ items: [startItem('R1', 'T1')], inboxes: [inbox()] })
+    await assert.rejects(attach({
+      rpc, thread: THREAD, state, pollMs: 30_000, now: () => clock,
+      wait: async () => { clock += 30_000; rpc.thread.status = 'notLoaded' },
+    }), /no longer loaded/)
   })
 })
 

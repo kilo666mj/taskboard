@@ -16,34 +16,36 @@ an approval: those stay with the interactive client.
 1. On start, it checks that the thread is loaded and persistent, then reads the
    thread's history for completed `task_start` and `task_claim` calls on a
    Taskboard MCP server. It keeps the latest 20 runs. Because it does not resume
-   the thread, its connection is not subscribed to the thread's events, so it
-   reads the history again every 30 seconds to learn runs started since. Threads
-   whose history cannot be paged with `thread/items/list` are read through
-   `thread/read` with their turns.
+   the thread, its connection is not subscribed to the thread's events, so every
+   30 seconds it lists the turns started since its last look
+   (`thread/turns/list`) and reads only their items (`thread/items/list`). It
+   stops when the thread is no longer loaded. Legacy-history threads, which
+   Codex cannot page, are read whole through `thread/read` with their turns.
 2. It reads the [controller
    inbox](../../../docs/agent-integrations.md#controller-inbox) by asking Codex to
-   call `task_inbox` on that same MCP server (`mcpServer/tool/call`). The call
+   call `task_inbox` on the MCP server that started each run
+   (`mcpServer/tool/call`). The call
    uses the thread's own MCP connection and Taskboard principal, so the adapter
    holds no Taskboard credential. A tool called `taskboard_task_start` on a
    gateway pairs with `taskboard_task_inbox`; `task_start` on a server named
    `taskboard` pairs with `task_inbox`.
-3. If the inbox carries a `digest`, each read waits up to 25 seconds for the
-   next change, with a two-second pause between reads. Otherwise it reads every
-   30 seconds.
+3. If the inbox carries a `digest` and every run came from one server, each
+   read waits up to 25 seconds for the next change, with a two-second pause
+   between reads. Otherwise it reads every 30 seconds.
 4. For items it has not delivered before, it adds input to the thread:
    - an idle thread gets a new turn (`turn/start`);
-   - a busy thread has its active turn steered (`turn/steer`), so the model
-     reads the items at its next step. If the active turn is unknown, for
-     example because it started before the adapter attached, or the steer is
-     refused, Codex queues the input as the next turn.
+   - a busy thread has its running turn, which the adapter asks Codex for just
+     before delivering, steered (`turn/steer`), so the model reads the items at
+     its next step. If no running turn is reported, or the steer is refused
+     because that turn has just ended, Codex queues the input as the next turn.
 
    The text names each item by kind and ID and leaves out people's message and
    discussion text; the agent reads the details with `task_inbox` and acts
    through the specific tools. Turns are started without model, approval,
    sandbox or directory overrides, so the thread keeps its own settings.
-5. When a run's task is done or cancelled, the adapter drops the run. It keeps
-   running for new runs until the thread is closed, archived or deleted, or the
-   app-server goes away.
+5. When a run's task is done or cancelled, the adapter drops the run once its
+   last items are delivered. It keeps running for new runs until the thread is
+   closed, archived, deleted or unloaded, or the app-server goes away.
 
 Delivered item keys and watched runs are stored in a private state directory,
 so a restart does not deliver an item again.
