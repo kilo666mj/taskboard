@@ -925,7 +925,9 @@ type InboxRun struct {
 }
 
 type InboxRequest struct {
-	Runs []InboxRun `json:"runs" jsonschema:"1-20 task and run ID pairs started or claimed by this agent session, including runs that have since ended"`
+	Runs        []InboxRun `json:"runs" jsonschema:"1-20 task and run ID pairs started or claimed by this agent session, including runs that have since ended"`
+	WaitSeconds int        `json:"wait_seconds,omitempty" jsonschema:"Optional 1-25: hold the call until the inbox differs from digest or this many seconds pass"`
+	Digest      string     `json:"digest,omitempty" jsonschema:"The digest of a previous task_inbox result; with wait_seconds the call returns as soon as the inbox differs from it"`
 }
 
 // InboxRunState reports where a checked run and its task stand.
@@ -941,7 +943,10 @@ type InboxRunState struct {
 // Inbox is the work waiting on a controller for a set of its runs. Reading
 // it never changes receipt, control, discussion or escalation state.
 type Inbox struct {
-	AsOf            time.Time              `json:"as_of"`
+	AsOf time.Time `json:"as_of"`
+	// Digest changes whenever an item, a run's status or a task's status
+	// changes, so a client can wait for the next difference.
+	Digest          string                 `json:"digest"`
 	Count           int                    `json:"count"`
 	Runs            []InboxRunState        `json:"runs"`
 	Controls        []RunControlRequest    `json:"controls"`

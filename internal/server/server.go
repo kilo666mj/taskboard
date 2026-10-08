@@ -559,7 +559,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		items, err := tasks.ListPendingRunControlsFor(ctx, input.Limit, mcpPrincipal(ctx))
 		return nil, controlsOutput{Controls: items}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_inbox", Description: "Check everything waiting on this agent session in one read: open controls and session requests for the named runs, discussions on their tasks that are requested or awaiting a reply, answered or expired escalations, and unreceived messages. Pass every task and run this session started or claimed, including ended runs. Reading changes nothing; act through the specific tools, and remember handled items by ID and update time.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.InboxRequest) (*mcp.CallToolResult, model.Inbox, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_inbox", Description: "Check everything waiting on this agent session in one read: open controls and session requests for the named runs, discussions on their tasks that are requested or awaiting a reply, answered or expired escalations, and unreceived messages. Pass every task and run this session started or claimed, including ended runs. Reading changes nothing; act through the specific tools, and remember handled items by ID and update time. Session adapters can pass wait_seconds with the previous result's digest to hold the call until something changes.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input model.InboxRequest) (*mcp.CallToolResult, model.Inbox, error) {
 		inbox, err := tasks.InboxFor(ctx, input, mcpPrincipal(ctx))
 		return nil, inbox, err
 	})
