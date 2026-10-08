@@ -60,7 +60,7 @@ jobs:
           node --check web/sw.js
           node --check desktop/src/app.js
       - name: Test Codex delivery adapter
-        run: node --test integrations/codex/taskboard-delivery/test/
+        run: node --test 'integrations/codex/taskboard-delivery/test/*.test.mjs'
       - name: Validate Compose
         run: |
           cp .env.example .env

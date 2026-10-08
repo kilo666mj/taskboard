@@ -7,5 +7,5 @@
   "license": "MIT",
   "engines": { "node": ">=22" },
   "bin": { "taskboard-codex-delivery": "./run.mjs" },
-  "scripts": { "test": "node --test test/" }
+  "scripts": { "test": "node --test 'test/*.test.mjs'" }
 }
