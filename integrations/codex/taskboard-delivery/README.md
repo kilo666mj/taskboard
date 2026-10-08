@@ -48,7 +48,9 @@ an approval: those stay with the interactive client.
    closed, archived, deleted or unloaded, or the app-server goes away.
 
 Delivered item keys and watched runs are stored in a private state directory,
-so a restart does not deliver an item again.
+so a restart does not deliver an item again. A delivered item is remembered
+while the inbox still lists it; at most 500 are outstanding at once, and the
+rest follow as the agent handles earlier ones.
 
 ## Requirements
 

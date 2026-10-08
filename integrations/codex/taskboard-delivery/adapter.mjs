@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { addRun, deliveryText, inboxItems, openRuns, runFromItem, SEEN_LIMIT, toolResult } from './inbox.mjs'
+import { addRun, deliveryText, inboxItems, openRuns, pendingItems, runFromItem, toolResult } from './inbox.mjs'
 import { AdapterError } from './rpc.mjs'
 
 // Server cap on task_inbox waits; Codex's default MCP tool timeout is 60 s.
@@ -116,18 +116,15 @@ export async function attach({ rpc, thread, state, signal, log = () => {},
       canWait = typeof inbox.digest === 'string' && inbox.digest !== ''
       digest = canWait ? inbox.digest : undefined
 
-      const seen = new Set(current.seen)
-      const fresh = inboxItems(inbox).filter(item => !seen.has(item.key))
-      // Drop finished runs only once their items landed, so a failed delivery
-      // reads them again rather than losing them.
-      const delivered = fresh.length === 0 || await deliver(fresh)
-      if (delivered) {
+      const { kept, pending, fresh } = pendingItems(current.seen, inboxItems(inbox))
+      const delivered = fresh.length > 0 && await deliver(fresh)
+      current = { ...current, seen: [...kept, ...(delivered ? fresh.map(item => item.key) : [])] }
+      if (delivered) log(`delivered ${fresh.length} Taskboard item${fresh.length === 1 ? '' : 's'}`)
+      // Drop finished runs only once every item has landed, so a failed or
+      // partial delivery reads them again rather than losing their items.
+      if (pending.length === 0 || (delivered && fresh.length === pending.length)) {
         const open = openRuns(current.runs, inbox)
         if (open.length !== current.runs.length) current = { ...current, runs: open }
-      }
-      if (fresh.length > 0 && delivered) {
-        current = { ...current, seen: [...current.seen, ...fresh.map(item => item.key)].slice(-SEEN_LIMIT) }
-        log(`delivered ${fresh.length} Taskboard item${fresh.length === 1 ? '' : 's'}`)
       }
       await state.save(current)
       await pause(canWait ? gapMs : pollMs)

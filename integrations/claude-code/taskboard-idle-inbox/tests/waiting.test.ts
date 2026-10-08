@@ -129,3 +129,45 @@ test('a run started during a waiting read stays watched', async ($, on) => {
   expect(polls.length).toBe(3)
   expect(polls[2].runs.map(run => run.run_id)).toEqual(['R1', 'R2'])
 })
+
+test('a finished run stays watched until all its items land, and none is delivered twice', async ($, on) => {
+  const clock = mock.clock(on)
+  const session = mock.session(on)
+  const polls: { runs: { run_id: string }[] }[] = []
+  const message = (i: number) => ({ id: `M${i}`, task_id: 'T1', kind: 'note', requires_ack: false })
+  // More items than the 500 a session is handed at once, on a finished task.
+  let messages = Array.from({ length: 501 }, (_, i) => message(i))
+
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('tool.call', { tool: START }, () => ({ result: {}, text: JSON.stringify({ run: { id: 'R1', task_id: 'T1' } }) }))
+  on('tool.call', { tool: INBOX }, ($, e) => {
+    polls.push(e as unknown as { runs: { run_id: string }[] })
+    const inbox = { ...emptyInbox, digest: `d${messages.length}`, runs: [{ task_id: 'T1', run_id: 'R1', task_status: 'done', active: false }], messages }
+    return { result: {}, text: JSON.stringify(inbox) }
+  })
+  const delivered = () => session.appended().map(note => JSON.stringify(note.message))
+
+  await $.turn.start({ text: 'work', turnId: 't1' })
+  await $.tool.call({ tool: START, title: 'Work', checklist: ['One'] })
+  await clock.advance(0)
+  expect(delivered().length).toBe(1)
+  expect(delivered()[0]).toContain('message M499 on task T1')
+  expect(delivered()[0]).not.toContain('message M500 ')
+
+  // M500 is still owed, so R1 stays watched; the 500 handed over are not repeated.
+  await clock.advance(2_000)
+  expect(polls.length).toBe(2)
+  expect(polls[1].runs.map(run => run.run_id)).toEqual(['R1'])
+  expect(delivered().length).toBe(1)
+
+  // The agent clears them; M500 goes out, and the finished run is dropped.
+  messages = [message(500)]
+  await clock.advance(30_000)
+  expect(delivered().length).toBe(2)
+  expect(delivered()[1]).toContain('message M500 on task T1')
+  const reads = polls.length
+  await clock.advance(3_600_000)
+  expect(polls.length).toBe(reads)
+})

@@ -47,7 +47,7 @@ export async function connectCodex(origin, { signal, timeout = 10_000 } = {}) {
     } else entry.resolve(message.result)
   })
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(failure()), timeout)
+    const timer = setTimeout(() => { close(); reject(failure()) }, timeout)
     socket.addEventListener('open', () => { clearTimeout(timer); resolve() }, { once: true })
     socket.addEventListener('close', () => { clearTimeout(timer); reject(failure()) }, { once: true })
   })

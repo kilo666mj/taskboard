@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { attach, WAIT_SECONDS } from '../adapter.mjs'
-import { deliveryText, inboxItems, openRuns, runFromItem } from '../inbox.mjs'
+import { deliveryText, inboxItems, openRuns, pendingItems, runFromItem, SEEN_LIMIT } from '../inbox.mjs'
+import { connectCodex } from '../rpc.mjs'
 import { openState } from '../state.mjs'
 
 const THREAD = '0199a000-0000-7000-8000-000000000001'
@@ -111,7 +114,8 @@ test('learns runs from history, waits on the digest, starts a turn when idle and
 
     const saved = JSON.parse(await readFile(join(directory, 'state.json'), 'utf8'))
     assert.deepEqual(saved.runs, [])
-    assert.deepEqual(saved.seen, ['message:M1', 'control:C1:requested'])
+    // The last inbox lists nothing, so the delivered keys are forgotten.
+    assert.deepEqual(saved.seen, [])
     assert.equal((await stat(join(directory, 'state.json'))).mode & 0o777, 0o600)
   })
 })
@@ -340,4 +344,38 @@ test('runs from different Taskboard servers are read through their own server, w
     assert.deepEqual(reads.slice(0, 2).map(read => [read.params.server, read.params.arguments.runs.map(run => run.run_id)]), [['switchboard', ['R1']], ['taskboard-direct', ['R2']]])
     assert.ok(reads.every(read => read.params.arguments.wait_seconds === undefined))
   })
+})
+
+test('delivered keys stay remembered while listed, and at most SEEN_LIMIT are outstanding', () => {
+  const items = count => Array.from({ length: count }, (_, i) => ({ key: `message:M${i}`, line: `m${i}` }))
+  // 600 new items: only SEEN_LIMIT go out now.
+  let split = pendingItems([], items(600))
+  assert.equal(split.fresh.length, SEEN_LIMIT)
+  assert.equal(split.pending.length, 600)
+  let seen = [...split.kept, ...split.fresh.map(item => item.key)]
+  // Nothing already delivered is offered again, however long the inbox.
+  split = pendingItems(seen, items(600))
+  assert.equal(split.fresh.length, 0)
+  assert.equal(split.pending.length, 100)
+  // Once the agent clears 150, the rest go out and the cleared keys are forgotten.
+  split = pendingItems(seen, items(600).slice(150))
+  assert.equal(split.kept.length, 350)
+  assert.deepEqual(split.fresh.map(item => item.key), items(600).slice(500).map(item => item.key))
+  seen = [...split.kept, ...split.fresh.map(item => item.key)]
+  assert.equal(seen.length, 450)
+})
+
+test('a connection that never opens is closed when it times out', async () => {
+  // Accepts the TCP connection and never answers the WebSocket handshake.
+  const server = createServer()
+  const sockets = []
+  const closed = new Promise(resolve => server.on('connection', socket => { sockets.push(socket); socket.on('close', () => resolve(true)) }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    await assert.rejects(connectCodex(`ws://127.0.0.1:${server.address().port}`, { timeout: 100 }), /connection closed/)
+    assert.equal(await Promise.race([closed, sleep(2_000).then(() => false)]), true, 'the adapter left the connection open')
+  } finally {
+    for (const socket of sockets) socket.destroy()
+    server.close()
+  }
 })
