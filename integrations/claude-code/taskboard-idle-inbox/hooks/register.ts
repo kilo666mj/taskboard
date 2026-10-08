@@ -69,6 +69,8 @@ async function check($: EngineInterface) {
     return
   }
   inFlight = true
+  // A waiting read can take 25 seconds; runs started meanwhile are not in its answer.
+  const asked = new Set(watched.map(run => run.runId))
   let inbox: Inbox
   try {
     const waiting = canWait === true && digest !== undefined
@@ -99,16 +101,26 @@ async function check($: EngineInterface) {
   canWait = typeof inbox.digest === 'string' && inbox.digest !== ''
   digest = canWait ? inbox.digest : undefined
 
-  const open = new Set(inbox.runs.filter(run => !FINISHED.has(run.task_status)).map(run => run.run_id))
-  await update($, runs, list => list.filter(run => open.has(run.runId)))
-
   const items = inboxItems(inbox)
-  const known = new Set(await read($, seen))
-  const fresh = items.filter(item => !known.has(item.key))
+  // Delivered keys are remembered while the inbox still lists them, so a long
+  // inbox never pushes one out to be delivered twice; at most SEEN_LIMIT are
+  // outstanding, and the rest wait for the agent to clear some.
+  const present = new Set(items.map(item => item.key))
+  const kept = (await read($, seen)).filter(key => present.has(key))
+  const known = new Set(kept)
+  const pending = items.filter(item => !known.has(item.key))
+  const fresh = pending.slice(0, Math.max(0, SEEN_LIMIT - kept.length))
   const delivered = fresh.length > 0 && (await deliver($, fresh))
-  if (delivered) {
-    await update($, seen, list => [...list, ...fresh.map(item => item.key)].slice(-SEEN_LIMIT))
+  await update($, seen, () => [...kept, ...(delivered ? fresh.map(item => item.key) : [])])
+
+  // Drop a run only if this read asked about it and it is finished or no
+  // longer listed, and only once every item the read found has landed, so a
+  // failed delivery reads the run again rather than losing its items.
+  if (pending.length === 0 || (delivered && fresh.length === pending.length)) {
+    const listed = new Set(inbox.runs.filter(run => !FINISHED.has(run.task_status)).map(run => run.run_id))
+    await update($, runs, list => list.filter(run => !asked.has(run.runId) || listed.has(run.runId)))
   }
+  const open = new Set((await read($, runs)).map(run => run.runId))
   $.ui.status(open.size === 0 ? undefined : items.length > 0 ? `taskboard: ${items.length} waiting` : `taskboard: watching ${open.size} run${open.size === 1 ? '' : 's'}`)
   if (open.size === 0) {
     return
