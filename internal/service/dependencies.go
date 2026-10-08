@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-func (s *Service) ListTaskDependenciesFor(ctx context.Context, taskID string, principal Principal) ([]model.TaskDependency, error) {
+func (s *Service) listTaskDependenciesFor(ctx context.Context, taskID string, principal Principal) ([]model.TaskDependency, error) {
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
 		return nil, err
 	}
 	return s.store.ListTaskDependencies(ctx, task.ID)
 }
-func (s *Service) AddTaskDependencyFor(ctx context.Context, taskID string, request model.AddTaskDependencyRequest, principal Principal) (model.Task, error) {
+func (s *Service) addTaskDependencyFor(ctx context.Context, taskID string, request model.AddTaskDependencyRequest, principal Principal) (model.Task, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
@@ -75,7 +75,7 @@ func (s *Service) AddTaskDependencyFor(ctx context.Context, taskID string, reque
 	s.publish(event)
 	return s.store.GetTask(ctx, taskID)
 }
-func (s *Service) RemoveTaskDependencyFor(ctx context.Context, taskID, blockedBy string, expectedVersion int64, principal Principal) (model.Task, error) {
+func (s *Service) removeTaskDependencyFor(ctx context.Context, taskID, blockedBy string, expectedVersion int64, principal Principal) (model.Task, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}

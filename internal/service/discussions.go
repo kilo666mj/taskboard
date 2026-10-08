@@ -148,7 +148,17 @@ func (s *Service) ListControllerDiscussionsFor(ctx context.Context, principal Pr
 	}
 	open := items[:0]
 	for _, item := range items {
-		if item.Status != model.DiscussionEnded {
+		if item.Status == model.DiscussionEnded {
+			continue
+		}
+		task, err := s.GetFor(ctx, item.TaskID, principal)
+		if errors.Is(err, store.ErrNotFound) || errors.Is(err, ErrForbidden) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if controllerMayDiscuss(task, principal) {
 			open = append(open, item)
 		}
 	}
@@ -331,12 +341,27 @@ func (s *Service) authorizedDiscussion(ctx context.Context, discussionID string,
 		if item.Controller != principal.ID {
 			return model.TaskDiscussion{}, store.ErrNotFound
 		}
+		task, err := s.GetFor(ctx, item.TaskID, principal)
+		if err != nil {
+			return model.TaskDiscussion{}, err
+		}
+		if !controllerMayDiscuss(task, principal) {
+			return model.TaskDiscussion{}, ErrForbidden
+		}
 		return item, nil
 	}
 	if _, err := s.GetFor(ctx, item.TaskID, principal); err != nil {
 		return model.TaskDiscussion{}, err
 	}
 	return item, nil
+}
+
+// controllerMayDiscuss reports whether an agent may still read and answer
+// discussions on a task. The controller is fixed when a discussion starts, so
+// this is checked on every call: the agent must still see and own the task
+// and hold task:message, as for the task's messages.
+func controllerMayDiscuss(task model.Task, principal Principal) bool {
+	return principal.HasCapability(CapabilityTaskMessage) && canMutate(task, principal)
 }
 
 func (s *Service) discussionWithMessages(ctx context.Context, id, after string) (model.TaskDiscussion, error) {

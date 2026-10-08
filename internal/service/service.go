@@ -688,7 +688,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	return model.StartResult{Task: task, Run: task.Runs[0]}, nil
 }
 
-func (s *Service) StartFor(ctx context.Context, request model.StartRequest, principal Principal) (model.StartResult, error) {
+func (s *Service) startFor(ctx context.Context, request model.StartRequest, principal Principal) (model.StartResult, error) {
 	if !principal.Agent && !principal.Can(PermissionTaskWrite) {
 		return model.StartResult{}, ErrForbidden
 	}
@@ -852,7 +852,7 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 	return task, err
 }
 
-func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
+func (s *Service) createFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
 	if principal.Agent {
 		requirements, err := normalizeRequirements(request.Requirements)
 		if err != nil {
@@ -1056,7 +1056,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Task, error) {
 	return s.store.GetTask(ctx, strings.TrimSpace(id))
 }
 
-func (s *Service) GetFor(ctx context.Context, id string, principal Principal) (model.Task, error) {
+func (s *Service) getFor(ctx context.Context, id string, principal Principal) (model.Task, error) {
 	if !principal.Can(PermissionTaskRead) {
 		return model.Task{}, ErrForbidden
 	}
@@ -1084,7 +1084,7 @@ func (s *Service) List(ctx context.Context, statuses []model.TaskStatus, limit i
 // instead of scanning without limit.
 var maxListScan = 1000
 
-func (s *Service) ListFor(ctx context.Context, request model.ListTasksRequest, principal Principal) (model.TaskPage, error) {
+func (s *Service) listFor(ctx context.Context, request model.ListTasksRequest, principal Principal) (model.TaskPage, error) {
 	if !principal.Can(PermissionTaskRead) {
 		return model.TaskPage{}, ErrForbidden
 	}
@@ -1160,7 +1160,7 @@ func decodeTaskCursor(value string) (*store.TaskCursor, error) {
 	return &cursor, nil
 }
 
-func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.ClaimRequest, principal Principal) (model.StartResult, error) {
+func (s *Service) claimFor(ctx context.Context, taskID string, request model.ClaimRequest, principal Principal) (model.StartResult, error) {
 	if !principal.Agent {
 		return model.StartResult{}, ErrForbidden
 	}
@@ -1860,7 +1860,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	return task, err
 }
 
-func (s *Service) UpdateFor(ctx context.Context, taskID string, request model.UpdateRequest, principal Principal) (model.Task, error) {
+func (s *Service) updateFor(ctx context.Context, taskID string, request model.UpdateRequest, principal Principal) (model.Task, error) {
 	if principal.Agent {
 		if request.IdempotencyKey != "" {
 			s.idempotencyMu.Lock()
@@ -2022,7 +2022,7 @@ func (s *Service) runProgress(task model.Task, run model.AgentRun) model.RunProg
 	return progress
 }
 
-func (s *Service) RenameRunFor(ctx context.Context, taskID, runID string, request model.RenameRunRequest, principal Principal) (model.Task, error) {
+func (s *Service) renameRunFor(ctx context.Context, taskID, runID string, request model.RenameRunRequest, principal Principal) (model.Task, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
@@ -2162,7 +2162,7 @@ func (s *Service) Move(ctx context.Context, taskID string, request model.MoveReq
 	return task, err
 }
 
-func (s *Service) MoveFor(ctx context.Context, taskID string, request model.MoveRequest, principal Principal) (model.Task, error) {
+func (s *Service) moveFor(ctx context.Context, taskID string, request model.MoveRequest, principal Principal) (model.Task, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}

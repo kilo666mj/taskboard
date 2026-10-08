@@ -123,3 +123,51 @@ func TestIdleDiscussionsEnd(t *testing.T) {
 		t.Fatalf("new discussion after idle = %+v, %v", fresh, err)
 	}
 }
+
+func TestDiscussionControllerRightsAreRecheckedOnEveryCall(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	task, _ := escalateForDecision(t, tasks, "recheck", model.CreateEscalationRequest{Blocking: true, Answerers: []string{"human:approver"}})
+	controller, person := AgentPrincipal("agent:worker"), HumanPrincipal("human:approver")
+	if _, err := tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{DiscussionCapability}, TTLSeconds: 120}, controller); err != nil {
+		t.Fatal(err)
+	}
+	started, err := tasks.StartDiscussionFor(t.Context(), task.ID, model.StartDiscussionRequest{Message: "Why?"}, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	denied := func(name string, principal Principal) {
+		t.Helper()
+		if _, err := tasks.GetDiscussionFor(t.Context(), started.ID, "", principal); err == nil {
+			t.Errorf("%s: read a discussion", name)
+		}
+		if _, err := tasks.UpdateDiscussionFor(t.Context(), started.ID, model.UpdateDiscussionRequest{Status: model.DiscussionActive}, principal); err == nil {
+			t.Errorf("%s: accepted a discussion", name)
+		}
+		if _, err := tasks.AddDiscussionMessageFor(t.Context(), started.ID, model.DiscussionMessageRequest{Body: "Hi"}, principal); err == nil {
+			t.Errorf("%s: replied to a discussion", name)
+		}
+		if listed, err := tasks.ListControllerDiscussionsFor(t.Context(), principal); err != nil || len(listed) != 0 {
+			t.Errorf("%s: listed %d discussions, %v", name, len(listed), err)
+		}
+	}
+	// The same controller ID with no capabilities, or without task:message.
+	denied("no capabilities", AgentPrincipalWithPolicy("agent:worker", AgentPolicy{}))
+	readOnly := AgentPrincipalWithPolicy("agent:worker", AgentPolicy{Capabilities: map[string]bool{CapabilityTaskRead: true}})
+	denied("read only", readOnly)
+
+	if _, err := tasks.UpdateDiscussionFor(t.Context(), started.ID, model.UpdateDiscussionRequest{Status: model.DiscussionActive}, controller); err != nil {
+		t.Fatalf("current controller accept: %v", err)
+	}
+
+	// Once the task passes to another agent, the old controller loses the discussion.
+	current, err := tasks.GetFor(t.Context(), task.ID, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	team, other := model.VisibilityTeam, "agent:other"
+	if _, err := tasks.UpdateFor(t.Context(), task.ID, model.UpdateRequest{ExpectedVersion: current.Version, Visibility: &team, Owner: &other}, person); err != nil {
+		t.Fatal(err)
+	}
+	denied("former controller", controller)
+}

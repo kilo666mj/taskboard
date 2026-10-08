@@ -104,6 +104,9 @@ type TaskLink struct {
 	TaskID string     `json:"task_id"`
 	Title  string     `json:"title"`
 	Status TaskStatus `json:"status"`
+	// Hidden is set, and Title and Status left empty, when the reader may
+	// not see the linked task.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // DuplicateCandidate is an open task whose title and scope resemble a task an
@@ -123,8 +126,11 @@ type TaskDependency struct {
 	BlockedByTitle  string     `json:"blocked_by_title"`
 	BlockedByStatus TaskStatus `json:"blocked_by_status"`
 	Satisfied       bool       `json:"satisfied"`
-	CreatedBy       string     `json:"created_by"`
-	CreatedAt       time.Time  `json:"created_at"`
+	// Hidden is set, and the blocker's title and status left empty, when the
+	// reader may not see the blocking task.
+	Hidden    bool      `json:"hidden,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
 }
 type AddTaskDependencyRequest struct {
 	BlockedByTaskID string `json:"blocked_by_task_id"`
