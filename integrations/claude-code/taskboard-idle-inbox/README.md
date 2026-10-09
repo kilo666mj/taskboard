@@ -57,8 +57,9 @@ installations update in place.
 5. When a run's task is done or cancelled, the plugin drops that run. With
    no runs left, it stops reading.
 
-The status line shows `taskboard: watching N runs`, `taskboard: N waiting`,
-or `taskboard inbox unavailable`. After a failed read, the plugin retries
+The status line shows `taskboard inbox: nothing waiting` while it watches,
+`taskboard inbox: N waiting` when items are pending, or `taskboard inbox
+unavailable`. After a failed read, the plugin retries
 after the shortest interval, doubling up to the longest; against a server
 without `digest` it waits the longest interval.
 
@@ -74,7 +75,15 @@ Set them in `/config`, or in settings under
 
 ## Loading it
 
-For one session:
+To install it, add this repository as a plugin marketplace once, then install
+the plugin. `claude plugin marketplace update taskboard` picks up new versions.
+
+```sh
+claude plugin marketplace add kilo666mj/taskboard
+claude plugin install taskboard-idle-inbox@taskboard
+```
+
+For one session, without installing:
 
 ```sh
 claude --plugin-dir /path/to/taskboard/integrations/claude-code/taskboard-idle-inbox

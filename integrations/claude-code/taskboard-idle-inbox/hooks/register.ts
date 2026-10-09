@@ -121,7 +121,7 @@ async function check($: EngineInterface) {
     await update($, runs, list => list.filter(run => !asked.has(run.runId) || listed.has(run.runId)))
   }
   const open = new Set((await read($, runs)).map(run => run.runId))
-  $.ui.status(open.size === 0 ? undefined : items.length > 0 ? `taskboard: ${items.length} waiting` : `taskboard: watching ${open.size} run${open.size === 1 ? '' : 's'}`)
+  $.ui.status(open.size === 0 ? undefined : items.length > 0 ? `taskboard inbox: ${items.length} waiting` : 'taskboard inbox: nothing waiting')
   if (open.size === 0) {
     return
   }
