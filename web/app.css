@@ -74,6 +74,10 @@ body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;back
 }
 
 button,input,textarea,select{font:inherit}
+.assignment-editor{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
+.assignment-editor input{min-width:0}
+.assignment-editor button{min-height:44px}
+.task-assignment{margin:8px 0;color:var(--muted);font-size:.76rem;overflow-wrap:anywhere}
 .modal select{width:100%;padding:.7rem .8rem;border:1px solid var(--line);border-radius:.65rem;background:#0b101b;color:var(--ink)}
 .modal select:focus{outline:2px solid var(--cyan);outline-offset:2px}
 .view-toolbar{display:grid;grid-template-columns:10.5rem 10.5rem minmax(13rem,26rem);align-items:center;justify-content:start;gap:.55rem;padding-top:.75rem;margin-bottom:.7rem}
