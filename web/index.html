@@ -112,6 +112,14 @@
         <label>Priority<select id="taskPriority"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
       </div>
       <p class="field-help">Private tasks are visible only to their creator. Agent-pickup tasks are available for an agent to claim.</p>
+      <div id="taskAssignment" hidden>
+        <div class="assignment-editor">
+          <label>Assigned to<input id="taskOwner" maxlength="100" list="assigneeOptions" autocomplete="off" placeholder="Unassigned" aria-describedby="taskAssignmentHelp"></label>
+          <button id="unassignTask" class="secondary" type="button">Unassign</button>
+        </div>
+        <datalist id="assigneeOptions"></datalist>
+        <p id="taskAssignmentHelp" class="field-help" aria-live="polite"></p>
+      </div>
       <div class="form-row">
         <label>Section<input id="taskSection" maxlength="80" list="sectionOptions" placeholder="General"></label>
         <label>Project<input id="taskProject" maxlength="120" list="projectOptions" placeholder="Home"></label>
@@ -172,6 +180,7 @@
       <div class="task-detail">
         <div class="attention-note" hidden></div>
         <div class="task-meta" hidden></div>
+        <p class="task-assignment"></p>
         <section class="task-context" aria-label="Task context" hidden><h3>Context</h3><p></p></section>
         <details class="dependency-panel" hidden>
           <summary>Blocked by</summary>

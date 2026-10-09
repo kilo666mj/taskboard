@@ -122,6 +122,13 @@ Every task has an independent visibility lane:
 - **Agent pickup** tasks are visible to people and eligible agents, and a queued
   or stale task is atomically claimed by one agent before work starts.
 
+Use **Edit → Assigned to** to reassign a task, or choose **Unassign** and save
+to leave it unassigned. Suggestions include people and agents already visible
+on the board; an exact person or agent ID can also be entered. Assignment changes
+preserve the task's lane, status, checklist and run history. A Team task stays
+on the Team board when unassigned. Ownership cannot change during an active
+agent run; stop that run first. Agent-pickup ownership is managed by claims.
+
 Existing databases migrate tasks to the team lane. New browser tasks default to
 private, while MCP-created work defaults to agent pickup. A task keeps its
 immutable creator when published; that creator may later make it private again.
