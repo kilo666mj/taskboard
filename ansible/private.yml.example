@@ -9,6 +9,9 @@ taskboard_oidc_issuer: https://idp.example.com
 taskboard_oidc_client_id: taskboard
 taskboard_oidc_client_secret: ""
 taskboard_oidc_redirect_url: https://taskboard.example.com/api/v1/auth/oidc/callback
+# Single-person deployment: set your OIDC subject (or cloudflare_access:<sub>)
+# and leave the allow-lists, role groups and delegation principals empty.
+taskboard_personal_operator: ""
 taskboard_oidc_allowed_subjects: []
 taskboard_oidc_allowed_emails:
   - user@example.com

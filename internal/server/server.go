@@ -1465,6 +1465,9 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 							person := service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups))
 							authenticatedPrincipal.OnBehalfOf = &person
 						}
+						if !identity.Service && !personAllowed(cfg, identity.Subject) {
+							valid = false
+						}
 					}
 				} else if len(values) == 1 && strings.HasPrefix(values[0], "Bearer ") {
 					presented := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))
@@ -1486,13 +1489,12 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 				}
 			} else if cloudflare != nil {
 				mechanism = "cloudflare_access"
-				if identity, err := cloudflare.identity(r); err == nil && !identity.Service {
+				if identity, err := cloudflare.identity(r); err == nil && !identity.Service && personAllowed(cfg, identity.Subject) {
 					valid = true
 					authenticatedPrincipal = service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups))
 				}
 			} else if identity, ok := sessions.identity(r.Context(), r); ok {
-				valid = true
-				authenticatedPrincipal = browserPrincipal(cfg, identity)
+				authenticatedPrincipal, valid = browserPrincipal(cfg, identity)
 				sessionValid = func(ctx context.Context) bool {
 					_, ok := sessions.identity(ctx, r)
 					return ok
@@ -1507,6 +1509,17 @@ func auth(cfg config.Config, sessions *browserSessions, cloudflare *cloudflareAc
 					writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication failures"})
 					return
 				}
+				if metrics != nil {
+					metrics.ObserveAuth(mechanism, "failure")
+				}
+				w.Header().Set("WWW-Authenticate", `Bearer realm="taskboard"`)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				return
+			}
+			if valid && mcpRequest && cfg.Personal() {
+				valid = actForOperator(cfg, sessions.store, r, &authenticatedPrincipal)
+			}
+			if !valid {
 				if metrics != nil {
 					metrics.ObserveAuth(mechanism, "failure")
 				}
@@ -1549,9 +1562,34 @@ const switchboardAccessSubjectHeader = "X-Switchboard-Access-Subject"
 // only from configured delegation principals and ignored for every other caller.
 const switchboardOAuthSubjectHeader = "X-Switchboard-OAuth-Subject"
 
+// actForOperator makes an authenticated agent act for the operator of a
+// personal deployment. A forwarded person must be the operator, and an
+// offboarded operator leaves agents without a person to act for.
+func actForOperator(cfg config.Config, database *store.Store, r *http.Request, principal *service.Principal) bool {
+	if !principal.Agent {
+		return true
+	}
+	if principal.OnBehalfOf != nil && principal.OnBehalfOf.ID != cfg.PersonalOperator {
+		return false
+	}
+	for _, header := range []string{switchboardAccessSubjectHeader, switchboardOAuthSubjectHeader} {
+		for _, value := range r.Header.Values(header) {
+			if value != cfg.PersonalOperator {
+				return false
+			}
+		}
+	}
+	if revoked, err := database.PrincipalRevoked(r.Context(), cfg.PersonalOperator); err != nil || revoked {
+		return false
+	}
+	operator := operatorPrincipal(cfg)
+	principal.OnBehalfOf = &operator
+	return true
+}
+
 func forwardedAccessPerson(cfg config.Config, database *store.Store, r *http.Request, principalID string) (service.Principal, bool, error) {
 	access, oauth := r.Header.Values(switchboardAccessSubjectHeader), r.Header.Values(switchboardOAuthSubjectHeader)
-	if len(access)+len(oauth) == 0 || !cfg.MCPHumanDelegation || !slices.Contains(cfg.MCPDelegationPrincipals, principalID) {
+	if cfg.Personal() || len(access)+len(oauth) == 0 || !cfg.MCPHumanDelegation || !slices.Contains(cfg.MCPDelegationPrincipals, principalID) {
 		return service.Principal{}, false, nil
 	}
 	var subject string
@@ -1588,6 +1626,9 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 			if err == nil && identity.Service {
 				err = errInvalidCloudflareAccess
 			}
+			if err == nil && !personAllowed(cfg, identity.Subject) {
+				err = errInvalidCloudflareAccess
+			}
 			if err == nil {
 				if revoked, checkErr := sessions.store.PrincipalRevoked(r.Context(), identity.Subject); checkErr != nil || revoked {
 					err = store.ErrNotFound
@@ -1608,6 +1649,7 @@ func sessionState(cfg config.Config, sessions *browserSessions, cloudflare *clou
 			return
 		}
 		identity, valid := sessions.identity(r.Context(), r)
+		valid = valid && personAllowed(cfg, identity.Subject)
 		if valid {
 			if revoked, err := sessions.store.PrincipalRevoked(r.Context(), identity.Subject); err != nil || revoked {
 				valid = false

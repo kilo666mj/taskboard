@@ -66,11 +66,14 @@ type Config struct {
 	MCPDelegationPrincipals    []string
 	AnswerDelegationPrincipals []string
 	AgentPolicies              map[string]AgentPolicy
-	DefaultRequirements        []string
-	RetentionDays              int
-	WebhookURL                 string
-	WebhookSecret              string
-	WebhookMaxAttempts         int
+	// PersonalOperator names the only person of a single-operator deployment.
+	// It replaces sign-in allow-lists, role groups and MCP delegation settings.
+	PersonalOperator    string
+	DefaultRequirements []string
+	RetentionDays       int
+	WebhookURL          string
+	WebhookSecret       string
+	WebhookMaxAttempts  int
 }
 
 type AgentPolicy struct {
@@ -128,6 +131,7 @@ func Load() (Config, error) {
 		MCPDelegationPrincipals:    split(os.Getenv("TASKBOARD_MCP_DELEGATION_PRINCIPALS")),
 		AnswerDelegationPrincipals: split(os.Getenv("TASKBOARD_ANSWER_DELEGATION_PRINCIPALS")),
 		AgentPolicies:              map[string]AgentPolicy{},
+		PersonalOperator:           strings.TrimSpace(os.Getenv("TASKBOARD_PERSONAL_OPERATOR")),
 		DefaultRequirements:        split(os.Getenv("TASKBOARD_DEFAULT_REQUIREMENTS")),
 		RetentionDays:              envInt("TASKBOARD_RETENTION_DAYS", 0),
 		WebhookURL:                 strings.TrimSpace(os.Getenv("TASKBOARD_WEBHOOK_URL")),
@@ -274,6 +278,9 @@ func Load() (Config, error) {
 	if oidcConfigured != 0 && oidcConfigured != 3 {
 		return Config{}, fmt.Errorf("TASKBOARD_OIDC_ISSUER, TASKBOARD_OIDC_CLIENT_ID, and TASKBOARD_OIDC_REDIRECT_URL must be configured together")
 	}
+	if err := applyPersonalMode(&cfg); err != nil {
+		return Config{}, err
+	}
 	if cfg.OIDCEnabled() && len(cfg.OIDCAllowedSubjects) == 0 && len(cfg.OIDCAllowedEmails) == 0 && len(cfg.OIDCAllowedGroups) == 0 && !cfg.OIDCTrustProviderPolicy {
 		return Config{}, fmt.Errorf("OIDC requires an application allow-list or TASKBOARD_OIDC_TRUST_PROVIDER_POLICY=true")
 	}
@@ -290,6 +297,57 @@ func Load() (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// personalModeConflicts lists the settings that would admit other people or
+// map roles, which TASKBOARD_PERSONAL_OPERATOR decides itself. Startup refuses
+// them when they hold a value other than empty or false, so a deployment has
+// one source of truth. TASKBOARD_DEFAULT_ROLE and TASKBOARD_MCP_HUMAN_DELEGATION
+// are ignored: the operator is always the owner and agents always act for them.
+var personalModeConflicts = []string{
+	"TASKBOARD_OWNER_GROUPS", "TASKBOARD_ADMIN_GROUPS", "TASKBOARD_MEMBER_GROUPS", "TASKBOARD_VIEWER_GROUPS",
+	"TASKBOARD_OIDC_ALLOWED_SUBJECTS", "TASKBOARD_OIDC_ALLOWED_EMAILS", "TASKBOARD_OIDC_ALLOWED_GROUPS", "TASKBOARD_OIDC_TRUST_PROVIDER_POLICY",
+	"TASKBOARD_CF_ACCESS_ALLOWED_SUBJECTS", "TASKBOARD_CF_ACCESS_ALLOWED_EMAILS", "TASKBOARD_CF_ACCESS_ALLOWED_GROUPS", "TASKBOARD_CF_ACCESS_TRUST_POLICY",
+	"TASKBOARD_MCP_DELEGATION_PRINCIPALS",
+}
+
+// applyPersonalMode turns a single operator into the settings it replaces:
+// only that person may sign in, they are the owner, and every agent acts for
+// them.
+func applyPersonalMode(cfg *Config) error {
+	operator := cfg.PersonalOperator
+	if operator == "" {
+		return nil
+	}
+	for _, name := range personalModeConflicts {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" && !strings.EqualFold(value, "false") {
+			return fmt.Errorf("%s cannot be combined with TASKBOARD_PERSONAL_OPERATOR; remove it", name)
+		}
+	}
+	if len(operator) > 200 || strings.ContainsAny(operator, " \t\r\n,") || strings.HasPrefix(operator, "agent:") || strings.HasPrefix(operator, "cloudflare_access:service_token:") || operator == "local" {
+		return fmt.Errorf("TASKBOARD_PERSONAL_OPERATOR must be a person's principal, such as their OIDC subject")
+	}
+	if cfg.AllowInsecure && cfg.AuthToken == "" {
+		return fmt.Errorf("TASKBOARD_PERSONAL_OPERATOR cannot be used with unauthenticated local mode")
+	}
+	accessSubject, accessPerson := strings.CutPrefix(operator, "cloudflare_access:")
+	switch {
+	case cfg.OIDCEnabled() && !accessPerson:
+		cfg.OIDCAllowedSubjects = []string{operator}
+	case cfg.CloudflareAccessEnabled() && accessPerson && accessSubject != "":
+		cfg.CFAccessSubjects = []string{accessSubject}
+	case cfg.OIDCEnabled() || cfg.CloudflareAccessEnabled():
+		return fmt.Errorf("TASKBOARD_PERSONAL_OPERATOR must be an OIDC subject with oidc sign-in, or cloudflare_access:<subject> with cloudflare_access sign-in")
+	default:
+		return fmt.Errorf("TASKBOARD_PERSONAL_OPERATOR requires OIDC or Cloudflare Access sign-in")
+	}
+	cfg.DefaultRole = "owner"
+	cfg.MCPHumanDelegation = true
+	return nil
+}
+
+func (c Config) Personal() bool {
+	return c.PersonalOperator != ""
 }
 
 func (c Config) OIDCEnabled() bool {

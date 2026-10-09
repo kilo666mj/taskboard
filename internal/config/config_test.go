@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -327,4 +328,100 @@ func TestRoutingRequirementConfiguration(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("invalid allowed requirement was accepted")
 	}
+}
+
+func TestPersonalOperatorConfiguration(t *testing.T) {
+	setOIDC := func(t *testing.T) {
+		t.Setenv("TASKBOARD_OIDC_ISSUER", "https://idp.example.com")
+		t.Setenv("TASKBOARD_OIDC_CLIENT_ID", "taskboard")
+		t.Setenv("TASKBOARD_OIDC_REDIRECT_URL", "https://taskboard.example.com/api/v1/auth/oidc/callback")
+	}
+
+	t.Run("OIDC", func(t *testing.T) {
+		setOIDC(t)
+		t.Setenv("TASKBOARD_PERSONAL_OPERATOR", "c04f726d-operator")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.Personal() || cfg.DefaultRole != "owner" || !cfg.MCPHumanDelegation || len(cfg.OIDCAllowedSubjects) != 1 || cfg.OIDCAllowedSubjects[0] != "c04f726d-operator" {
+			t.Fatalf("personal configuration = %#v", cfg)
+		}
+	})
+
+	t.Run("Cloudflare Access", func(t *testing.T) {
+		t.Setenv("TASKBOARD_BROWSER_AUTH_MODE", BrowserAuthCloudflareAccess)
+		t.Setenv("TASKBOARD_CF_ACCESS_TEAM_DOMAIN", "https://team.cloudflareaccess.com")
+		t.Setenv("TASKBOARD_CF_ACCESS_AUD", "access-audience")
+		t.Setenv("TASKBOARD_PERSONAL_OPERATOR", "cloudflare_access:person-1")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.CFAccessSubjects) != 1 || cfg.CFAccessSubjects[0] != "person-1" {
+			t.Fatalf("Cloudflare Access subjects = %v", cfg.CFAccessSubjects)
+		}
+		t.Setenv("TASKBOARD_PERSONAL_OPERATOR", "c04f726d-operator")
+		if _, err := Load(); err == nil {
+			t.Fatal("an OIDC subject was accepted with Cloudflare Access sign-in")
+		}
+	})
+
+	t.Run("refuses settings that admit others", func(t *testing.T) {
+		for name, value := range map[string]string{
+			"TASKBOARD_OWNER_GROUPS":               "owners",
+			"TASKBOARD_OIDC_ALLOWED_GROUPS":        "family",
+			"TASKBOARD_OIDC_TRUST_PROVIDER_POLICY": "true",
+			"TASKBOARD_MCP_DELEGATION_PRINCIPALS":  "agent:switchboard",
+		} {
+			t.Run(name, func(t *testing.T) {
+				setOIDC(t)
+				t.Setenv("TASKBOARD_PERSONAL_OPERATOR", "c04f726d-operator")
+				t.Setenv("TASKBOARD_MCP_HUMAN_DELEGATION", "true")
+				t.Setenv(name, value)
+				if _, err := Load(); err == nil || !strings.Contains(err.Error(), name) {
+					t.Fatalf("combined with %s: %v", name, err)
+				}
+			})
+		}
+	})
+
+	t.Run("ignores neutral values", func(t *testing.T) {
+		// Templates that always write every variable must still start.
+		setOIDC(t)
+		t.Setenv("TASKBOARD_PERSONAL_OPERATOR", "c04f726d-operator")
+		t.Setenv("TASKBOARD_DEFAULT_ROLE", "member")
+		t.Setenv("TASKBOARD_MCP_HUMAN_DELEGATION", "false")
+		t.Setenv("TASKBOARD_OIDC_TRUST_PROVIDER_POLICY", "false")
+		t.Setenv("TASKBOARD_OWNER_GROUPS", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.DefaultRole != "owner" || !cfg.MCPHumanDelegation {
+			t.Fatalf("personal mode kept role %q and delegation %v", cfg.DefaultRole, cfg.MCPHumanDelegation)
+		}
+	})
+
+	t.Run("invalid operators", func(t *testing.T) {
+		setOIDC(t)
+		for _, operator := range []string{"agent:switchboard", "cloudflare_access:service_token:build", "local", "two people", "cloudflare_access:person-1"} {
+			t.Setenv("TASKBOARD_PERSONAL_OPERATOR", operator)
+			if _, err := Load(); err == nil {
+				t.Errorf("operator %q was accepted", operator)
+			}
+		}
+	})
+
+	t.Run("requires sign-in", func(t *testing.T) {
+		t.Setenv("TASKBOARD_PERSONAL_OPERATOR", "c04f726d-operator")
+		if _, err := Load(); err == nil {
+			t.Fatal("personal mode without browser sign-in was accepted")
+		}
+		setOIDC(t)
+		t.Setenv("TASKBOARD_ALLOW_INSECURE", "true")
+		if _, err := Load(); err == nil {
+			t.Fatal("personal mode with unauthenticated local mode was accepted")
+		}
+	})
 }
