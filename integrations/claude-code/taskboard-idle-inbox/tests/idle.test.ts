@@ -18,9 +18,13 @@ test('against an older server, polls only while idle, backs off, and wakes once 
   let inbox: unknown = emptyInbox
   const polls: unknown[] = []
   const prompts: string[] = []
+  const statuses: (string | undefined)[] = []
 
   on('session.start', () => ({ cwd: '/' }))
-  on('ui.status', () => ({ value: undefined }))
+  on('ui.status', ($, e) => {
+    statuses.push(e.text)
+    return { value: undefined }
+  })
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('prompt.submit', ($, e) => {
@@ -47,6 +51,7 @@ test('against an older server, polls only while idle, backs off, and wakes once 
   await clock.advance(1_000)
   expect(polls.length).toBe(3)
   expect(prompts.length).toBe(0)
+  expect(statuses.at(-1)).toBe('taskboard inbox: nothing waiting')
 
   inbox = {
     ...emptyInbox,
@@ -57,6 +62,7 @@ test('against an older server, polls only while idle, backs off, and wakes once 
   expect(polls.length).toBe(4)
   expect(prompts.length).toBe(1)
   expect(prompts[0]).toContain('pause control C1')
+  expect(statuses).toContain('taskboard inbox: 1 waiting')
 
   await clock.advance(600_000)
   expect(polls.length).toBe(4)

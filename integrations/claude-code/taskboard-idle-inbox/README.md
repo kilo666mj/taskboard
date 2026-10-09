@@ -57,10 +57,27 @@ installations update in place.
 5. When a run's task is done or cancelled, the plugin drops that run. With
    no runs left, it stops reading.
 
-The status line shows `taskboard: watching N runs`, `taskboard: N waiting`,
-or `taskboard inbox unavailable`. After a failed read, the plugin retries
+The status line shows `taskboard inbox: nothing waiting` while it watches,
+`taskboard inbox: N waiting` when items are pending, or `taskboard inbox
+unavailable`. After a failed read, the plugin retries
 after the shortest interval, doubling up to the longest; against a server
 without `digest` it waits the longest interval.
+
+## Side pane
+
+`/taskboard` opens a pane on the right with three sections:
+
+- **This session:** the runs the plugin watches, newest first, by task title.
+- **Inbox:** one line per item the latest inbox read listed.
+- **Queue and waiting work:** up to 50 queued, blocked and waiting tasks that
+  `task_list` returns for this principal, with a Refresh button. Agent-lane
+  tasks are marked `pickup`.
+
+The pane also opens by itself the first time the session starts or claims a
+run; once closed, it stays closed until `/taskboard`. While it is open, the
+queue is read every minute through the session's MCP connection to the same
+server, without a permission prompt. With `boardUrl` set, each task links to
+the web UI.
 
 ## Options
 
@@ -68,13 +85,22 @@ without `digest` it waits the longest interval.
 | --- | --- | --- |
 | `minIntervalSeconds` | 30 | Without `digest`: wait after a turn ends, and after new items arrive. Also the first retry after a failed read |
 | `maxIntervalSeconds` | 600 | Without `digest`: longest interval while nothing changes. Also the longest retry interval |
+| `boardUrl` | empty | Taskboard web UI, such as `https://taskboard.example.com`; the pane links tasks to `<boardUrl>/?task=<id>`. Empty shows plain IDs |
 
 Set them in `/config`, or in settings under
 `pluginConfigs["taskboard-idle-inbox"].options`.
 
 ## Loading it
 
-For one session:
+To install it, add this repository as a plugin marketplace once, then install
+the plugin. `claude plugin marketplace update taskboard` picks up new versions.
+
+```sh
+claude plugin marketplace add kilo666mj/taskboard
+claude plugin install taskboard-idle-inbox@taskboard
+```
+
+For one session, without installing:
 
 ```sh
 claude --plugin-dir /path/to/taskboard/integrations/claude-code/taskboard-idle-inbox

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "taskboard",
+  "description": "Claude Code plugins that ship with Taskboard.",
+  "owner": { "name": "kilo666mj" },
+  "plugins": [
+    {
+      "name": "taskboard-idle-inbox",
+      "source": "./integrations/claude-code/taskboard-idle-inbox",
+      "description": "Delivers Taskboard inbox items to a session for the runs it started or claimed."
+    }
+  ]
+}

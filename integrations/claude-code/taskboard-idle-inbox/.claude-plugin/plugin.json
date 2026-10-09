@@ -1,7 +1,7 @@
 {
   "name": "taskboard-idle-inbox",
-  "version": "0.2.0",
-  "description": "Delivers Taskboard inbox items for the runs this session started or claimed: within seconds while idle or busy on servers whose inbox can wait, otherwise by checking while idle.",
+  "version": "0.3.0",
+  "description": "Delivers Taskboard inbox items for the runs this session started or claimed: within seconds while idle or busy on servers whose inbox can wait, otherwise by checking while idle. A /taskboard side pane shows those runs, their inbox and the queue.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "minIntervalSeconds": {
@@ -15,6 +15,12 @@
       "title": "Longest interval (seconds)",
       "description": "On servers that cannot wait, the interval doubles while nothing changes, up to this. Also the longest retry interval after failed reads.",
       "default": 600
+    },
+    "boardUrl": {
+      "type": "string",
+      "title": "Taskboard web URL",
+      "description": "Base URL of the Taskboard web UI, such as https://taskboard.example.com. The pane links tasks to it; empty shows plain task IDs.",
+      "default": ""
     }
   }
 }
