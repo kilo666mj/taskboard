@@ -2,7 +2,10 @@
 export type McpToolName = `mcp__${string}__${string}`
 
 /** A Taskboard run this session started or claimed, and the inbox tool of its server. */
-export type WatchedRun = { taskId: string; runId: string; inboxTool: McpToolName }
+export type WatchedRun = { taskId: string; runId: string; inboxTool: McpToolName; title?: string }
+
+/** A queued, blocked or waiting task in the pane. */
+export type QueueRow = { id: string; title: string; status: string; visibility: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -13,6 +16,14 @@ declare module 'claude-code' {
       seen: string[]
       /** Bumped on each load, so a read in flight from an earlier load stops. */
       generation: number
+      /** One line per item the latest inbox read listed, for the pane. */
+      waiting: string[]
+      /** The queued, blocked and waiting tasks the latest list read returned. */
+      queue: QueueRow[]
+      /** Why the latest list read failed, if it did. */
+      queueError: string | null
+      /** Whether the pane was opened this session, so a reload does not reopen one the person closed. */
+      paneOpened: boolean
     }
   }
 }

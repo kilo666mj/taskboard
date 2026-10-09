@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { McpToolName, WatchedRun } from '../types'
+import type { McpToolName, QueueRow, WatchedRun } from '../types'
 
 // Watches the Taskboard runs this session starts or claims and reads
 // task_inbox through the session's own Taskboard MCP tool (same server, same
@@ -13,6 +13,10 @@ import type { McpToolName, WatchedRun } from '../types'
 const runs = atom({ plugin: 'taskboard-idle-inbox', key: 'runs' } as const, [])
 const seen = atom({ plugin: 'taskboard-idle-inbox', key: 'seen' } as const, [])
 const generation = atom({ plugin: 'taskboard-idle-inbox', key: 'generation' } as const, 0)
+const waiting = atom({ plugin: 'taskboard-idle-inbox', key: 'waiting' } as const, [])
+const queue = atom({ plugin: 'taskboard-idle-inbox', key: 'queue' } as const, [])
+const queueError = atom({ plugin: 'taskboard-idle-inbox', key: 'queueError' } as const, null)
+const paneOpened = atom({ plugin: 'taskboard-idle-inbox', key: 'paneOpened' } as const, false)
 
 const RUN_LIMIT = 20
 const SEEN_LIMIT = 500
@@ -23,6 +27,11 @@ const WAIT_SECONDS = 25
 const WAIT_GAP_MS = 2_000
 const START_OR_CLAIM = /^(mcp__.*taskboard.*?)task_(start|claim)$/
 const FINISHED = new Set(['done', 'cancelled'])
+const LIST_TOOL = /^mcp__(.+?)__(.*taskboard.*?task_list|task_list)$/
+const PANE = 'taskboard'
+const PANE_TITLE = 'Taskboard'
+const QUEUE_MS = 60_000
+const QUEUE_LIMIT = 50
 
 type InboxRunState = { task_id: string; run_id: string; task_status: string; active: boolean }
 type Inbox = {
@@ -51,6 +60,7 @@ let mine = 0
 // until the first read, which may happen while busy.
 let canWait: boolean | undefined
 let digest: string | undefined
+let boardUrl = ''
 
 function schedule($: EngineInterface, ms: number) {
   timer?.cancel()
@@ -63,6 +73,7 @@ async function check($: EngineInterface) {
   const latest = watched.at(-1)
   if (latest === undefined) {
     $.ui.status(undefined)
+    await update($, waiting, () => [])
     return
   }
   if ((isBusy && canWait === false) || inFlight) {
@@ -121,6 +132,7 @@ async function check($: EngineInterface) {
     await update($, runs, list => list.filter(run => !asked.has(run.runId) || listed.has(run.runId)))
   }
   const open = new Set((await read($, runs)).map(run => run.runId))
+  await update($, waiting, () => (open.size === 0 ? [] : items.map(item => item.line)))
   $.ui.status(open.size === 0 ? undefined : items.length > 0 ? `taskboard inbox: ${items.length} waiting` : 'taskboard inbox: nothing waiting')
   if (open.size === 0) {
     return
@@ -159,15 +171,92 @@ async function stale($: EngineInterface): Promise<boolean> {
   return (await read($, generation)) !== mine
 }
 
+// The side pane: the watched runs, the lines their inbox lists, and the
+// queued, blocked and waiting work this principal can see. The queue is read
+// through $.mcp.call, so a refresh never prompts.
+
+/** The board's link for a task, or undefined when no board URL is set. */
+export function taskUrl(base: string, id: string): string | undefined {
+  const trimmed = base.trim().replace(/\/+$/, '')
+  return trimmed === '' ? undefined : `${trimmed}/?task=${encodeURIComponent(id)}`
+}
+
+/** The server and tool name of Taskboard's task_list, from the watched runs or the session's tools. */
+async function listTool($: EngineInterface): Promise<{ server: string; tool: string } | undefined> {
+  const latest = (await read($, runs)).at(-1)
+  const names = latest ? [latest.inboxTool.replace(/task_inbox$/, 'task_list')] : (await $.tool.list()).map(t => t.name)
+  for (const name of names) {
+    const match = LIST_TOOL.exec(name)
+    if (match?.[1] && match[2]) {
+      return { server: match[1], tool: match[2] }
+    }
+  }
+  return undefined
+}
+
+async function loadQueue($: EngineInterface) {
+  try {
+    const found = await listTool($)
+    if (found === undefined) {
+      await update($, queueError, () => 'no Taskboard task_list tool in this session')
+      return
+    }
+    const result = await $.mcp.call(found.server, found.tool, { statuses: ['queued', 'blocked', 'waiting'], limit: QUEUE_LIMIT })
+    const text = result.content.map(block => ('text' in block && typeof block.text === 'string' ? block.text : '')).join('')
+    if (result.isError) {
+      throw new Error(text || 'task_list failed')
+    }
+    const listed = (result.structuredContent ?? JSON.parse(text)) as { tasks?: Record<string, unknown>[] }
+    const rows: QueueRow[] = (listed.tasks ?? [])
+      .filter(task => task && typeof task.id === 'string')
+      .map(task => ({ id: String(task.id), title: String(task.title ?? ''), status: String(task.status ?? ''), visibility: String(task.visibility ?? '') }))
+    await update($, queue, () => rows)
+    await update($, queueError, () => null)
+  } catch (err) {
+    await update($, queueError, () => String((err as Error)?.message ?? err).slice(0, 160))
+  }
+}
+
+async function openPane($: EngineInterface) {
+  await update($, paneOpened, () => true)
+  await $.ui.open({ id: PANE, title: PANE_TITLE, columns: 44 })
+  void loadQueue($)
+}
+
+/** From session.start: declares /taskboard and refreshes an open pane's queue each minute. */
+async function startPane($: EngineInterface) {
+  try {
+    await $.command.register({ name: 'taskboard', description: 'Show the Taskboard runs this session watches, their inbox and the queue in a side pane' })
+  } catch {
+    // Without the command the pane still opens on the first start or claim.
+  }
+  $.clock.every(QUEUE_MS, () => {
+    void (async () => {
+      if ((await $.ui.panes()).some(pane => pane.id === PANE)) {
+        await loadQueue($)
+      }
+    })().catch(() => undefined)
+  })
+}
+
+/** Once a start or claim is watched: the first opens the pane, and a person who closes it keeps it closed. */
+async function runWatched($: EngineInterface) {
+  if (!(await read($, paneOpened))) {
+    await openPane($).catch(() => undefined)
+  }
+}
+
 export const register: Register = (on, options) => {
   minMs = Math.max(10, Number(options.minIntervalSeconds) || 30) * 1000
   maxMs = Math.max(minMs, (Number(options.maxIntervalSeconds) || 600) * 1000)
   delay = minMs
+  boardUrl = typeof options.boardUrl === 'string' ? options.boardUrl : ''
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await update($, generation, value => value + 1)
     mine = await read($, generation)
+    await startPane($)
     if ((await read($, runs)).length > 0) {
       schedule($, minMs)
     }
@@ -181,13 +270,15 @@ export const register: Register = (on, options) => {
       return result
     }
     try {
-      const started = JSON.parse(result.text) as { run?: { id?: string; task_id?: string } }
+      const started = JSON.parse(result.text) as { run?: { id?: string; task_id?: string }; task?: { title?: unknown } }
       const runId = started.run?.id
       const taskId = started.run?.task_id
       if (runId && taskId) {
         const inboxTool = `${match[1]}task_inbox` as McpToolName
-        const watched: WatchedRun = { taskId, runId, inboxTool }
+        const title = typeof started.task?.title === 'string' ? started.task.title : undefined
+        const watched: WatchedRun = { taskId, runId, inboxTool, ...(title ? { title } : {}) }
         await update($, runs, list => [...list.filter(run => run.runId !== runId), watched].slice(-RUN_LIMIT))
+        await runWatched($)
         if (!inFlight) {
           // Read now without waiting: the new run joins the next wait, and
           // the first read shows whether the server can wait at all.
@@ -223,6 +314,51 @@ export const register: Register = (on, options) => {
       }
     }
     return result
+  })
+
+  on('command.run', { command: 'taskboard' }, async $ => {
+    await openPane($)
+    return { text: 'Taskboard pane opened.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Link, Button } = $.ui.resolve(e)
+    const watched = await read($, runs)
+    const lines = await read($, waiting)
+    const rows = await read($, queue)
+    const problem = await read($, queueError)
+    const room = Math.max(3, (e.viewport?.rows ?? 24) - 10 - watched.length - lines.length)
+    const task = (id: string, label: string) => {
+      const href = taskUrl(boardUrl, id)
+      return href ? <Link href={href} label={label} /> : <Text>{label}</Text>
+    }
+
+    return (
+      <Box flexDirection="column">
+        <Text bold>This session</Text>
+        {watched.length === 0 && <Text dimColor>no runs started or claimed</Text>}
+        {[...watched].reverse().map(run => (
+          <Box key={run.runId}>{task(run.taskId, (run.title || run.taskId).slice(0, 80))}</Box>
+        ))}
+        <Text> </Text>
+        <Text bold>{`Inbox (${lines.length})`}</Text>
+        {lines.length === 0 && <Text dimColor>nothing waiting</Text>}
+        {lines.map(line => <Text key={line} wrap="truncate-end">{line}</Text>)}
+        <Text> </Text>
+        <Box>
+          <Text bold>{`Queue and waiting work (${rows.length}) `}</Text>
+          <Button key="refresh" label="Refresh" onPress={() => void loadQueue($)} />
+        </Box>
+        {problem && <Text dimColor>{`last error: ${problem}`}</Text>}
+        {!problem && rows.length === 0 && <Text dimColor>nothing queued, blocked or waiting</Text>}
+        {rows.slice(0, room).map(row => (
+          <Box key={row.id}>
+            <Text dimColor>{`${row.status.padEnd(8)} ${row.visibility === 'agent' ? 'pickup ' : '       '}`}</Text>
+            {task(row.id, row.title.slice(0, 80) || row.id)}
+          </Box>
+        ))}
+      </Box>
+    )
   })
 }
 

@@ -63,12 +63,29 @@ unavailable`. After a failed read, the plugin retries
 after the shortest interval, doubling up to the longest; against a server
 without `digest` it waits the longest interval.
 
+## Side pane
+
+`/taskboard` opens a pane on the right with three sections:
+
+- **This session:** the runs the plugin watches, newest first, by task title.
+- **Inbox:** one line per item the latest inbox read listed.
+- **Queue and waiting work:** up to 50 queued, blocked and waiting tasks that
+  `task_list` returns for this principal, with a Refresh button. Agent-lane
+  tasks are marked `pickup`.
+
+The pane also opens by itself the first time the session starts or claims a
+run; once closed, it stays closed until `/taskboard`. While it is open, the
+queue is read every minute through the session's MCP connection to the same
+server, without a permission prompt. With `boardUrl` set, each task links to
+the web UI.
+
 ## Options
 
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `minIntervalSeconds` | 30 | Without `digest`: wait after a turn ends, and after new items arrive. Also the first retry after a failed read |
 | `maxIntervalSeconds` | 600 | Without `digest`: longest interval while nothing changes. Also the longest retry interval |
+| `boardUrl` | empty | Taskboard web UI, such as `https://taskboard.example.com`; the pane links tasks to `<boardUrl>/?task=<id>`. Empty shows plain IDs |
 
 Set them in `/config`, or in settings under
 `pluginConfigs["taskboard-idle-inbox"].options`.
