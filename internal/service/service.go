@@ -38,6 +38,10 @@ type Principal struct {
 	// set only when the deployment enables MCP human delegation, and only
 	// task creation outside the agent lane acts as that person.
 	OnBehalfOf *Principal
+	// Operator is the person of a personal deployment. Every agent may see
+	// and list their private tasks, but creates work as itself unless it
+	// also acts OnBehalfOf them.
+	Operator string
 }
 
 type AgentPolicy struct {
@@ -184,6 +188,9 @@ func CanView(task model.Task, principal Principal) bool {
 		if task.Visibility == model.VisibilityPrivate {
 			// A private task belongs to the person who created it; an agent
 			// sees it only while acting for that person.
+			if principal.Operator != "" && task.CreatedBy == principal.Operator {
+				return true
+			}
 			return principal.OnBehalfOf != nil && task.CreatedBy != "" && task.CreatedBy == principal.OnBehalfOf.ID
 		}
 		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && task.Owner == principal.ID
@@ -1112,7 +1119,7 @@ func (s *Service) listFor(ctx context.Context, request model.ListTasksRequest, p
 	// fill a page and hide runnable work that sorts after them.
 	page := model.TaskPage{Tasks: []model.Task{}}
 	for scanned := 0; ; {
-		items, cursors, err := s.store.ListVisibleTasks(ctx, store.TaskQuery{Statuses: request.Statuses, Visibility: request.Visibility, Limit: limit, After: after}, principal.ID, principal.Agent)
+		items, cursors, err := s.store.ListVisibleTasks(ctx, store.TaskQuery{Statuses: request.Statuses, Visibility: request.Visibility, Limit: limit, After: after, Operator: principal.Operator}, principal.ID, principal.Agent)
 		if err != nil {
 			return model.TaskPage{}, err
 		}

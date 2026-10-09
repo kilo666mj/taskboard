@@ -405,6 +405,9 @@ type TaskQuery struct {
 	Visibility model.TaskVisibility
 	Limit      int
 	After      *TaskCursor
+	// Operator also lets an agent viewer see the private tasks of the
+	// operator of a personal deployment.
+	Operator string
 }
 
 func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limit int) ([]model.Task, error) {
@@ -414,6 +417,9 @@ func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limi
 
 // ListVisibleTasks returns tasks the viewer may see, in listing order, with the cursor of each returned task.
 func (s *Store) ListVisibleTasks(ctx context.Context, query TaskQuery, viewer string, agent bool) ([]model.Task, []TaskCursor, error) {
+	if agent && query.Operator != "" {
+		return s.listTasks(ctx, query, `(visibility=? OR (visibility=? AND owner=?) OR (visibility=? AND created_by=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer, model.VisibilityPrivate, query.Operator})
+	}
 	if agent {
 		return s.listTasks(ctx, query, `(visibility=? OR (visibility=? AND owner=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer})
 	}

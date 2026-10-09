@@ -54,14 +54,16 @@ func TestPersonalModeAgentsActForTheOperator(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		name    string
-		token   string
-		headers map[string]string
-		want    int
+		name      string
+		token     string
+		headers   map[string]string
+		want      int
+		delegated bool
 	}{
 		{name: "agent credential", token: worker, want: http.StatusNoContent},
 		{name: "shared bearer", token: shared, want: http.StatusNoContent},
-		{name: "forwarded operator", token: switchboard, headers: map[string]string{switchboardOAuthSubjectHeader: personalOperator}, want: http.StatusNoContent},
+		{name: "forwarded operator", token: switchboard, headers: map[string]string{switchboardOAuthSubjectHeader: personalOperator}, want: http.StatusNoContent, delegated: true},
+		{name: "forwarded operator from another credential", token: worker, headers: map[string]string{switchboardOAuthSubjectHeader: personalOperator}, want: http.StatusNoContent, delegated: true},
 		{name: "forwarded other person", token: switchboard, headers: map[string]string{switchboardOAuthSubjectHeader: "someone-else"}, want: http.StatusUnauthorized},
 		{name: "forwarded access person", token: switchboard, headers: map[string]string{switchboardAccessSubjectHeader: "cloudflare_access:someone"}, want: http.StatusUnauthorized},
 	} {
@@ -73,25 +75,61 @@ func TestPersonalModeAgentsActForTheOperator(t *testing.T) {
 			if status != http.StatusNoContent {
 				return
 			}
-			if !got.Agent || got.OnBehalfOf == nil || got.OnBehalfOf.ID != personalOperator || got.OnBehalfOf.Role != service.RoleOwner {
-				t.Fatalf("principal = %+v / %+v, want an agent acting for the owner", got, got.OnBehalfOf)
+			if !got.Agent || got.Operator != personalOperator {
+				t.Fatalf("principal = %+v, want an agent of the operator", got)
+			}
+			if !test.delegated {
+				if got.OnBehalfOf != nil {
+					t.Fatalf("agent without a forwarded person acts for %+v", got.OnBehalfOf)
+				}
+				return
+			}
+			if got.OnBehalfOf == nil || got.OnBehalfOf.ID != personalOperator || got.OnBehalfOf.Role != service.RoleOwner {
+				t.Fatalf("delegated principal = %+v, want the owner", got.OnBehalfOf)
 			}
 		})
 	}
 
-	// Work one agent records for the operator is private to them, and every
-	// other agent acting for them can see it.
-	creator, _ := authenticate(t, switchboard, nil)
-	task, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Renew the boat licence"}, creator)
+	// Work an agent records for the forwarded operator is their private task,
+	// and every other agent can see and list it.
+	forwarded, _ := authenticate(t, switchboard, map[string]string{switchboardOAuthSubjectHeader: personalOperator})
+	private, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Renew the boat licence"}, forwarded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Visibility != model.VisibilityPrivate || task.CreatedBy != personalOperator {
-		t.Fatalf("created task = %s by %q, want private by the operator", task.Visibility, task.CreatedBy)
+	if private.Visibility != model.VisibilityPrivate || private.CreatedBy != personalOperator {
+		t.Fatalf("forwarded task = %s by %q, want private by the operator", private.Visibility, private.CreatedBy)
 	}
 	other, _ := authenticate(t, worker, nil)
-	if _, err := tasks.GetFor(t.Context(), task.ID, other); err != nil {
+	if _, err := tasks.GetFor(t.Context(), private.ID, other); err != nil {
 		t.Fatalf("another agent could not see the operator's task: %v", err)
+	}
+	page, err := tasks.ListFor(t.Context(), model.ListTasksRequest{}, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := false
+	for _, task := range page.Tasks {
+		listed = listed || task.ID == private.ID
+	}
+	if !listed {
+		t.Fatal("another agent's listing left out the operator's private task")
+	}
+
+	// Without a forwarded person an agent still records work as itself, so
+	// routine producers keep their attribution and pickup work stays in the
+	// agent lane.
+	own, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Update the base image"}, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.Visibility != model.VisibilityAgent || own.CreatedBy != "agent:worker" {
+		t.Fatalf("agent task = %s by %q, want agent lane by agent:worker", own.Visibility, own.CreatedBy)
+	}
+
+	// The operator's private tasks stay hidden outside personal mode.
+	if _, err := tasks.GetFor(t.Context(), private.ID, agentPrincipal(config.Config{}, "agent:worker")); err == nil {
+		t.Fatal("an agent outside personal mode saw the operator's private task")
 	}
 
 	if err := database.OffboardPrincipal(t.Context(), personalOperator, "test", "left"); err != nil {
