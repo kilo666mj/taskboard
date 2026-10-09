@@ -11,6 +11,9 @@ import (
 )
 
 func roleForGroups(cfg config.Config, groups []string) service.Role {
+	if cfg.Personal() {
+		return service.RoleOwner
+	}
 	for _, mapping := range []struct {
 		role   service.Role
 		groups []string
@@ -33,8 +36,22 @@ func roleForGroups(cfg config.Config, groups []string) service.Role {
 	return role
 }
 
-func browserPrincipal(cfg config.Config, identity store.BrowserIdentity) service.Principal {
-	return service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups))
+// personAllowed refuses everyone but the operator of a personal deployment,
+// including browser sessions created before personal mode was enabled.
+func personAllowed(cfg config.Config, subject string) bool {
+	return !cfg.Personal() || subject == cfg.PersonalOperator
+}
+
+func browserPrincipal(cfg config.Config, identity store.BrowserIdentity) (service.Principal, bool) {
+	if !personAllowed(cfg, identity.Subject) {
+		return service.Principal{}, false
+	}
+	return service.HumanPrincipalWithRole(identity.Subject, roleForGroups(cfg, identity.Groups)), true
+}
+
+// operatorPrincipal is the person every agent acts for in a personal deployment.
+func operatorPrincipal(cfg config.Config) service.Principal {
+	return service.HumanPrincipalWithRole(cfg.PersonalOperator, service.RoleOwner)
 }
 
 func agentPrincipal(cfg config.Config, id string) service.Principal {

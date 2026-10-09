@@ -107,6 +107,10 @@ Switchboard, list Switchboard's dedicated credential in
 `TASKBOARD_MCP_DELEGATION_PRINCIPALS` so Taskboard trusts the person Switchboard
 forwards. See [MCP human delegation](docs/configuration.md#mcp-human-delegation).
 
+A deployment used by one person can skip all of this: set
+`TASKBOARD_PERSONAL_OPERATOR` to that person's principal. See
+[Personal mode](docs/configuration.md#personal-mode).
+
 ## Planning and review
 
 Every task has an independent visibility lane:
