@@ -19,7 +19,7 @@ disable their feature.
 | `TASKBOARD_MCP_HUMAN_DELEGATION` | `false` | Let a person verified by Cloudflare Access on `/mcp`, or forwarded by a delegation principal, have `task_create` and `task_start` record tasks as themselves. See [MCP human delegation](#mcp-human-delegation). |
 | `TASKBOARD_MCP_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential principals, such as `agent:switchboard`, allowed to forward a person in `X-Switchboard-Access-Subject` (Cloudflare Access) or `X-Switchboard-OAuth-Subject` (OAuth with the browser's OIDC issuer). Requires delegation and `cloudflare_access` or `oidc` browser mode; `agent:shared` is refused. |
 | `TASKBOARD_ANSWER_DELEGATION_PRINCIPALS` | none | Comma-separated dedicated agent credential or Cloudflare Access service token principals, such as `agent:tintwire`, allowed to forward a person's answer with `task_escalation_answer`. Only escalations that name their answerers accept delegated answers, and the person acts with `TASKBOARD_DEFAULT_ROLE`. `agent:shared` and `agent:local` are refused. See [Approval decisions](agent-integrations.md#approval-decisions). |
-| `TASKBOARD_PERSONAL_OPERATOR` | none | A person's principal that makes this a single-operator deployment: only they may sign in, they are always `owner`, and every agent acts for them. Replaces the allow-lists, role groups and MCP delegation settings. See [Personal mode](#personal-mode). |
+| `TASKBOARD_PERSONAL_OPERATOR` | none | A person's principal that makes this a single-operator deployment: only they may sign in, they are always `owner`, every agent can see their private tasks, and work an agent forwards them for is theirs. Replaces the allow-lists, role groups and MCP delegation settings. See [Personal mode](#personal-mode). |
 | `TASKBOARD_BROWSER_AUTH_MODE` | `oidc` | Browser authentication mode: `oidc` or `cloudflare_access`. |
 | `TASKBOARD_VAPID_PUBLIC_KEY` | none | Web Push VAPID public key. |
 | `TASKBOARD_VAPID_PRIVATE_KEY` | none | Matching private key. Keep it secret and stable across upgrades. |
@@ -96,12 +96,15 @@ Taskboard then:
   anyone else, including sessions created before personal mode was enabled;
 - makes the operator `owner` whatever groups their session carries, so a role
   change never needs a sign-out;
-- makes every MCP caller (agent credentials, the deployment bearer and
-  Cloudflare Access service tokens) act for the operator. Tasks agents create
-  or start are the operator's private tasks, and every agent can see and work
-  on them. A forwarded `X-Switchboard-OAuth-Subject` or
-  `X-Switchboard-Access-Subject` naming anyone else is refused with 401, and
-  agents are refused once the operator is offboarded.
+- lets every MCP caller (agent credentials, the deployment bearer and
+  Cloudflare Access service tokens) see and list the operator's private tasks;
+- records work as the operator only when an agent forwards them in
+  `X-Switchboard-OAuth-Subject` or `X-Switchboard-Access-Subject`, from any
+  agent credential. That work is the operator's private task. Without a
+  forwarded person, an agent still records work as itself, so routine
+  producers keep their attribution and pickup work stays in the agent lane.
+  A forwarded person other than the operator is refused with 401, and agents
+  are refused once the operator is offboarded.
 
 Startup refuses personal mode together with role groups, sign-in allow-lists,
 provider-policy trust or `TASKBOARD_MCP_DELEGATION_PRINCIPALS`, unless they are

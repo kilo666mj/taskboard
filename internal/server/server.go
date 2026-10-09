@@ -1562,9 +1562,12 @@ const switchboardAccessSubjectHeader = "X-Switchboard-Access-Subject"
 // only from configured delegation principals and ignored for every other caller.
 const switchboardOAuthSubjectHeader = "X-Switchboard-OAuth-Subject"
 
-// actForOperator makes an authenticated agent act for the operator of a
-// personal deployment. A forwarded person must be the operator, and an
-// offboarded operator leaves agents without a person to act for.
+// actForOperator lets an authenticated agent of a personal deployment see the
+// operator's private tasks. Work an agent records stays its own, so producers
+// and the agent lane keep working; only a forwarded operator, from any agent
+// credential, makes task creation the operator's, as delegation does. A
+// forwarded person who is not the operator is refused, and an offboarded
+// operator leaves agents without access.
 func actForOperator(cfg config.Config, database *store.Store, r *http.Request, principal *service.Principal) bool {
 	if !principal.Agent {
 		return true
@@ -1572,18 +1575,23 @@ func actForOperator(cfg config.Config, database *store.Store, r *http.Request, p
 	if principal.OnBehalfOf != nil && principal.OnBehalfOf.ID != cfg.PersonalOperator {
 		return false
 	}
+	forwarded := false
 	for _, header := range []string{switchboardAccessSubjectHeader, switchboardOAuthSubjectHeader} {
 		for _, value := range r.Header.Values(header) {
 			if value != cfg.PersonalOperator {
 				return false
 			}
+			forwarded = true
 		}
 	}
 	if revoked, err := database.PrincipalRevoked(r.Context(), cfg.PersonalOperator); err != nil || revoked {
 		return false
 	}
-	operator := operatorPrincipal(cfg)
-	principal.OnBehalfOf = &operator
+	principal.Operator = cfg.PersonalOperator
+	if forwarded {
+		operator := operatorPrincipal(cfg)
+		principal.OnBehalfOf = &operator
+	}
 	return true
 }
 
