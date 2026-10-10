@@ -30,8 +30,19 @@ export POSTGRES_PASSWORD='replace-with-a-random-url-safe-value'
 docker compose -f compose.yaml -f compose.postgres.yaml up -d
 ```
 
-The bundled PostgreSQL service is for evaluation. Use a managed database for
-production.
+The bundled PostgreSQL 18 service is for evaluation. It stores data in the
+`taskboard-postgres` named volume, mounted at `/var/lib/postgresql`; the image
+uses `/var/lib/postgresql/18/docker` as its data directory. Use a managed
+database for production. Updating this Compose example does not upgrade an
+external database configured through `TASKBOARD_DATABASE_URL`.
+
+If an earlier version of this example created a PostgreSQL 17 volume, preserve
+that volume and take a logical backup before switching images. Restore into a
+fresh PostgreSQL 18 volume and verify Taskboard before removing the old one.
+Changing the mount path alone does not upgrade existing database files. Follow
+the [PostgreSQL major-version upgrade guide](https://www.postgresql.org/docs/18/upgrading.html)
+for dump/restore or `pg_upgrade` procedures. Fresh evaluations need no data
+migration.
 
 ## Kubernetes and EKS
 
