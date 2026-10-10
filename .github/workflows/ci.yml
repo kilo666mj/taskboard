@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+        image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
         env:
           POSTGRES_USER: taskboard
           POSTGRES_PASSWORD: taskboard-test
@@ -70,6 +70,8 @@ jobs:
           cp .env.example .env
           docker compose config --quiet
           POSTGRES_PASSWORD=taskboard-test docker compose -f compose.yaml -f compose.postgres.yaml config --quiet
+      - name: Test PostgreSQL Compose persistence
+        run: ./scripts/test-postgres-compose.sh
       - name: Validate Helm chart
         run: ./scripts/test-helm.sh
       - name: Check diff hygiene
