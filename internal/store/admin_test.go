@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +44,9 @@ func TestAgentCredentialRotationRevocationAndOffboarding(t *testing.T) {
 	}
 	if _, valid, _ := database.AuthenticateAgentCredential(t.Context(), rotated); valid {
 		t.Fatal("offboarded credential remained valid")
+	}
+	if _, _, err := database.RotateAgentCredential(t.Context(), credential.ID, "owner@example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rotating a revoked credential = %v, want ErrNotFound", err)
 	}
 	if subscriptions, err := database.ListPushSubscriptions(t.Context()); err != nil || len(subscriptions) != 0 {
 		t.Fatalf("offboarded push subscriptions = %+v, %v", subscriptions, err)

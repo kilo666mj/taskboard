@@ -26,6 +26,7 @@
         </button>
         <button id="settingsButton" class="icon-button" type="button" title="Task settings" aria-label="Task settings">⚙</button>
         <button id="analyticsButton" class="icon-button" type="button" title="Delivery analytics" aria-label="Delivery analytics">▦</button>
+        <button id="credentialsButton" class="icon-button" type="button" title="Agent credentials" aria-label="Agent credentials" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/></svg></button>
         <button id="logoutButton" class="text-button" type="button" hidden>Sign out</button>
         <button id="newTaskButton" class="icon-button new-task-button" type="button" title="Create task with details" aria-label="Create task with details"><span aria-hidden="true">+</span></button>
       </div>
@@ -168,6 +169,21 @@
     <div class="dialog-heading"><div><p class="eyebrow">Operations</p><h2 id="analyticsTitle">Delivery analytics</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
     <label>Window<select id="analyticsDays"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">365 days</option></select></label>
     <p id="analyticsStatus" role="status"></p><div id="analyticsGrid" class="analytics-grid"></div>
+  </dialog>
+  <dialog id="credentialsDialog" class="modal credentials-modal" aria-labelledby="credentialsTitle">
+    <div class="dialog-heading"><div><p class="eyebrow">Administration</p><h2 id="credentialsTitle">Agent credentials</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
+    <p id="credentialsStatus" role="status"></p>
+    <div id="credentialToken" class="credential-token" hidden>
+      <label>New bearer token. It is shown once, so copy it now.<input id="credentialTokenValue" readonly autocomplete="off" spellcheck="false"></label>
+      <button id="copyCredentialToken" class="secondary" type="button">Copy</button>
+    </div>
+    <ul id="credentialsList" class="credentials-list"></ul>
+    <form id="credentialForm" class="credential-form">
+      <label>Name<input id="credentialName" required maxlength="100" autocomplete="off"></label>
+      <label>Principal<input id="credentialPrincipal" required maxlength="200" pattern="agent:.+" title="Must start with agent:" value="agent:" autocomplete="off" spellcheck="false"></label>
+      <label>Expires (optional)<input id="credentialExpires" type="date"></label>
+      <button class="primary" type="submit">Issue credential</button>
+    </form>
   </dialog>
 
   <template id="taskTemplate">

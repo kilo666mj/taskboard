@@ -105,7 +105,7 @@ func (s *Store) RotateAgentCredential(ctx context.Context, id, actor string) (Ag
 		return AgentCredential{}, "", err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE agent_credentials SET token_hash=?,revoked_at=NULL,last_used_at=NULL WHERE id=?`, hash, strings.TrimSpace(id))
+	result, err := tx.ExecContext(ctx, `UPDATE agent_credentials SET token_hash=?,last_used_at=NULL WHERE id=? AND revoked_at IS NULL`, hash, strings.TrimSpace(id))
 	if err != nil {
 		return AgentCredential{}, "", err
 	}
