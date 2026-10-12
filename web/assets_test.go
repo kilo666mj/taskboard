@@ -162,6 +162,26 @@ func TestControlPlaneExpansionUIIsWiredAndResponsive(t *testing.T) {
 	}
 }
 
+func TestAgentCredentialAdministrationIsWired(t *testing.T) {
+	html := embeddedText(t, "index.html")
+	javascript := embeddedText(t, "app.js")
+	for _, expected := range []string{`id="credentialsButton"`, `id="credentialsDialog"`, `id="credentialTokenValue" readonly`, `pattern="agent:.+"`} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		`$('#credentialsButton').hidden=!['owner','admin'].includes(state.role)`,
+		`/api/v1/admin/credentials`,
+		`rotate?'POST':'DELETE'`,
+		`credentialsDialog.addEventListener('close',()=>showCredentialToken(''))`,
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+}
+
 func TestTaskCancellationUsesAcknowledgedControlsForActiveRuns(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
