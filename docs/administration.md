@@ -12,9 +12,15 @@ workflows, not ordinary task access.
 `principal_id`, and an optional future RFC3339 `expires_at`. The plaintext
 `tb_agent_...` bearer is returned once; only its SHA-256 hash is stored.
 `POST /api/v1/admin/credentials/{id}/rotate` atomically invalidates the old
-secret and returns a replacement. `DELETE /api/v1/admin/credentials/{id}`
+secret and returns a replacement; a revoked credential cannot be rotated and
+returns 404. `DELETE /api/v1/admin/credentials/{id}`
 revokes it. `GET /api/v1/admin/credentials` returns metadata and last-use time,
 never secret material.
+
+Owners and admins can do the same from the web client: the key button in the
+header lists credentials with their state and last use, issues new ones, and
+rotates or revokes existing ones. A new or rotated token is displayed once and
+discarded when the dialog closes.
 
 `POST /api/v1/admin/principals/{principal}/offboard` requires a JSON body with
 `confirm` exactly matching the principal and an optional `reason`. It rejects
