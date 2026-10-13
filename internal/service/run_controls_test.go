@@ -238,6 +238,46 @@ func TestOperatorReviewRequeuesBlockedTaskOnlyAfterItsRunLeaseLapses(t *testing.
 	}
 }
 
+func TestReviewReleasesEndedWaitingAndBlockedRunsForAnotherAgent(t *testing.T) {
+	for _, status := range []model.TaskStatus{model.TaskWaiting, model.TaskBlocked} {
+		t.Run(string(status), func(t *testing.T) {
+			tasks := testService(t, time.Minute)
+			agent := AgentPrincipal("agent:former")
+			started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Release abandoned task", Checklist: []string{"Verified work", "Remaining work"}, IdempotencyKey: "release-start"}, agent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waiting, err := tasks.UpdateFor(t.Context(), started.Task.ID, model.UpdateRequest{ExpectedVersion: started.Task.Version, RunID: started.Run.ID, Status: status, WaitingFor: ptr("Operator review"), Blocker: ptr("Worker exited"), CompleteItemIDs: []string{started.Task.Items[0].ID}}, agent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waiting.Runs[0].EndedAt == nil {
+				t.Fatal("expected an ended run")
+			}
+			request := model.ReviewRequeueRequest{TargetRunID: started.Run.ID, ExpectedVersion: waiting.Version, ReviewNote: "Reviewed completed work; release for another agent"}
+			released, err := tasks.ReviewAndRequeueFor(t.Context(), waiting.ID, request, HumanPrincipalWithRole("human:reviewer", RoleMember))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if released.Task.Owner != "" || released.Task.Status != model.TaskQueued || released.Task.Visibility != waiting.Visibility {
+				t.Fatalf("released task = %+v", released.Task)
+			}
+			for i, item := range released.Task.Items {
+				if item.ID != waiting.Items[i].ID || item.Status != waiting.Items[i].Status {
+					t.Fatalf("checklist changed: %+v", released.Task.Items)
+				}
+			}
+			if len(released.Task.Runs) != 1 || released.Task.Runs[0].ID != started.Run.ID || released.Task.Runs[0].EndedAt == nil {
+				t.Fatalf("run history changed: %+v", released.Task.Runs)
+			}
+			claimed, err := tasks.ClaimFor(t.Context(), waiting.ID, model.ClaimRequest{ExpectedVersion: released.Task.Version, IdempotencyKey: "release-claim"}, AgentPrincipal("agent:replacement"))
+			if err != nil || claimed.Run.ID == started.Run.ID {
+				t.Fatalf("fresh claim = %+v, %v", claimed, err)
+			}
+		})
+	}
+}
+
 func TestControlCompletionConflictsAfterReplacementAndDoesNotTransfer(t *testing.T) {
 	tasks := testService(t, -time.Second)
 	agent := AgentPrincipal("agent:worker")

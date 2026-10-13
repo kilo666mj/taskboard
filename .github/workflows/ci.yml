@@ -63,6 +63,8 @@ jobs:
           node --check web/app.js
           node --check web/sw.js
           node --check desktop/src/app.js
+      - name: Test task recovery UI
+        run: node --test web/task-recovery.test.cjs
       - name: Test Codex delivery adapter
         run: node --test 'integrations/codex/taskboard-delivery/test/*.test.mjs'
       - name: Validate Compose

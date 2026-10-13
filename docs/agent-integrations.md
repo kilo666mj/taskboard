@@ -422,9 +422,16 @@ that human principal in `last_edited_by`, closes any open retry control for the
 stale run, clears agent-pickup ownership, and queues the task for a fresh claim.
 It is intentionally unavailable through the agent MCP surface.
 
+The card also exposes **Release to queue** for agent-pickup work (and
+**Review & requeue** for private or team work). A review note is required.
+Agent-pickup work becomes unassigned and may be claimed immediately; private
+and team tasks retain their assignment and visibility. Checklist progress and
+run history are preserved. The action is available for ended waiting/blocked
+runs as well as legacy runs whose leases expired.
+
 The same action recovers a task an agent marked `blocked` or `waiting` and then
-abandoned. Such a run stays open, so **Resume** (which needs an ended run) is
-not offered. Once no run on the task holds a live lease, **Review & requeue**
+abandoned. Legacy runs may still be open, so **Resume** (which needs an ended
+run) is not offered for them. Once no run on the task holds a live lease, **Review & requeue**
 ends the run, records a completed `resume` control, and queues the task with
 the reviewer as last editor. While any run on the task holds a live lease
 (its agent updated the task within the lease period), the action is refused.
