@@ -22,11 +22,11 @@ agents -> Switchboard -> Taskboard MCP -> SQLite or PostgreSQL
 
 ## Screenshots
 
-![Taskboard showing an agent-pickup queue and two active agents with distinct callsigns and incremental checklist progress](docs/images/taskboard-overview.png)
+![Taskboard showing compact task rows, project navigation, agent presence, and the selected task’s checklist](docs/images/taskboard-overview.png)
 
-*One board for human planning and agent execution: queued pickup work, live
-checklists, status notes, and friendly session callsigns remain visible
-together.*
+*A compact workspace for human planning and agent execution, with project
+navigation, agent presence, and a dedicated task detail pane. Screenshots use
+fictional example tasks.*
 
 ![Expanded Taskboard agent session showing its friendly callsign, authenticated principal, client metadata, and server-issued run ID](docs/images/taskboard-agent-session.png)
 
@@ -164,6 +164,15 @@ lane, section, project, repository, and owner within the selected view; when
 other views hold more matches, the board offers to search all visible tasks. Review queues surface
 unplanned, overdue, stale, and waiting work and let a person explicitly mark a
 task reviewed. Reusable templates preserve planning fields and checklists.
+
+The workspace uses compact task rows grouped by project and section. Select a
+task to open its Overview, Messages, and Delivery tabs; on smaller screens the
+detail pane becomes a full-screen view with an Escape/close action. Common views
+and project filters are in the sidebar, with all remaining views under **More
+views**. Search stays within the selected view and project until explicitly
+expanded. The header's theme button switches between light and dark appearances
+and remembers the choice on that device. Task form drafts in the detail pane
+survive live updates for the current page session.
 
 Tasks can be edited and reordered with ordinary keyboard-accessible controls;
 press `N` outside a form to capture a task and `/` to focus search. The same

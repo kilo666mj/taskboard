@@ -3,22 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#03060f">
+  <meta name="theme-color" content="#fafaf8">
   <meta name="description" content="A shared task system for personal work and agent execution.">
   <title>Taskboard</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/taskboard.svg" type="image/svg+xml">
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
+  <a class="skip-link" href="#workspaceMain">Skip to tasks</a>
+  <div class="workspace-shell">
+    <aside class="workspace-sidebar" id="workspaceSidebar" aria-label="Workspace navigation">
       <a class="brand" href="/" aria-label="Taskboard home">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span>Taskboard</span>
       </a>
-      <div class="top-actions">
-        <select id="desktopServerPicker" class="desktop-server-picker" aria-label="Taskboard server" title="Switch Taskboard server" hidden></select>
+      <p class="workspace-label">Workspace <span id="workspaceType"></span></p>
+              <select id="desktopServerPicker" class="desktop-server-picker" aria-label="Taskboard server" title="Switch Taskboard server" hidden></select>
+
+      <nav id="primaryViews" class="workspace-nav" aria-label="Task views"></nav>
+      <details class="more-views"><summary>More views</summary><nav id="moreViews" class="workspace-nav" aria-label="More task views"></nav></details>
+      <section class="project-navigation"><h2>Projects</h2><nav id="projectNavigation" class="workspace-nav" aria-label="Projects"></nav></section>
+      <section class="agent-presence"><h2>Agents running <span id="agentCount"></span></h2><div id="agentPresence"></div></section>
+      <div class="workspace-tools">
         <span id="connection" class="connection" data-state="loading">Connecting</span>
         <button id="notifyButton" class="icon-button notification-button" type="button" data-state="checking" title="Checking notifications" aria-label="Checking notifications" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/><path class="notification-check" d="m14 10 3 3 6-7"/><path class="notification-off" d="m3 3 18 18"/></svg>
@@ -28,16 +36,20 @@
         <button id="analyticsButton" class="icon-button" type="button" title="Delivery analytics" aria-label="Delivery analytics">▦</button>
         <button id="credentialsButton" class="icon-button" type="button" title="Agent credentials" aria-label="Agent credentials" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/></svg></button>
         <button id="logoutButton" class="text-button" type="button" hidden>Sign out</button>
-        <button id="newTaskButton" class="icon-button new-task-button" type="button" title="Create task with details" aria-label="Create task with details"><span aria-hidden="true">+</span></button>
       </div>
-    </div>
-  </header>
-
-  <div class="app-shell">
-    <main>
+    </aside>
+    <main id="workspaceMain" class="workspace-main" tabindex="-1">
+      <header class="topbar"><div class="topbar-inner">
+        <button id="navigationToggle" class="icon-button navigation-toggle" type="button" aria-label="Toggle navigation" aria-controls="workspaceSidebar" aria-expanded="false">☰</button>
+        <div class="page-heading"><p>Workspace / Tasks</p><h1 id="viewTitle">Open tasks</h1></div>
+        <div class="page-actions">
+          <button id="themeButton" class="icon-button" type="button" aria-label="Switch to dark theme" title="Switch theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button>
+          <button id="newTaskButton" class="primary new-task-button" type="button" title="Create task (N)"><span aria-hidden="true">+</span> New task</button>
+        </div>
+      </div></header>
       <p id="notificationMessage" class="notification-message" role="status" hidden></p>
-      <h1 class="visually-hidden">Taskboard tasks</h1>
-
+      <div class="workspace-content">
+      <section class="workspace-list" aria-label="Task list">
       <div class="view-toolbar">
         <label class="view-picker">
           <span class="visually-hidden">Task view</span>
@@ -80,10 +92,14 @@
             <option value="updated">Recently updated</option>
           </select>
         </label>
-        <label class="search-box"><span class="visually-hidden">Search tasks in this view</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search tasks"></label>
+        <label class="search-box"><span class="visually-hidden">Search tasks in this view</span><input id="taskSearch" type="search" maxlength="200" placeholder="Search this view…"></label>
       </div>
 
-      <section id="board" class="board" aria-live="polite" aria-busy="true"></section>
+      <div class="list-summary"><span id="taskCount" role="status"></span><button id="attentionFilter" class="text-button" type="button"></button></div>
+      <section id="board" class="board" aria-busy="true"></section>
+      </section>
+      <aside id="taskInspector" class="task-inspector" aria-label="Task details"><p class="inspector-empty">Select a task to see its checklist<br>and latest activity.</p></aside>
+      </div>
     </main>
   </div>
 
@@ -188,12 +204,20 @@
 
   <template id="taskTemplate">
     <article class="task-card">
-      <button class="task-summary" type="button" aria-expanded="true">
-        <span class="status-rail"></span>
-        <span class="task-main"><span class="task-topline"><span class="task-title"></span><span class="task-progress"></span></span><span class="task-note"></span></span>
-        <span class="task-side"><span class="agent-chip"></span><time></time><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 5 5-5"/></svg></span>
-      </button>
+      <div class="inspector-toolbar"><span class="inspector-project"></span><button class="close-inspector icon-button" type="button" aria-label="Close task details">×</button></div>
+      <div class="task-summary">
+        <h2 class="task-title" id="inspectorTitle" tabindex="-1"></h2>
+        <span class="task-progress" hidden></span><span class="task-note" hidden></span>
+        <span class="task-side" hidden><span class="agent-chip"></span><time></time></span>
+      </div>
+      <dl class="detail-properties"></dl>
+      <div class="detail-tabs" role="tablist" aria-label="Task details">
+        <button type="button" role="tab" id="overviewTab" data-detail-tab="overview" aria-controls="overviewPanel" aria-selected="true">Overview</button>
+        <button type="button" role="tab" id="messagesTab" data-detail-tab="messages" aria-controls="messagesPanel" aria-selected="false" tabindex="-1">Messages</button>
+        <button type="button" role="tab" id="deliveryTab" data-detail-tab="delivery" aria-controls="deliveryPanel" aria-selected="false" tabindex="-1">Delivery</button>
+      </div>
       <div class="task-detail">
+        <div id="overviewPanel" role="tabpanel" aria-labelledby="overviewTab" tabindex="0">
         <div class="attention-note" hidden></div>
         <div class="task-meta" hidden></div>
         <p class="task-assignment"></p>
@@ -213,6 +237,7 @@
           <div class="requirements-list"></div>
           <form class="requirements-form"><label>Worker requirements<input name="requirements" maxlength="2000" placeholder="repo:org/name, browser, kubernetes"></label><button class="secondary" type="submit">Save requirements</button></form>
         </details>
+        <h3 class="checklist-heading">Checklist <span class="checklist-progress"></span></h3>
         <ol class="checklist"></ol>
         <p class="empty-checklist" hidden>No checklist yet. Start it yourself or assign it to an agent.</p>
         <div class="task-actions" hidden>
@@ -224,6 +249,8 @@
           </form>
           <button class="secondary finish-self" type="button">Mark done</button>
         </div>
+        </div>
+        <div id="deliveryPanel" role="tabpanel" aria-labelledby="deliveryTab" tabindex="0" hidden>
         <details class="delivery" hidden>
           <summary>Links <span class="reference-count"></span></summary>
           <div class="delivery-panel">
@@ -256,6 +283,8 @@
             </div>
           </div>
         </details>
+        </div>
+        <div id="messagesPanel" role="tabpanel" aria-labelledby="messagesTab" tabindex="0" hidden>
         <details class="conversation">
           <summary>Messages <span class="message-count"></span></summary>
           <div class="conversation-panel">
@@ -301,6 +330,7 @@
             </form>
           </div>
         </details>
+        </div>
         <div class="task-management">
           <button class="text-button edit-task" type="button">Edit</button>
           <button class="text-button release-task" type="button" hidden>Release to queue</button>
