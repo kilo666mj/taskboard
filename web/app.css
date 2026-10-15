@@ -192,7 +192,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 @media(max-width:720px){.task-classification-row{grid-template-columns:1fr}}
 .task-management{display:flex;gap:.38rem;flex-wrap:wrap;margin-top:.55rem}
 .task-management button{padding:.35rem .52rem;font-size:.8rem}
-.cancel-task{margin-left:auto;color:var(--red)}.cancel-task:hover{color:var(--red)}.cancel-task:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.cancel-task{margin-left:auto;color:var(--red)}.cancel-task:not(:disabled):hover{color:var(--red)}.cancel-task:disabled{cursor:default;color:var(--muted)}.cancel-task:focus-visible{outline:2px solid var(--red);outline-offset:2px}
 html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .cancel-task,.task-card[data-status=cancelled] .cancel-task{display:none}
 .settings-options{display:grid;gap:.8rem;margin:1rem 0}
 .settings-options[hidden]{display:none}
@@ -359,3 +359,4 @@ html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .can
 
 /* Programmatic reading focus on the heading is not an interactive control. */
 #inspectorTitle:focus { outline: none; }
+.requirement-suggestions{display:grid;justify-items:start;gap:4px;margin-top:6px;color:var(--muted);font-size:.72rem}.requirement-suggestions[hidden]{display:none}.requirements-form .requirement-suggestions,.requirements-form .requirements-help{grid-column:1/-1;margin-top:0}.requirements-help{margin:0;color:var(--muted);font-size:.7rem;line-height:1.45}.modal .requirements-help{margin-top:.55rem;font-size:.78rem}.requirements-help code{font-size:.95em}.requirement-suggestion{display:grid;justify-items:start;gap:1px;max-width:100%;min-width:0;text-align:left;font-size:.72rem}.requirement-suggestion code{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.requirement-description{padding-left:1.4em;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;color:var(--muted)}

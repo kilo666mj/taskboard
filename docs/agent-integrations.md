@@ -36,7 +36,16 @@ task and run IDs. After each bounded checklist step succeeds, immediately call
 Do not accumulate several completed steps and send them only when the task is
 finished. A failed step remains active; record a blocker or waiting state rather
 than marking it complete. `task_complete` remains the final transition and is
-rejected while a required checklist item is open.
+rejected while a required checklist item is open; the refusal lists the open
+required item IDs. Taskboard never marks them done for the agent: send each one
+the agent actually finished in `complete_item_ids`, or skip one that no longer
+applies.
+
+Every write returns the task with its new `version`. A write with a stale
+`expected_version` is refused with the task's current version (and
+`current_version` in the REST error body), so an agent can retry from the values
+Taskboard returned. An agent may read a team task with `task_get` while it owns
+the task; starting or claiming the task makes it the owner.
 
 `task_heartbeat` renews the run lease and returns a `progress` object with the
 last checklist transition, its age, counts, current item, and a staleness
@@ -262,7 +271,7 @@ credentials, or raw tool output in them.
 
 Use `task_reference_add` as delivery artifacts appear. References are immutable
 and typed as `linear`, `repository`, `worktree`, `branch`, `commit`,
-`pull_request`, `ci_run`, `deployment`, `screenshot`, or `review`. Agent-created
+`pull_request`, `ci_run`, `deployment`, `screenshot`, `review`, or `transcript`. Agent-created
 references require the active source `run_id`. A locator may hold an issue key,
 path, branch, SHA, or provider identifier. A URL is optional, but when present
 it must be an absolute HTTPS URL with a host and no embedded credentials.
@@ -302,8 +311,10 @@ credentials, raw logs, or arbitrary tool output.
 When a run ends without a final handoff, Taskboard generates one from facts it
 already owns. Lease expiry creates a `stale` snapshot from the persisted
 checklist, blocker/waiting fields, and typed delivery references; it does not
-invent progress. `task_claim` and `task_get` include prior handoffs, and
-`task_handoff_list` remains available for explicit refresh. A replacement run
+invent progress. `task_claim` and `task_get` include prior handoffs and the
+task's newest 10 runs (pass `all_runs: true` for every run; the REST API and
+web UI always show the full history), and `task_handoff_list` remains
+available for explicit refresh. A replacement run
 should inspect these records before changing the checklist or workspace.
 
 ## Completion contracts
@@ -366,6 +377,17 @@ decisions (`task_message_list` and `task_escalation_list`) if it holds the
 `task:message` capability, so it can act on what people decided there, for
 example treating an answered approval question as the go-ahead for work it
 carries out itself. It gains no write access.
+
+## Pickup runners noting why they could not start
+
+A runner that dispatches agent-lane work may say on a task why it could not
+start it, for example that its claim was refused because worker capacity was
+full, so the card shows the reason instead of only the runner's logs. An agent
+holding `task:claim` may update `current_note`, and nothing else, on an
+agent-lane task that is `queued` or `stale` with no owner and no live run. The
+write makes the agent the task's last editor, like any other agent write, so a
+runner that only takes work a person last edited will not pick the task up
+again until a person saves it.
 
 ## Duplicate tasks
 
@@ -449,6 +471,14 @@ any; tasks started directly with `task_start` do not. A recurring task's next
 occurrence keeps its requirements. Controllers call
 `worker_advertise` with their current operational tokens, capacity, and a short
 TTL. Advertisements are ephemeral scheduling input, not durable authorization.
+An advertisement may also carry `descriptions`, a map from an advertised token
+to a one-line explanation of what the worker does for it and when to require it
+(at most 300 characters each; display only). The web UI suggests the
+capabilities in unexpired advertisements, with their descriptions, when a
+person sets requirements (`GET /api/v1/worker-capabilities` returns the
+`capabilities` tokens and a `descriptions` map, people only, without the advertising
+worker; the newest advertisement's non-empty description wins). Any valid token
+can still be typed.
 
 Agent pickup lists omit queued or stale tasks whose requirements are not a
 subset of the live advertisement. Claim rechecks the match and advertised

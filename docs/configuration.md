@@ -138,6 +138,20 @@ principals; Taskboard additionally rejects validation by any principal recorded
 in the task's builder provenance. Owners and admins may make an explicit
 override, but must record a reason in the review request.
 
+A run that holds a task's live lease (active, not ended, and
+`lease_expires_at` still in the future) may heartbeat to renew it (receiving
+its pending messages and recording receipts for them), update and complete that task,
+append messages, escalate, record handoffs and references, and submit
+completion evidence without `task:update`, `task:complete`, `task:message`,
+`task:escalate`, `task:handoff`, `task:reference`, or `task:evidence`. The
+call must name the run (`run_id`, or `author_run_id` for messages), and the
+run must belong to the calling principal. Shared principals such as one
+Switchboard or pickup-runner identity apply their capabilities to every task, so the
+lease is the narrower, per-task grant. It never widens what a principal can see
+or own, and it is refused once the lease lapses, even before the sweep marks
+the run stale. Creating, starting, claiming, moving, cancelling, marking
+duplicates, skipping, run controls and every read stay capability-gated.
+
 Per-principal policies use the canonical authenticated actor ID. For example,
 this policy gives a Cloudflare service token read/claim access, one concurrent
 run, a two-hour maximum run, and mandatory idempotency keys:

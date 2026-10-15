@@ -10,7 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
+	"testing"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -30,7 +33,11 @@ type Store struct {
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
-	return open(ctx, "sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", DialectSQLite)
+	dsn := path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	if err := premigrateForSchemaCompat(ctx, "sqlite", dsn, DialectSQLite, "-sqlite", path); err != nil {
+		return nil, err
+	}
+	return open(ctx, "sqlite", dsn, DialectSQLite)
 }
 
 func OpenURL(ctx context.Context, databaseURL string) (*Store, error) {
@@ -43,6 +50,9 @@ func OpenURL(ctx context.Context, databaseURL string) (*Store, error) {
 	}
 	if parsed.Host == "" || parsed.Path == "" || parsed.Path == "/" {
 		return nil, fmt.Errorf("database URL must include a host and database name")
+	}
+	if err := premigrateForSchemaCompat(ctx, "pgx", databaseURL, DialectPostgres, "-postgres", databaseURL); err != nil {
+		return nil, err
 	}
 	store, err := open(ctx, "pgx", databaseURL, DialectPostgres)
 	if err == nil {
@@ -69,6 +79,50 @@ func open(ctx context.Context, driver, dsn string, dialect Dialect) (*Store, err
 		return nil, errors.Join(err, raw.Close())
 	}
 	return store, nil
+}
+
+// schemaCompatMigratorEnv names a newer release's schema migrator
+// (internal/tools/schema-migrate). Only test binaries honor it: before a test
+// opens a fresh database, the migrator brings it to the newer schema, so this
+// release's tests prove it still runs there (scripts/check-schema-compat.sh).
+const schemaCompatMigratorEnv = "TASKBOARD_TEST_SCHEMA_MIGRATOR"
+
+func premigrateForSchemaCompat(ctx context.Context, driver, dsn string, dialect Dialect, flag, target string) error {
+	migrator := os.Getenv(schemaCompatMigratorEnv)
+	if migrator == "" || !testing.Testing() {
+		return nil
+	}
+	raw, err := sql.Open(driver, dsn)
+	if err != nil {
+		return err
+	}
+	fresh, err := isFreshDatabase(ctx, &DB{raw: raw, dialect: dialect})
+	if closeErr := raw.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil || !fresh {
+		return err
+	}
+	output, err := exec.CommandContext(ctx, migrator, flag, target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("schema compatibility migrator: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func isFreshDatabase(ctx context.Context, db *DB) (bool, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{"schema_migrations", "tasks"} {
+		exists, err := tableExists(ctx, tx, db.dialect, table)
+		if err != nil || exists {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (s *Store) Close() error                   { return s.db.raw.Close() }

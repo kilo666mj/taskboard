@@ -23,7 +23,7 @@ func (s *Service) ListEscalationsFor(ctx context.Context, taskID string, princip
 }
 
 func (s *Service) CreateEscalationFor(ctx context.Context, taskID string, request model.CreateEscalationRequest, principal Principal) (model.TaskEscalation, error) {
-	if !principal.Agent || !principal.HasCapability(CapabilityTaskEscalate) || !principal.HasCapability(CapabilityTaskMessage) {
+	if !principal.Agent {
 		return model.TaskEscalation{}, ErrForbidden
 	}
 	taskID, request.RunID = strings.TrimSpace(taskID), strings.TrimSpace(request.RunID)
@@ -63,6 +63,9 @@ func (s *Service) CreateEscalationFor(ctx context.Context, taskID string, reques
 	}
 	if _, ok := activeOwnedRun(task, request.RunID, principal.ID); !ok {
 		return model.TaskEscalation{}, fmt.Errorf("%w: escalation requires this agent's active run", ErrValidation)
+	}
+	if (!principal.HasCapability(CapabilityTaskEscalate) || !principal.HasCapability(CapabilityTaskMessage)) && !holdsLease(task, request.RunID, principal) {
+		return model.TaskEscalation{}, missingCapability(CapabilityTaskEscalate+" and "+CapabilityTaskMessage, "escalate a task whose lease the run does not hold")
 	}
 
 	s.idempotencyMu.Lock()

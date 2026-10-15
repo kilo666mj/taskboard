@@ -311,3 +311,22 @@ func TestHiddenLinksAreLabelledNotShown(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelButtonShowsPendingCancelFromTaskState(t *testing.T) {
+	javascript := embeddedText(t, "app.js")
+	css := embeddedText(t, "app.css")
+	for _, expected := range []string{
+		`if(task.cancel_requested&&task.runs?.some(run=>run.status==='active'&&!run.ended_at)){const cancel=$('.cancel-task',card);cancel.disabled=true;cancel.textContent='Cancel requested…'}`,
+		`task.cancel_requested=true;button.textContent='Cancel requested…'`,
+		`{cancel_requested:task.cancel_requested,...next}`,
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Errorf("app.js missing %q", expected)
+		}
+	}
+	for _, expected := range []string{`.cancel-task:disabled{cursor:default;color:var(--muted)}`, `.cancel-task:not(:disabled):hover`} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("app.css missing %q", expected)
+		}
+	}
+}

@@ -22,7 +22,7 @@ func (s *Service) ListMessagesFor(ctx context.Context, taskID, before string, li
 }
 
 func (s *Service) AddMessageFor(ctx context.Context, taskID string, request model.AddMessageRequest, principal Principal) (model.TaskMessage, error) {
-	if !principal.Can(PermissionTaskMessage) {
+	if !principal.Agent && !principal.Can(PermissionTaskMessage) {
 		return model.TaskMessage{}, ErrForbidden
 	}
 	request.AuthorRunID = strings.TrimSpace(request.AuthorRunID)
@@ -58,6 +58,9 @@ func (s *Service) AddMessageFor(ctx context.Context, taskID string, request mode
 		run, ok := activeOwnedRun(task, request.AuthorRunID, principal.ID)
 		if !ok || run.ID == "" {
 			return model.TaskMessage{}, fmt.Errorf("%w: author run is not active for this agent", ErrValidation)
+		}
+		if !principal.HasCapability(CapabilityTaskMessage) && !holdsLease(task, request.AuthorRunID, principal) {
+			return model.TaskMessage{}, missingCapability(CapabilityTaskMessage, "message a task whose lease the run does not hold")
 		}
 	} else if request.TargetRunID != "" {
 		if _, ok := activeTaskRun(task, request.TargetRunID); !ok {
@@ -130,7 +133,7 @@ func (s *Service) AddMessageFor(ctx context.Context, taskID string, request mode
 }
 
 func (s *Service) RecordMessageReceiptsFor(ctx context.Context, taskID, runID string, request model.MessageReceiptRequest, principal Principal) ([]model.TaskMessage, error) {
-	if !principal.Agent || !principal.HasCapability(CapabilityTaskMessage) {
+	if !principal.Agent {
 		return nil, ErrForbidden
 	}
 	taskID, runID = strings.TrimSpace(taskID), strings.TrimSpace(runID)
@@ -143,8 +146,18 @@ func (s *Service) RecordMessageReceiptsFor(ctx context.Context, taskID, runID st
 	if err != nil {
 		return nil, err
 	}
+	// Like a heartbeat, clearing a run's pending messages needs write access
+	// to the task whichever path below authorizes it.
+	if !canMutate(task, principal) {
+		return nil, ErrForbidden
+	}
 	if _, ok := activeOwnedRun(task, runID, principal.ID); !ok {
 		return nil, fmt.Errorf("%w: run is not active for this agent", ErrValidation)
+	}
+	// A heartbeat delivers pending messages to a lease holder, so it must be
+	// able to clear them too.
+	if !principal.HasCapability(CapabilityTaskMessage) && !holdsLease(task, runID, principal) {
+		return nil, missingCapability(CapabilityTaskMessage, "record receipts for a run whose lease has lapsed")
 	}
 
 	s.idempotencyMu.Lock()
@@ -211,4 +224,14 @@ func activeTaskRun(task model.Task, runID string) (model.AgentRun, bool) {
 func activeOwnedRun(task model.Task, runID, principal string) (model.AgentRun, bool) {
 	run, ok := activeTaskRun(task, runID)
 	return run, ok && run.Agent == principal
+}
+
+// holdsLease reports whether runID is the agent's live run on this task:
+// active, not ended, and its lease unexpired, even before the sweep marks a
+// lapsed run stale. A lease stands in for the per-action capability on that
+// task only; visibility and ownership checks still apply. Shared principals
+// make capabilities apply to every task, so the lease is the narrower grant.
+func holdsLease(task model.Task, runID string, principal Principal) bool {
+	run, ok := activeOwnedRun(task, strings.TrimSpace(runID), principal.ID)
+	return principal.Agent && ok && run.ID != "" && run.LeaseExpires.After(time.Now().UTC())
 }

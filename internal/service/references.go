@@ -26,11 +26,7 @@ func (s *Service) ListTaskReferencesFor(ctx context.Context, taskID string, prin
 }
 
 func (s *Service) AddTaskReferenceFor(ctx context.Context, taskID string, request model.AddTaskReferenceRequest, principal Principal) (model.TaskReference, error) {
-	if principal.Agent {
-		if !principal.HasCapability(CapabilityTaskReference) {
-			return model.TaskReference{}, ErrForbidden
-		}
-	} else if !principal.Can(PermissionTaskWrite) {
+	if !principal.Agent && !principal.Can(PermissionTaskWrite) {
 		return model.TaskReference{}, ErrForbidden
 	}
 	taskID, request.RunID = strings.TrimSpace(taskID), strings.TrimSpace(request.RunID)
@@ -65,6 +61,9 @@ func (s *Service) AddTaskReferenceFor(ctx context.Context, taskID string, reques
 		}
 		if _, ok := activeOwnedRun(task, request.RunID, principal.ID); !ok {
 			return model.TaskReference{}, fmt.Errorf("%w: reference run is not active for this agent", ErrValidation)
+		}
+		if !principal.HasCapability(CapabilityTaskReference) && !holdsLease(task, request.RunID, principal) {
+			return model.TaskReference{}, missingCapability(CapabilityTaskReference, "add references to a task whose lease the run does not hold")
 		}
 	} else if request.RunID != "" {
 		return model.TaskReference{}, fmt.Errorf("%w: human references cannot claim a source run", ErrValidation)
@@ -181,7 +180,7 @@ func (s *Service) DeliveryMilestonesFor(ctx context.Context, taskID string, prin
 			}
 		}
 	}
-	order := []string{"requirements_linked", "repository_linked", "claimed", "workspace_ready", "branch_created", "implementation", "pull_request_opened", "ci_observed", "review_observed", "validation_evidence", "deployed", "completed"}
+	order := []string{"requirements_linked", "repository_linked", "claimed", "workspace_ready", "branch_created", "implementation", "pull_request_opened", "ci_observed", "review_observed", "validation_evidence", "transcript_linked", "deployed", "completed"}
 	result := make([]model.DeliveryMilestone, 0, len(byKind))
 	for _, kind := range order {
 		if milestone, ok := byKind[kind]; ok {
@@ -211,6 +210,8 @@ func milestoneForReference(kind model.ReferenceKind) (string, string) {
 		return "review_observed", "Review linked"
 	case model.ReferenceScreenshot:
 		return "validation_evidence", "Validation evidence linked"
+	case model.ReferenceTranscript:
+		return "transcript_linked", "Transcript linked"
 	case model.ReferenceDeployment:
 		return "deployed", "Deployment linked"
 	default:
@@ -220,7 +221,7 @@ func milestoneForReference(kind model.ReferenceKind) (string, string) {
 
 func isReferenceKind(kind model.ReferenceKind) bool {
 	switch kind {
-	case model.ReferenceLinear, model.ReferenceRepository, model.ReferenceWorktree, model.ReferenceBranch, model.ReferenceCommit, model.ReferencePullRequest, model.ReferenceCIRun, model.ReferenceDeployment, model.ReferenceScreenshot, model.ReferenceReview:
+	case model.ReferenceLinear, model.ReferenceRepository, model.ReferenceWorktree, model.ReferenceBranch, model.ReferenceCommit, model.ReferencePullRequest, model.ReferenceCIRun, model.ReferenceDeployment, model.ReferenceScreenshot, model.ReferenceReview, model.ReferenceTranscript:
 		return true
 	default:
 		return false

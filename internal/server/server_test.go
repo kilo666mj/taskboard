@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -380,6 +381,45 @@ func TestRunControlRESTSurface(t *testing.T) {
 	var inbox model.Inbox
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &inbox) != nil || inbox.Count != 1 || inbox.Controls[0].ID != created.Control.ID {
 		t.Fatalf("inbox = %d %+v: %s", response.Code, inbox, response.Body.String())
+	}
+}
+
+func TestPendingCancelRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	agent := service.AgentPrincipal("agent:worker")
+	human := service.HumanPrincipal("operator@example.com")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Cancel API", Checklist: []string{"Work"}, IdempotencyKey: "cancel-api-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(model.CreateRunControlRequest{TargetRunID: started.Run.ID, Kind: model.RunControlCancel, ExpectedVersion: started.Task.Version})
+	for attempt, want := range []int{http.StatusCreated, http.StatusConflict} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task/controls", bytes.NewReader(body))
+		request.SetPathValue("id", started.Task.ID)
+		request.Header.Set("Content-Type", "application/json")
+		request = request.WithContext(context.WithValue(request.Context(), principalKey{}, human))
+		response := httptest.NewRecorder()
+		createTaskControl(tasks).ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("cancel %d status = %d, want %d: %s", attempt+1, response.Code, want, response.Body.String())
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, human))
+	response := httptest.NewRecorder()
+	getTask(tasks).ServeHTTP(response, request)
+	var got taskOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &got) != nil || !got.Task.CancelRequested {
+		t.Fatalf("get task = %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, human))
+	response = httptest.NewRecorder()
+	listTasks(tasks).ServeHTTP(response, request)
+	var listed tasksOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Tasks) != 1 || !listed.Tasks[0].CancelRequested {
+		t.Fatalf("list tasks = %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -1477,5 +1517,243 @@ func TestMCPTaskGetReturnsUnownedTaskWithoutHandoffs(t *testing.T) {
 	}
 	if !handoffs.IsError {
 		t.Fatal("task_handoff_list on an unowned task succeeded")
+	}
+}
+
+// connectMCPAsPrincipal connects to the MCP server as an authenticated
+// principal, the way the HTTP auth middleware would.
+func connectMCPAsPrincipal(t *testing.T, server *mcp.Server, principal service.Principal) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.WithValue(t.Context(), principalKey{}, principal)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "principal-test", Version: "1"}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		_ = serverSession.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = clientSession.Close()
+		_ = serverSession.Close()
+	})
+	return clientSession
+}
+
+// callMCPTask calls a task tool and decodes its task, or returns the refusal
+// text when the call is an error.
+func callMCPTask(t *testing.T, session *mcp.ClientSession, name string, arguments map[string]any) (model.Task, string) {
+	t.Helper()
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if result.IsError {
+		var text strings.Builder
+		for _, content := range result.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text.WriteString(item.Text)
+			}
+		}
+		return model.Task{}, text.String()
+	}
+	raw, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Task model.Task     `json:"task"`
+		Run  model.AgentRun `json:"run"`
+	}
+	if err := json.Unmarshal(raw, &output); err != nil {
+		t.Fatalf("%s output %s: %v", name, raw, err)
+	}
+	return output.Task, ""
+}
+
+// switchboardPolicy mirrors the scoped grant the shared Switchboard
+// credential might carry: no task:handoff, task:message, or task:skip.
+func switchboardPolicy() service.AgentPolicy {
+	return service.AgentPolicy{Capabilities: map[string]bool{
+		service.CapabilityTaskRead: true, service.CapabilityTaskCreate: true, service.CapabilityTaskClaim: true,
+		service.CapabilityTaskUpdate: true, service.CapabilityTaskComplete: true, service.CapabilityTaskControl: true,
+		service.CapabilityTaskEvidence: true, service.CapabilityTaskEscalate: true, service.CapabilityWorkerAdvertise: true,
+	}}
+}
+
+func TestMCPAgentFinishesTeamTaskFromReturnedValues(t *testing.T) {
+	tasks, _, logger := serverFixture(t)
+	server := newMCPServer(tasks, model.TaskWork, logger)
+	agent := connectMCPAsPrincipal(t, server, service.AgentPrincipalWithPolicy("agent:switchboard", switchboardPolicy()))
+
+	result, err := agent.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_start", Arguments: map[string]any{"title": "Ship the fix", "checklist": []string{"Plan", "Ship"}, "visibility": "team"}})
+	if err != nil || result.IsError {
+		t.Fatalf("task_start = %+v, %v", result, err)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	var started model.StartResult
+	if err := json.Unmarshal(raw, &started); err != nil || started.Task.Visibility != model.VisibilityTeam || started.Task.Owner != "agent:switchboard" || len(started.Task.Items) != 2 {
+		t.Fatalf("started = %s, %v", raw, err)
+	}
+	taskID, runID := started.Task.ID, started.Run.ID
+	plan, ship := started.Task.Items[0].ID, started.Task.Items[1].ID
+
+	// The agent can read the team task it started, even without task:handoff.
+	got, refusal := callMCPTask(t, agent, "task_get", map[string]any{"task_id": taskID})
+	if refusal != "" || got.Version != started.Task.Version {
+		t.Fatalf("task_get = %+v, %q", got, refusal)
+	}
+
+	updated, refusal := callMCPTask(t, agent, "task_update", map[string]any{"task_id": taskID, "run_id": runID, "expected_version": started.Task.Version, "complete_item_ids": []string{plan}, "current_item_id": ship})
+	if refusal != "" || updated.Version != started.Task.Version+1 {
+		t.Fatalf("task_update = %+v, %q", updated, refusal)
+	}
+
+	// Optimistic versioning still rejects a stale write, and the refusal
+	// carries the current version.
+	_, refusal = callMCPTask(t, agent, "task_update", map[string]any{"task_id": taskID, "run_id": runID, "expected_version": started.Task.Version, "current_note": "stale"})
+	if want := fmt.Sprintf("the task is at version %d, not %d", updated.Version, started.Task.Version); !strings.Contains(refusal, want) {
+		t.Fatalf("stale task_update refusal = %q, want %q", refusal, want)
+	}
+	if current, err := tasks.Get(t.Context(), taskID); err != nil || current.Version != updated.Version || current.CurrentNote == "stale" {
+		t.Fatalf("stale write changed the task: %+v, %v", current, err)
+	}
+
+	// Completing with an open required item names it and completes nothing.
+	_, refusal = callMCPTask(t, agent, "task_complete", map[string]any{"task_id": taskID, "run_id": runID, "expected_version": updated.Version})
+	if !strings.Contains(refusal, "1 required checklist items remain open: "+ship) || strings.Contains(refusal, plan) {
+		t.Fatalf("task_complete refusal = %q", refusal)
+	}
+	if current, err := tasks.Get(t.Context(), taskID); err != nil || current.Status != model.TaskActive || current.Version != updated.Version || current.Items[1].Status == model.ItemDone {
+		t.Fatalf("refused completion changed the task: %+v, %v", current, err)
+	}
+
+	done, refusal := callMCPTask(t, agent, "task_complete", map[string]any{"task_id": taskID, "run_id": runID, "expected_version": updated.Version, "complete_item_ids": []string{ship}})
+	if refusal != "" || done.Status != model.TaskDone {
+		t.Fatalf("task_complete = %+v, %q", done, refusal)
+	}
+}
+
+func TestMCPTaskGetHidesTeamTaskFromAgentWithoutRun(t *testing.T) {
+	tasks, _, logger := serverFixture(t)
+	worker := service.AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Team work", Checklist: []string{"Work"}, Visibility: model.VisibilityTeam}, worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := connectMCPAsPrincipal(t, newMCPServer(tasks, model.TaskWork, logger), service.AgentPrincipalWithPolicy("agent:switchboard", switchboardPolicy()))
+	if task, refusal := callMCPTask(t, other, "task_get", map[string]any{"task_id": started.Task.ID}); refusal == "" || task.ID != "" {
+		t.Fatalf("agent without a run read the team task: %+v", task)
+	}
+	if _, refusal := callMCPTask(t, other, "task_update", map[string]any{"task_id": started.Task.ID, "expected_version": started.Task.Version, "current_note": "not mine"}); refusal == "" || strings.Contains(refusal, "version") {
+		t.Fatalf("agent without a run updated the team task or learned its version: %q", refusal)
+	}
+}
+
+func TestAPIErrorReportsCurrentVersionOnStaleWrite(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	created, err := tasks.Create(t.Context(), model.CreateRequest{Title: "Edit me"}, "operator@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Edited"
+	if _, err := tasks.Update(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Title: &title}, "operator@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = tasks.Update(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Title: &title}, "operator@example.com")
+	response := httptest.NewRecorder()
+	if !apiError(response, err) || response.Code != http.StatusConflict {
+		t.Fatalf("stale update status = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Error          string `json:"error"`
+		CurrentVersion int64  `json:"current_version"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.CurrentVersion != created.Version+1 {
+		t.Fatalf("stale update body = %s, %v", response.Body.String(), err)
+	}
+}
+
+func TestWorkerCapabilitiesKeepATokenListBesideDescriptions(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	if _, err := tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{"runner:k8s-job", "discussion"}, Descriptions: map[string]string{"runner:k8s-job": "Runs in a Job"}, TTLSeconds: 60}, service.AgentPrincipal("agent:runner")); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/worker-capabilities", nil)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, service.HumanPrincipal("human:owner")))
+	response := httptest.NewRecorder()
+	listWorkerCapabilities(tasks).ServeHTTP(response, request)
+	// Pages loaded before descriptions existed read capabilities as a list of tokens.
+	if want := `{"capabilities":["discussion","runner:k8s-job"],"descriptions":{"runner:k8s-job":"Runs in a Job"}}`; response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != want {
+		t.Fatalf("capabilities = %d %s, want %s", response.Code, response.Body.String(), want)
+	}
+}
+
+func TestMCPTaskGetAndClaimReturnRecentRunsUnlessAllRuns(t *testing.T) {
+	tasks, database, logger := serverFixture(t)
+	agent := service.AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Long-lived task", Checklist: []string{"Work"}}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Earlier runs that went stale, then the task left claimable.
+	for index := range recentRuns + 9 {
+		at := started.Run.StartedAt.Add(-time.Duration(index+1) * time.Minute).Format(time.RFC3339Nano)
+		if _, err := database.DB().ExecContext(t.Context(), `INSERT INTO agent_runs (id,task_id,agent,status,lease_expires_at,last_heartbeat_at,started_at,ended_at) VALUES (?,?,?,?,?,?,?,?)`, fmt.Sprintf("EARLIER%02d", index), started.Task.ID, "agent:worker", model.TaskStale, at, at, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.DB().ExecContext(t.Context(), `UPDATE tasks SET status=? WHERE id=?`, model.TaskStale, started.Task.ID); err != nil {
+		t.Fatal(err)
+	}
+	session := connectMCPAsPrincipal(t, newMCPServer(tasks, model.TaskWork, logger), agent)
+
+	recent, refusal := callMCPTask(t, session, "task_get", map[string]any{"task_id": started.Task.ID})
+	if refusal != "" || len(recent.Runs) != recentRuns {
+		t.Fatalf("task_get runs = %d, %q; want %d", len(recent.Runs), refusal, recentRuns)
+	}
+	all, refusal := callMCPTask(t, session, "task_get", map[string]any{"task_id": started.Task.ID, "all_runs": true})
+	if refusal != "" || len(all.Runs) != recentRuns+10 {
+		t.Fatalf("task_get all_runs runs = %d, %q; want %d", len(all.Runs), refusal, recentRuns+10)
+	}
+	if recent.Runs[0].ID != all.Runs[0].ID || recent.Runs[recentRuns-1].ID != all.Runs[recentRuns-1].ID {
+		t.Fatalf("task_get did not return the newest runs: %+v", recent.Runs)
+	}
+
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "task_claim", Arguments: map[string]any{"task_id": started.Task.ID, "expected_version": all.Version}})
+	if err != nil || result.IsError {
+		t.Fatalf("task_claim = %+v, %v", result, err)
+	}
+	raw, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claimed model.StartResult
+	if err := json.Unmarshal(raw, &claimed); err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed.Task.Runs) != recentRuns || claimed.Task.Runs[0].ID != claimed.Run.ID {
+		t.Fatalf("task_claim runs = %d, newest %q; want %d led by the new run %q", len(claimed.Task.Runs), claimed.Task.Runs[0].ID, recentRuns, claimed.Run.ID)
+	}
+	if _, err := database.DB().ExecContext(t.Context(), `UPDATE tasks SET status=? WHERE id=?`, model.TaskStale, started.Task.ID); err != nil {
+		t.Fatal(err)
+	}
+	everything, refusal := callMCPTask(t, session, "task_claim", map[string]any{"task_id": started.Task.ID, "expected_version": claimed.Task.Version, "all_runs": true})
+	if refusal != "" || len(everything.Runs) != recentRuns+12 {
+		t.Fatalf("task_claim all_runs runs = %d, %q; want %d", len(everything.Runs), refusal, recentRuns+12)
+	}
+
+	// The REST API, which the web UI's task page reads, keeps the full history.
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task", nil)
+	request.SetPathValue("id", started.Task.ID)
+	request = request.WithContext(context.WithValue(request.Context(), principalKey{}, agent))
+	response := httptest.NewRecorder()
+	getTask(tasks).ServeHTTP(response, request)
+	var output taskOutput
+	if err := json.Unmarshal(response.Body.Bytes(), &output); err != nil || len(output.Task.Runs) != recentRuns+12 {
+		t.Fatalf("REST task runs = %d, %v (%d %s)", len(output.Task.Runs), err, response.Code, response.Body)
 	}
 }

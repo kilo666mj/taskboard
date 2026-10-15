@@ -93,11 +93,11 @@ func (s *Service) SubmitCompletionEvidenceFor(ctx context.Context, taskID, requi
 		return model.CompletionEvidence{}, ErrForbidden
 	}
 	if principal.Agent {
-		if !principal.HasCapability(CapabilityTaskEvidence) {
-			return model.CompletionEvidence{}, ErrForbidden
-		}
 		if _, ok := activeOwnedRun(task, request.RunID, principal.ID); !ok {
 			return model.CompletionEvidence{}, fmt.Errorf("%w: active owned run is required", ErrValidation)
+		}
+		if !principal.HasCapability(CapabilityTaskEvidence) && !holdsLease(task, request.RunID, principal) {
+			return model.CompletionEvidence{}, missingCapability(CapabilityTaskEvidence, "submit evidence for a task whose lease the run does not hold")
 		}
 	} else if !principal.Can(PermissionTaskWrite) {
 		return model.CompletionEvidence{}, ErrForbidden

@@ -38,3 +38,49 @@ test('project grouping retains non-default sections',()=>{
   assert.equal(h.taskGroup(task('a',{section:'Operations'})),'Taskboard / Operations');
   assert.equal(h.taskGroup(task('a',{project:''})),'General');
 });
+test('worker requirements parse from the create form but stay out of edit and template payloads',()=>{
+  const context={state:{taskType:'work'}},fields={taskTitle:'Ship it',taskRequirements:'profile:builder'};
+  context.$=selector=>selector==='#checklistEditor'?{querySelectorAll:()=>[]}:{value:fields[selector.slice(1)]||''};
+  vm.createContext(context);
+  for(const name of ['requirementList','taskFormPayload']){
+    const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
+    vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
+  }
+  assert.deepEqual(Array.from(context.requirementList(' profile:builder, browser ,,')),['profile:builder','browser']);
+  assert.equal('requirements' in context.taskFormPayload(),false);
+  assert.match(source,/captureTask\(\{\.\.\.payload,requirements:requirementList\(\$\('#taskRequirements'\)\.value\)\}\)/);
+});
+test('picking an advertised capability appends it once to free-text requirements',()=>{
+  const context={};vm.createContext(context);
+  for(const name of ['requirementList','addRequirement']){
+    const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
+    vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
+  }
+  assert.equal(context.addRequirement('',"profile:pickup"),'profile:pickup');
+  assert.equal(context.addRequirement('profile:not-deployed-yet, ',"runner:k8s-job"),'profile:not-deployed-yet, runner:k8s-job');
+  assert.equal(context.addRequirement('runner:k8s-job',"runner:k8s-job"),'runner:k8s-job');
+});
+test('card requirement suggestions hide with the requirements form on finished tasks',()=>{
+  const html=fs.readFileSync(`${__dirname}/index.html`,'utf8');
+  assert.match(html,/<form class="requirements-form">(?:(?!<\/form>)[\s\S])*class="requirement-suggestions"(?:(?!<\/form>)[\s\S])*<\/form>/);
+});
+test('requirement suggestions show each capability with its description',()=>{
+  const created=[];
+  const element=tag=>{const node={tag,children:[],attributes:{},className:'',textContent:'',title:'',listeners:{},append(...items){node.children.push(...items)},setAttribute(name,value){node.attributes[name]=value},addEventListener(name,fn){node.listeners[name]=fn},replaceChildren(...items){node.children=items}};created.push(node);return node};
+  const context={state:{workerCapabilities:[{capability:'profile:pickup',description:'Runs a queued task'},{capability:'discussion'},{capability:'runner:k8s-job',description:'Runs in a Job'}]},document:{createElement:element},Event:class{constructor(type){this.type=type}}};
+  vm.createContext(context);
+  for(const name of ['requirementList','addRequirement','renderRequirementSuggestions']){
+    const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
+    vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
+  }
+  const container=element('div'),input={value:'runner:k8s-job',dispatchEvent(){},focus(){}};
+  context.renderRequirementSuggestions(container,input);
+  const buttons=container.children.slice(1);
+  assert.deepEqual(buttons.map(button=>button.children[0].textContent),['+ profile:pickup','+ discussion']);
+  assert.equal(buttons[0].title,'Runs a queued task');
+  assert.equal(buttons[0].children[1].textContent,'Runs a queued task');
+  assert.equal(buttons[0].attributes['aria-label'],'Add requirement profile:pickup: Runs a queued task');
+  assert.equal(buttons[1].children.length,1);
+  buttons[0].listeners.click();
+  assert.equal(input.value,'runner:k8s-job, profile:pickup');
+});

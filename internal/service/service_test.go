@@ -1111,3 +1111,45 @@ func TestMoveReordersTasksWithinSection(t *testing.T) {
 		t.Fatalf("moving a neighbor changed its version from %d to %d", first.Version, listed[1].Version)
 	}
 }
+
+func TestStaleClaimReportsCurrentVersion(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	alice := HumanPrincipal("alice@example.com")
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Pickup", Visibility: model.VisibilityAgent, Checklist: []string{"Do it"}}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := "Edited after the agent listed it"
+	edited, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Summary: &summary}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: created.Version}, AgentPrincipal("codex"))
+	var stale *VersionConflictError
+	if !errors.As(err, &stale) || !errors.Is(err, ErrConflict) || stale.CurrentVersion != edited.Version || stale.ExpectedVersion != created.Version {
+		t.Fatalf("stale claim error = %v", err)
+	}
+	if _, err := tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: stale.CurrentVersion}, AgentPrincipal("codex")); err != nil {
+		t.Fatalf("claim at the reported version: %v", err)
+	}
+}
+
+func TestDeferredTaskCannotBeClaimedUntilItsDay(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	alice := HumanPrincipal("alice@example.com")
+	created, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Pickup", Visibility: model.VisibilityAgent, DeferUntil: "2999-01-01"}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: created.Version}, AgentPrincipal("codex")); !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "deferred until 2999-01-01") {
+		t.Fatalf("deferred claim error = %v", err)
+	}
+	past := "2000-01-01"
+	edited, err := tasks.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, DeferUntil: &past}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: edited.Version}, AgentPrincipal("codex")); err != nil {
+		t.Fatalf("claim after the deferral passed: %v", err)
+	}
+}

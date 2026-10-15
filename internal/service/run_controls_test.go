@@ -372,3 +372,65 @@ func TestRunControlRejectRequiresReasonAndDoesNotMutateTask(t *testing.T) {
 		t.Fatalf("task after rejection = %+v, %v", current, err)
 	}
 }
+
+func TestPendingCancelMarksTaskAndRefusesSecondCancel(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	human := HumanPrincipal("human:operator")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Cancel once", Checklist: []string{"Work"}, IdempotencyKey: "cancel-once-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked := func() bool {
+		t.Helper()
+		current, err := tasks.GetFor(t.Context(), started.Task.ID, human)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := []model.Task{current}
+		if err := tasks.MarkCancelRequestedFor(t.Context(), items, human); err != nil {
+			t.Fatal(err)
+		}
+		return items[0].CancelRequested
+	}
+	cancel := model.CreateRunControlRequest{TargetRunID: started.Run.ID, Kind: model.RunControlCancel, ExpectedVersion: started.Task.Version}
+	if marked() {
+		t.Fatal("cancel_requested set before any cancel")
+	}
+	first, err := tasks.CreateRunControlFor(t.Context(), started.Task.ID, cancel, human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marked() {
+		t.Fatal("requested cancel not marked")
+	}
+	if _, err := tasks.CreateRunControlFor(t.Context(), started.Task.ID, cancel, human); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second cancel error = %v, want conflict", err)
+	}
+	if _, err := tasks.UpdateRunControlFor(t.Context(), first.ID, model.UpdateRunControlRequest{Status: model.RunControlAcknowledged, IdempotencyKey: "cancel-once-ack"}, agent); err != nil {
+		t.Fatal(err)
+	}
+	if !marked() {
+		t.Fatal("acknowledged cancel not marked")
+	}
+	if _, err := tasks.UpdateRunControlFor(t.Context(), first.ID, model.UpdateRunControlRequest{Status: model.RunControlRejected, OutcomeNote: "Finishing a migration", IdempotencyKey: "cancel-once-reject"}, agent); err != nil {
+		t.Fatal(err)
+	}
+	if marked() {
+		t.Fatal("rejected cancel still marked")
+	}
+	second, err := tasks.CreateRunControlFor(t.Context(), started.Task.ID, cancel, human)
+	if err != nil {
+		t.Fatalf("cancel after rejection = %v", err)
+	}
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE run_control_requests SET expires_at=? WHERE id=?`, past, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if marked() {
+		t.Fatal("expired cancel still marked")
+	}
+	if err := tasks.MarkCancelRequestedFor(t.Context(), []model.Task{}, agent); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -167,6 +167,33 @@ func (s *Service) ListPendingRunControlsFor(ctx context.Context, limit int, prin
 	return s.store.ListAgentRunControls(ctx, principal.ID, limit)
 }
 
+// MarkCancelRequestedFor sets CancelRequested on tasks whose active run has
+// an open, unexpired cancel control, so a card can show the pending cancel.
+func (s *Service) MarkCancelRequestedFor(ctx context.Context, tasks []model.Task, principal Principal) error {
+	if principal.Agent || len(tasks) == 0 {
+		return nil
+	}
+	open, err := s.store.ListOpenRunControls(ctx)
+	if err != nil {
+		return err
+	}
+	now, pending := time.Now().UTC(), map[string]bool{}
+	for _, item := range open {
+		if item.Kind == model.RunControlCancel && item.ExpiresAt.After(now) {
+			pending[item.TargetRunID] = true
+		}
+	}
+	for index := range tasks {
+		tasks[index].CancelRequested = false
+		for _, run := range tasks[index].Runs {
+			if run.Status == model.TaskActive && run.EndedAt == nil && pending[run.ID] {
+				tasks[index].CancelRequested = true
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) CreateRunControlFor(ctx context.Context, taskID string, request model.CreateRunControlRequest, principal Principal) (model.RunControlRequest, error) {
 	if principal.Agent || !principal.Can(PermissionTaskWrite) {
 		return model.RunControlRequest{}, ErrForbidden
