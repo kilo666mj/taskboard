@@ -205,17 +205,62 @@ func missingCapability(capability, action string) error {
 	return fmt.Errorf("%w: the %s capability is required to %s", ErrForbidden, capability, action)
 }
 
+// VersionConflictError refuses a write whose expected_version is stale. It
+// carries the task's current version so a caller can retry from the value
+// Taskboard returned instead of re-reading the task. It wraps ErrConflict.
+type VersionConflictError struct {
+	CurrentVersion  int64
+	ExpectedVersion int64
+	Hint            string
+}
+
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("%s: the task is at version %d, not %d; %s", ErrConflict, e.CurrentVersion, e.ExpectedVersion, e.Hint)
+}
+
+func (e *VersionConflictError) Unwrap() error { return ErrConflict }
+
 // versionConflict explains a stale expected_version. A task most often moves
 // under an agent because its run lease expired, which marks it stale and ends
 // the run; the agent then has to re-read and claim it before continuing.
 func versionConflict(current model.Task, expected int64, runEnded bool) error {
-	hint := "re-read it with task_get and retry with the current version"
+	hint := "retry with the current version, re-reading the task with task_get first if someone else may have changed it"
 	if current.Status == model.TaskStale {
 		hint = "its run lease expired, so the task is stale; claim it again with task_claim (using the current version) and retry with the new run"
 	} else if runEnded {
 		hint = "your run has ended; claim the task again with task_claim and retry with the new run"
 	}
-	return fmt.Errorf("%w: the task is at version %d, not %d; %s", ErrConflict, current.Version, expected, hint)
+	return &VersionConflictError{CurrentVersion: current.Version, ExpectedVersion: expected, Hint: hint}
+}
+
+// lostVersionRace explains a conditional write that matched no row because
+// another writer committed after the version check. It re-reads the task in
+// the same transaction so the refusal still reports the current version.
+func lostVersionRace(ctx context.Context, tx *store.Tx, taskID string, expected int64) error {
+	current, err := store.LoadTask(ctx, tx, taskID)
+	if err != nil || current.Version == expected {
+		return ErrConflict
+	}
+	return versionConflict(current, expected, false)
+}
+
+// openRequiredItemIDs lists, in checklist order, the required items that are
+// neither done nor skipped and so still block completion.
+func openRequiredItemIDs(ctx context.Context, tx *store.Tx, taskID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM checklist_items WHERE task_id=? AND required=TRUE AND status NOT IN (?,?) ORDER BY position`, taskID, model.ItemDone, model.ItemSkipped)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func canMutate(task model.Task, principal Principal) bool {
@@ -264,6 +309,26 @@ func producerFieldsOnly(request model.UpdateRequest) bool {
 		request.Recurrence == nil && !request.Reviewed && request.Checklist == nil && request.Blocker == nil &&
 		request.WaitingFor == nil && request.CurrentItemID == "" && len(request.CompleteItemIDs) == 0 &&
 		len(request.SkipItemIDs) == 0 && len(request.AddItems) == 0 && request.DuplicateOf == nil
+}
+
+// pickupRunnerMayNote lets an agent that can claim agent-pickup work say on an
+// unclaimed pickup task why it could not start it, such as a refused claim,
+// so the card shows the reason instead of only the runner's logs. Only the
+// note changes; status, ownership, checklist and the work stay with whoever
+// claims the task and with people. A runner's note makes it the task's last
+// editor like any other agent write.
+func pickupRunnerMayNote(task model.Task, principal Principal, request model.UpdateRequest) bool {
+	if !principal.HasCapability(CapabilityTaskClaim) || task.Visibility != model.VisibilityAgent || task.Owner != "" ||
+		task.Status != model.TaskQueued && task.Status != model.TaskStale {
+		return false
+	}
+	for _, run := range task.Runs {
+		if run.EndedAt == nil {
+			return false
+		}
+	}
+	return request.CurrentNote != nil && request.Status == "" && request.Title == nil && request.Summary == nil &&
+		request.Priority == nil && producerFieldsOnly(request)
 }
 
 func validateIdempotencyKey(key string) error {
@@ -1267,7 +1332,7 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 		return model.StartResult{}, err
 	}
 	if current.Version != request.ExpectedVersion {
-		return model.StartResult{}, ErrConflict
+		return model.StartResult{}, versionConflict(current, request.ExpectedVersion, false)
 	}
 	if current.Status == model.TaskDone || current.Status == model.TaskCancelled {
 		if keptID, err := store.DuplicateOf(ctx, tx, taskID); err == nil && keptID != "" {
@@ -1281,6 +1346,10 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	}
 	if unmetDependencies > 0 {
 		return model.StartResult{}, fmt.Errorf("%w: task has %d unmet dependencies", ErrValidation, unmetDependencies)
+	}
+	// The UTC day, as pickup runners use; the web UI compares against the viewer's local day.
+	if current.DeferUntil > now.Format("2006-01-02") {
+		return model.StartResult{}, fmt.Errorf("%w: task is deferred until %s", ErrValidation, current.DeferUntil)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE checklist_items SET status=?,updated_at=?
 		WHERE id=(SELECT id FROM checklist_items WHERE task_id=? AND status=? ORDER BY position LIMIT 1)
@@ -1297,7 +1366,7 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 		return model.StartResult{}, err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
-		return model.StartResult{}, ErrConflict
+		return model.StartResult{}, lostVersionRace(ctx, tx, taskID, request.ExpectedVersion)
 	}
 	eventPayload := map[string]any{"status": model.TaskActive, "version": request.ExpectedVersion + 1}
 	event := model.Event{ID: newID(now), TaskID: taskID, RunID: runID, Kind: "task.claimed", Actor: request.Agent, Message: "Task claimed", Payload: mergePayload(eventPayload, idempotencyPayload("task_claim", request.IdempotencyKey, request.IdempotencyHash)), CreatedAt: now}
@@ -1581,12 +1650,14 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		}
 	}
 	if status == model.TaskDone {
-		var remaining int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM checklist_items WHERE task_id=? AND required=TRUE AND status NOT IN (?,?)`, taskID, model.ItemDone, model.ItemSkipped).Scan(&remaining); err != nil {
+		open, err := openRequiredItemIDs(ctx, tx, taskID)
+		if err != nil {
 			return model.Task{}, err
 		}
-		if remaining > 0 {
-			return model.Task{}, fmt.Errorf("%w: %d required checklist items remain open", ErrValidation, remaining)
+		if len(open) > 0 {
+			// Name the items so the caller can act on them, but never infer
+			// that they are finished: only the caller knows that.
+			return model.Task{}, fmt.Errorf("%w: %d required checklist items remain open: %s; once each is finished, send it in complete_item_ids, or skip one that no longer applies with skip_item_ids and a skip_reason", ErrValidation, len(open), strings.Join(open, ", "))
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT label FROM completion_requirements WHERE task_id=? AND required=TRUE AND status NOT IN (?,?) ORDER BY id`, taskID, model.RequirementSatisfied, model.RequirementWaived)
 		if err != nil {
@@ -1717,7 +1788,7 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		return model.Task{}, err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
-		return model.Task{}, ErrConflict
+		return model.Task{}, lostVersionRace(ctx, tx, taskID, request.ExpectedVersion)
 	}
 	var keptEvent *model.Event
 	switch {
@@ -1874,12 +1945,6 @@ func (s *Service) updateFor(ctx context.Context, taskID string, request model.Up
 			s.idempotencyMu.Lock()
 			defer s.idempotencyMu.Unlock()
 		}
-		if !principal.HasCapability(CapabilityTaskUpdate) {
-			return model.Task{}, missingCapability(CapabilityTaskUpdate, "update tasks")
-		}
-		if request.Status == model.TaskDone && !principal.HasCapability(CapabilityTaskComplete) {
-			return model.Task{}, missingCapability(CapabilityTaskComplete, "mark tasks done")
-		}
 		marksDuplicate := request.DuplicateOf != nil && strings.TrimSpace(*request.DuplicateOf) != ""
 		if (request.Status == model.TaskCancelled || marksDuplicate) && !principal.HasCapability(CapabilityTaskSensitive) {
 			return model.Task{}, missingCapability(CapabilityTaskSensitive, "cancel tasks or mark them duplicates; ask a person to do it")
@@ -1902,6 +1967,24 @@ func (s *Service) updateFor(ctx context.Context, taskID string, request model.Up
 		if replay {
 			return s.GetFor(ctx, event.TaskID, principal)
 		}
+		// A run holding the task's lease may update and complete it without
+		// task:update or task:complete; cancel, duplicate and skip stay gated.
+		// Checked after replay: completing ends the run, and a retried request
+		// must still return its committed result.
+		leased := false
+		if strings.TrimSpace(request.RunID) != "" {
+			task, err := s.GetFor(ctx, taskID, principal)
+			if err != nil && !errors.Is(err, ErrForbidden) && !errors.Is(err, store.ErrNotFound) {
+				return model.Task{}, err
+			}
+			leased = err == nil && canMutate(task, principal) && holdsLease(task, request.RunID, principal)
+		}
+		if !leased && !principal.HasCapability(CapabilityTaskUpdate) {
+			return model.Task{}, missingCapability(CapabilityTaskUpdate, "update tasks")
+		}
+		if request.Status == model.TaskDone && !leased && !principal.HasCapability(CapabilityTaskComplete) {
+			return model.Task{}, missingCapability(CapabilityTaskComplete, "mark tasks done")
+		}
 	} else if !principal.Can(PermissionTaskWrite) {
 		return model.Task{}, ErrForbidden
 	}
@@ -1909,7 +1992,7 @@ func (s *Service) updateFor(ctx context.Context, taskID string, request model.Up
 	if err != nil {
 		return model.Task{}, err
 	}
-	if !canMutate(current, principal) && !(producerMayUpdate(current, principal) && producerFieldsOnly(request)) {
+	if !canMutate(current, principal) && !(producerMayUpdate(current, principal) && producerFieldsOnly(request)) && !pickupRunnerMayNote(current, principal, request) {
 		if principal.Agent && current.Owner != principal.ID {
 			return model.Task{}, fmt.Errorf("%w: the task is owned by %q, not %s; claim it first", ErrForbidden, current.Owner, principal.ID)
 		}
@@ -1957,12 +2040,21 @@ func (s *Service) Heartbeat(ctx context.Context, taskID, runID, actor string) (o
 }
 
 func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, principal Principal) (model.HeartbeatResult, error) {
-	if !principal.Agent || !principal.HasCapability(CapabilityTaskUpdate) {
+	if !principal.Agent {
 		return model.HeartbeatResult{}, ErrForbidden
 	}
 	task, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
 		return model.HeartbeatResult{}, err
+	}
+	if !canMutate(task, principal) {
+		return model.HeartbeatResult{}, ErrForbidden
+	}
+	// A run may renew its own lease while it is still live; a lapsed lease
+	// cannot be revived without task:update.
+	leased := holdsLease(task, runID, principal)
+	if !leased && !principal.HasCapability(CapabilityTaskUpdate) {
+		return model.HeartbeatResult{}, missingCapability(CapabilityTaskUpdate, "heartbeat a run whose lease has lapsed")
 	}
 	for _, run := range task.Runs {
 		if run.ID == strings.TrimSpace(runID) && run.Agent == principal.ID {
@@ -1974,7 +2066,7 @@ func (s *Service) HeartbeatFor(ctx context.Context, taskID, runID string, princi
 				return model.HeartbeatResult{}, err
 			}
 			var pending []model.TaskMessage
-			if principal.HasCapability(CapabilityTaskMessage) {
+			if leased || principal.HasCapability(CapabilityTaskMessage) {
 				pending, err = s.store.ListPendingTaskMessages(ctx, taskID, runID, principal.ID, 50)
 				if err != nil {
 					return model.HeartbeatResult{}, err
@@ -2061,7 +2153,7 @@ func (s *Service) renameRun(ctx context.Context, taskID, runID string, request m
 		return model.Task{}, err
 	}
 	if current.Version != request.ExpectedVersion {
-		return model.Task{}, ErrConflict
+		return model.Task{}, versionConflict(current, request.ExpectedVersion, false)
 	}
 	var previous, sessionID string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(agent_session.callsign,run.callsign),run.session_id FROM agent_runs run LEFT JOIN agent_sessions agent_session ON agent_session.id=run.session_id WHERE run.id=? AND run.task_id=?`, runID, taskID).Scan(&previous, &sessionID); errors.Is(err, sql.ErrNoRows) {
@@ -2119,7 +2211,7 @@ func (s *Service) Move(ctx context.Context, taskID string, request model.MoveReq
 		return model.Task{}, err
 	}
 	if current.Version != request.ExpectedVersion {
-		return model.Task{}, ErrConflict
+		return model.Task{}, versionConflict(current, request.ExpectedVersion, false)
 	}
 	if current.Status == model.TaskDone || current.Status == model.TaskCancelled {
 		return model.Task{}, fmt.Errorf("%w: terminal tasks cannot be reordered", ErrValidation)

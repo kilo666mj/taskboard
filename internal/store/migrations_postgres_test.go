@@ -52,7 +52,7 @@ func TestPostgresMigrationMetadataAndCompatibility(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := admin.ExecContext(t.Context(), `INSERT INTO `+schema+`.schema_migrations(version,name,checksum,applied_at) VALUES($1,'future','future','2026-01-01T00:00:00Z')`, latestSchemaVersion+1); err != nil {
+		if _, err := admin.ExecContext(t.Context(), `INSERT INTO `+schema+`.schema_migrations(version,name,checksum,applied_at) SELECT MAX(version)+1,'future','future','2026-01-01T00:00:00Z' FROM `+schema+`.schema_migrations`); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := OpenURL(t.Context(), databaseURL); err == nil || !strings.Contains(err.Error(), "newer than supported") {

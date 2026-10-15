@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,9 @@ func TestFreshSchemaRecordsSealedBaseline(t *testing.T) {
 
 	var version int
 	var name, checksum string
-	if err := database.DB().QueryRowContext(t.Context(), `SELECT version,name,checksum FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&version, &name, &checksum); err != nil {
+	// Look up this binary's newest migration rather than the newest row: the
+	// schema compatibility check pre-migrates fresh databases to a newer release.
+	if err := database.DB().QueryRowContext(t.Context(), `SELECT version,name,checksum FROM schema_migrations WHERE version=?`, latestSchemaVersion).Scan(&version, &name, &checksum); err != nil {
 		t.Fatal(err)
 	}
 	if version != latestSchemaVersion || name != schemaMigrations[len(schemaMigrations)-1].Name || len(checksum) != 64 {
@@ -71,7 +72,13 @@ func TestMigrationRejectsUnknownChecksum(t *testing.T) {
 func TestUpgradeReleasedBaselineBeforeEditProvenance(t *testing.T) {
 	path := createMigratedSQLite(t)
 	const released = "9b02436acc5f77fc8f43d198e93ad0947bb5d8d0bc5c54dd32cb17e307fec79c"
-	// Roll back to the released schema 15: later migrations add these tables and columns.
+	// Roll back to the released schema 15: reverse the rollback-safe migrations,
+	// then undo the one-way ones that added these tables and columns.
+	for index := latestSchemaVersion - 1; index >= lastOneWaySchemaVersion; index-- {
+		for _, statement := range schemaMigrations[index].SQLiteDown {
+			mutateSQLite(t, path, statement)
+		}
+	}
 	mutateSQLite(t, path, `DROP INDEX idx_tasks_duplicate_of`)
 	mutateSQLite(t, path, `ALTER TABLE tasks DROP COLUMN duplicate_of`)
 	mutateSQLite(t, path, `DROP TABLE task_discussion_messages`)
@@ -106,7 +113,7 @@ func TestUpgradeReleasedBaselineBeforeEditProvenance(t *testing.T) {
 
 func TestMigrationRejectsNewerSchema(t *testing.T) {
 	path := createMigratedSQLite(t)
-	mutateSQLite(t, path, fmt.Sprintf(`INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(%d,'future','future','2026-01-01T00:00:00Z')`, latestSchemaVersion+1))
+	mutateSQLite(t, path, `INSERT INTO schema_migrations(version,name,checksum,applied_at) SELECT MAX(version)+1,'future','future','2026-01-01T00:00:00Z' FROM schema_migrations`)
 	if _, err := Open(t.Context(), path); err == nil || !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("Open error = %v, want newer schema error", err)
 	}

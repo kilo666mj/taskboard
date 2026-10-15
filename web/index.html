@@ -144,6 +144,7 @@
       <datalist id="sectionOptions"></datalist>
       <datalist id="projectOptions"></datalist>
       <label>Repository <span>(optional)</span><input id="taskRepository" maxlength="300" placeholder="taskboard"></label>
+      <div id="taskRequirementsField"><label>Worker requirements <span>(optional)</span><input id="taskRequirements" maxlength="2000" placeholder="repo:owner/name, browser, kubernetes" aria-describedby="taskRequirementsHelp"></label><p id="taskRequirementsHelp" class="field-help requirements-help">Only a worker that advertises every requirement listed here can pick this task up. <code>profile:&lt;id&gt;</code> chooses which agent runs it; leave it empty for the default pickup agent. Suggestions show what live workers advertise right now.</p><div class="requirement-suggestions" hidden></div></div>
       <div class="form-row planning-row">
         <label>Due date<input id="taskDueDate" type="date"></label>
         <label>Defer until<input id="taskDeferUntil" type="date"></label>
@@ -235,7 +236,7 @@
         <details class="requirements-panel" hidden>
           <summary>Worker requirements</summary>
           <div class="requirements-list"></div>
-          <form class="requirements-form"><label>Worker requirements<input name="requirements" maxlength="2000" placeholder="repo:org/name, browser, kubernetes"></label><button class="secondary" type="submit">Save requirements</button></form>
+          <form class="requirements-form"><label>Worker requirements<input name="requirements" maxlength="2000" placeholder="repo:org/name, browser, kubernetes"></label><button class="secondary" type="submit">Save requirements</button><p class="field-help requirements-help">Only a worker that advertises every requirement listed here can pick this task up. <code>profile:&lt;id&gt;</code> chooses which agent runs it; leave it empty for the default pickup agent. Suggestions show what live workers advertise right now.</p><div class="requirement-suggestions" hidden></div></form>
         </details>
         <h3 class="checklist-heading">Checklist <span class="checklist-progress"></span></h3>
         <ol class="checklist"></ol>
@@ -264,7 +265,7 @@
             <div class="link-add" hidden>
               <form class="reference-form">
                 <div class="reference-fields">
-                  <label>Kind<select name="kind"><option value="linear">Linear</option><option value="repository">Repository</option><option value="worktree">Worktree</option><option value="branch">Branch</option><option value="commit">Commit</option><option value="pull_request">Pull request</option><option value="ci_run">CI run</option><option value="deployment">Deployment</option><option value="screenshot">Screenshot</option><option value="review">Review</option></select></label>
+                  <label>Kind<select name="kind"><option value="linear">Linear</option><option value="repository">Repository</option><option value="worktree">Worktree</option><option value="branch">Branch</option><option value="commit">Commit</option><option value="pull_request">Pull request</option><option value="ci_run">CI run</option><option value="deployment">Deployment</option><option value="screenshot">Screenshot</option><option value="review">Review</option><option value="transcript">Transcript</option></select></label>
                   <label>Label<input name="label" maxlength="200" required placeholder="PR #42"></label>
                 </div>
                 <label>Locator<input name="locator" maxlength="2000" placeholder="org/repo#42, branch, SHA, or local path"></label>

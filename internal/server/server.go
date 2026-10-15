@@ -40,9 +40,6 @@ type principalKey struct{}
 // the event stream can end when that session is logged out or expires.
 type sessionCheckKey struct{}
 
-type taskIDInput struct {
-	TaskID string `json:"task_id" jsonschema:"Task ULID"`
-}
 type listInput struct {
 	Statuses   []model.TaskStatus   `json:"statuses,omitempty" jsonschema:"Optional task statuses to include"`
 	Visibility model.TaskVisibility `json:"visibility,omitempty" jsonschema:"Optional visibility to include: agent (the pickup lane), team, or private"`
@@ -58,9 +55,27 @@ type heartbeatInput struct {
 	RunID  string `json:"run_id" jsonschema:"Agent run ULID"`
 }
 type claimInput struct {
-	TaskID string `json:"task_id" jsonschema:"Task ULID"`
+	TaskID  string `json:"task_id" jsonschema:"Task ULID"`
+	AllRuns bool   `json:"all_runs,omitempty" jsonschema:"Return every run of the task instead of only the newest 10"`
 	model.ClaimRequest
 }
+type taskGetInput struct {
+	TaskID  string `json:"task_id" jsonschema:"Task ULID"`
+	AllRuns bool   `json:"all_runs,omitempty" jsonschema:"Return every run of the task instead of only the newest 10"`
+}
+
+// recentRuns caps the runs task_get and task_claim return unless all_runs is
+// set, so a long-lived task's result fits an MCP client's tool-result limit.
+const recentRuns = 10
+
+// recentRunsOf keeps the newest runs; the store lists them newest first.
+func recentRunsOf(task model.Task, all bool) model.Task {
+	if !all && len(task.Runs) > recentRuns {
+		task.Runs = task.Runs[:recentRuns]
+	}
+	return task
+}
+
 type messageListInput struct {
 	TaskID string `json:"task_id" jsonschema:"Task ULID"`
 	Before string `json:"before,omitempty" jsonschema:"Optional message ULID cursor for older messages"`
@@ -140,6 +155,14 @@ type dependencyListInput struct {
 }
 type workerOutput struct {
 	Worker model.WorkerAdvertisement `json:"worker"`
+}
+
+// capabilitiesOutput keeps capabilities a plain token list, which pages
+// loaded before descriptions existed still render, and adds descriptions
+// beside it.
+type capabilitiesOutput struct {
+	Capabilities []string          `json:"capabilities"`
+	Descriptions map[string]string `json:"descriptions"`
 }
 type requirementsOutput struct {
 	Requirements []string `json:"requirements"`
@@ -322,6 +345,7 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("POST /api/v1/tasks/{id}/dependencies", authenticated(http.HandlerFunc(addTaskDependency(service))))
 	mux.Handle("DELETE /api/v1/tasks/{id}/dependencies/{blockedBy}", authenticated(http.HandlerFunc(removeTaskDependency(service))))
 	mux.Handle("PUT /api/v1/tasks/{id}/requirements", authenticated(http.HandlerFunc(setTaskRequirements(service))))
+	mux.Handle("GET /api/v1/worker-capabilities", authenticated(http.HandlerFunc(listWorkerCapabilities(service))))
 	mux.Handle("GET /api/v1/analytics", authenticated(http.HandlerFunc(getAnalytics(service))))
 	mux.Handle("POST /api/v1/tasks/{id}/runs", authenticated(http.HandlerFunc(claimTask(service))))
 	mux.Handle("PATCH /api/v1/tasks/{id}/runs/{run}", authenticated(http.HandlerFunc(renameRun(service))))
@@ -498,20 +522,21 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		task, err := tasks.CreateFor(ctx, input, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. Immediately after finishing each bounded step, send that one complete_item_id and the next current_item_id instead of batching progress at the end. expected_version prevents overwriting another agent's changes.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. Immediately after finishing each bounded step, send that one complete_item_id and the next current_item_id instead of batching progress at the end. expected_version prevents overwriting another agent's changes; a stale one is refused with the task's current version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_claim", Description: "Claim an existing non-terminal task and receive a fresh leased run. Reuse the controller-provided agent_session_key to retain this agent session's callsign across tasks.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input claimInput) (*mcp.CallToolResult, model.StartResult, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_claim", Description: "Claim an existing non-terminal task and receive a fresh leased run. Reuse the controller-provided agent_session_key to retain this agent session's callsign across tasks. The task lists its newest 10 runs unless all_runs is set.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input claimInput) (*mcp.CallToolResult, model.StartResult, error) {
 		input.Client = mcpClient(request)
 		result, err := tasks.ClaimFor(ctx, input.TaskID, input.ClaimRequest, mcpPrincipal(ctx))
+		result.Task = recentRunsOf(result.Task, input.AllRuns)
 		return nil, result, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_move", Description: "Move an open task up or down within its section while preserving optimistic version checks.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input moveInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.MoveFor(ctx, input.TaskID, input.MoveRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_complete", Description: "Mark a task done. Rejected while any required checklist item remains open; skip items that no longer apply with skip_item_ids and a skip_reason (needs the task:skip capability). On a version conflict, re-read the task; if its run lease expired, claim it again before retrying.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_complete", Description: "Mark a task done. Rejected while any required checklist item remains open, and the refusal lists those item ids; send each finished one in complete_item_ids, and skip items that no longer apply with skip_item_ids and a skip_reason (needs the task:skip capability). A version conflict reports the task's current version; if its run lease expired, claim it again before retrying.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		input.Status = model.TaskDone
 		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
@@ -646,11 +671,12 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		item, err := tasks.RecordUsageFor(ctx, input.TaskID, input.RecordUsageRequest, mcpPrincipal(ctx))
 		return nil, usageOutput{Usage: item}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and agent runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input taskIDInput) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_get", Description: "Get one task with its ordered checklist and its newest 10 agent runs, or every run with all_runs.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input taskGetInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.GetFor(ctx, input.TaskID, mcpPrincipal(ctx))
 		if err != nil {
 			return nil, taskOutput{}, err
 		}
+		task = recentRunsOf(task, input.AllRuns)
 		// Handoffs are for the agent that owns the work. Any other agent that
 		// may view the task, such as the producer of unclaimed pickup work,
 		// still gets the task without them, as the REST API does.
@@ -724,6 +750,9 @@ func listTasks(tasks *service.Service) http.HandlerFunc {
 		if apiError(w, tasks.MarkDecisionsFor(r.Context(), page.Tasks, principal(r.Context()))) {
 			return
 		}
+		if apiError(w, tasks.MarkCancelRequestedFor(r.Context(), page.Tasks, principal(r.Context()))) {
+			return
+		}
 		tasks.MarkDiscussableFor(r.Context(), page.Tasks, principal(r.Context()))
 		if apiError(w, tasks.MarkLinkCountsFor(r.Context(), page.Tasks, principal(r.Context()))) {
 			return
@@ -765,6 +794,9 @@ func getTask(tasks *service.Service) http.HandlerFunc {
 		}
 		marked := []model.Task{task}
 		if apiError(w, tasks.MarkDecisionsFor(r.Context(), marked, principal(r.Context()))) {
+			return
+		}
+		if apiError(w, tasks.MarkCancelRequestedFor(r.Context(), marked, principal(r.Context()))) {
 			return
 		}
 		tasks.MarkDiscussableFor(r.Context(), marked, principal(r.Context()))
@@ -1127,6 +1159,22 @@ func removeTaskDependency(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, taskOutput{Task: task})
+	}
+}
+func listWorkerCapabilities(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.WorkerCapabilitiesFor(r.Context(), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		output := capabilitiesOutput{Capabilities: []string{}, Descriptions: map[string]string{}}
+		for _, item := range items {
+			output.Capabilities = append(output.Capabilities, item.Capability)
+			if item.Description != "" {
+				output.Descriptions[item.Capability] = item.Description
+			}
+		}
+		writeJSON(w, http.StatusOK, output)
 	}
 }
 func setTaskRequirements(tasks *service.Service) http.HandlerFunc {
@@ -1677,7 +1725,13 @@ func apiError(w http.ResponseWriter, err error) bool {
 	}
 	status := http.StatusInternalServerError
 	message := "internal error"
+	var stale *service.VersionConflictError
 	switch {
+	case errors.As(err, &stale):
+		// A stale write reports the current version, so the caller can retry
+		// without another read.
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "current_version": stale.CurrentVersion})
+		return true
 	case errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 		message = "not found"

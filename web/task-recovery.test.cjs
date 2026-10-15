@@ -7,7 +7,7 @@ const source=fs.readFileSync(`${__dirname}/app.js`,'utf8');
 function harness(overrides={}){
   const context={Date,state:{role:'member',principal:'person:reviewer',tasks:[],controls:new Map},...overrides};
   vm.createContext(context);
-  for(const name of ['canWriteTasks','canOperateTasks','canRecover','recoveryRun','availableControl','recoveryLabel','requeueTask','releaseTask']){
+  for(const name of ['canWriteTasks','canOperateTasks','canRecover','recoveryRun','availableControl','recoveryLabel','requeueTask','releaseTask','replaceTask']){
     const start=source.search(new RegExp(`^(?:async )?function ${name}\\(`,'m'));
     assert.notEqual(start,-1,`missing ${name}`);
     const rest=source.slice(start);

@@ -90,6 +90,9 @@ type Task struct {
 	// DecisionRequested is set for a person when the task has an open,
 	// unexpired escalation they may answer. It depends on the viewer.
 	DecisionRequested bool `json:"decision_requested,omitempty"`
+	// CancelRequested is set for a person when an open, unexpired cancel
+	// control targets the task's active run.
+	CancelRequested bool `json:"cancel_requested,omitempty"`
 	// Discussable is set for a person when the task's owning controller
 	// currently accepts live discussions.
 	Discussable bool `json:"discussable,omitempty"`
@@ -142,16 +145,27 @@ type SetTaskRequirementsRequest struct {
 	ExpectedVersion int64    `json:"expected_version"`
 }
 type WorkerAdvertisement struct {
-	Principal    string    `json:"principal"`
-	Capabilities []string  `json:"capabilities"`
-	Capacity     int       `json:"capacity"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	Principal    string            `json:"principal"`
+	Capabilities []string          `json:"capabilities"`
+	Descriptions map[string]string `json:"descriptions,omitempty"`
+	Capacity     int               `json:"capacity"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	ExpiresAt    time.Time         `json:"expires_at"`
+}
+
+// WorkerCapability is one advertised capability as people see it when they
+// choose task requirements.
+type WorkerCapability struct {
+	Capability  string `json:"capability"`
+	Description string `json:"description,omitempty"`
 }
 type AdvertiseWorkerRequest struct {
 	Capabilities []string `json:"capabilities"`
-	Capacity     int      `json:"capacity"`
-	TTLSeconds   int      `json:"ttl_seconds,omitempty"`
+	// Descriptions are optional, display-only explanations people see when
+	// they pick task requirements.
+	Descriptions map[string]string `json:"descriptions,omitempty" jsonschema:"Optional one-line explanation per advertised capability, shown to people choosing task requirements: what the worker does for it and when to require it"`
+	Capacity     int               `json:"capacity"`
+	TTLSeconds   int               `json:"ttl_seconds,omitempty"`
 }
 
 type UsageRecord struct {
@@ -428,6 +442,7 @@ const (
 	ReferenceDeployment  ReferenceKind = "deployment"
 	ReferenceScreenshot  ReferenceKind = "screenshot"
 	ReferenceReview      ReferenceKind = "review"
+	ReferenceTranscript  ReferenceKind = "transcript"
 )
 
 const (

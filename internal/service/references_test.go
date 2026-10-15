@@ -87,3 +87,20 @@ func TestMarkLinkCountsForCountsDeliveryItemsForPeople(t *testing.T) {
 		t.Fatalf("agent link count = %d, %v; want unmarked", items[0].LinkCount, err)
 	}
 }
+
+func TestTranscriptReferenceIsAcceptedAndReachesMilestone(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	agent := AgentPrincipal("agent:worker")
+	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Transcript delivery", Checklist: []string{"Ship"}, IdempotencyKey: "transcript-start"}, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := tasks.AddTaskReferenceFor(t.Context(), started.Task.ID, model.AddTaskReferenceRequest{RunID: started.Run.ID, Kind: model.ReferenceTranscript, Label: "Transcript (run 1)", Locator: "tasks/1/runs/1/transcript.html", URL: "https://transcripts.example.com/tasks/1/runs/1", IdempotencyKey: "transcript-run-1"}, agent)
+	if err != nil || created.Kind != model.ReferenceTranscript {
+		t.Fatalf("transcript reference = %+v, %v", created, err)
+	}
+	milestones, err := tasks.DeliveryMilestonesFor(t.Context(), started.Task.ID, agent)
+	if err != nil || len(milestones) != 2 || milestones[1].Kind != "transcript_linked" || milestones[1].Label != "Transcript linked" || milestones[1].ReferenceID != created.ID {
+		t.Fatalf("milestones = %+v, %v", milestones, err)
+	}
+}

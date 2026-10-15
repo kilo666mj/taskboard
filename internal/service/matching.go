@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kilo666mj/taskboard/internal/model"
 	"github.com/kilo666mj/taskboard/internal/store"
@@ -117,11 +118,48 @@ func (s *Service) setTaskRequirementsFor(ctx context.Context, taskID string, req
 	s.publish(event)
 	return s.store.GetTask(ctx, taskID)
 }
+
+// normalizeDescriptions keys descriptions by normalized token, folds each to
+// one line, and refuses ones for capabilities the worker does not advertise.
+func normalizeDescriptions(values map[string]string, capabilities []string) (map[string]string, error) {
+	advertised := map[string]bool{}
+	for _, item := range capabilities {
+		advertised[item] = true
+	}
+	items := map[string]string{}
+	for key, value := range values {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if !advertised[key] {
+			return nil, fmt.Errorf("%w: descriptions may only name advertised capabilities", ErrValidation)
+		}
+		value = strings.Join(strings.Fields(value), " ")
+		if utf8.RuneCountInString(value) > 300 {
+			return nil, fmt.Errorf("%w: capability descriptions are limited to 300 characters", ErrValidation)
+		}
+		if value != "" {
+			items[key] = value
+		}
+	}
+	return items, nil
+}
+
+// WorkerCapabilitiesFor lists what live workers advertise, so a person can
+// pick requirements some worker can match.
+func (s *Service) WorkerCapabilitiesFor(ctx context.Context, principal Principal) ([]model.WorkerCapability, error) {
+	if principal.Agent || !principal.Can(PermissionTaskWrite) {
+		return nil, ErrForbidden
+	}
+	return s.store.ListLiveWorkerCapabilities(ctx)
+}
 func (s *Service) AdvertiseWorkerFor(ctx context.Context, request model.AdvertiseWorkerRequest, principal Principal) (model.WorkerAdvertisement, error) {
 	if !principal.Agent || !principal.HasCapability(CapabilityWorkerAdvertise) {
 		return model.WorkerAdvertisement{}, ErrForbidden
 	}
 	items, err := normalizeRequirements(request.Capabilities)
+	if err != nil {
+		return model.WorkerAdvertisement{}, err
+	}
+	descriptions, err := normalizeDescriptions(request.Descriptions, items)
 	if err != nil {
 		return model.WorkerAdvertisement{}, err
 	}
@@ -136,7 +174,7 @@ func (s *Service) AdvertiseWorkerFor(ctx context.Context, request model.Advertis
 		return model.WorkerAdvertisement{}, fmt.Errorf("%w: ttl_seconds must be 30-3600", ErrValidation)
 	}
 	now := time.Now().UTC()
-	item := model.WorkerAdvertisement{Principal: principal.ID, Capabilities: items, Capacity: request.Capacity, UpdatedAt: now, ExpiresAt: now.Add(ttl)}
+	item := model.WorkerAdvertisement{Principal: principal.ID, Capabilities: items, Descriptions: descriptions, Capacity: request.Capacity, UpdatedAt: now, ExpiresAt: now.Add(ttl)}
 	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return item, err

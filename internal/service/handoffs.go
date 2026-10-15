@@ -22,7 +22,7 @@ func (s *Service) ListRunHandoffsFor(ctx context.Context, taskID string, princip
 }
 
 func (s *Service) AddRunHandoffFor(ctx context.Context, taskID string, request model.AddRunHandoffRequest, principal Principal) (model.RunHandoff, error) {
-	if !principal.Agent || !principal.HasCapability(CapabilityTaskHandoff) {
+	if !principal.Agent {
 		return model.RunHandoff{}, ErrForbidden
 	}
 	taskID, request.RunID = strings.TrimSpace(taskID), strings.TrimSpace(request.RunID)
@@ -45,6 +45,9 @@ func (s *Service) AddRunHandoffFor(ctx context.Context, taskID string, request m
 	}
 	if _, ok := activeOwnedRun(task, request.RunID, principal.ID); !ok {
 		return model.RunHandoff{}, fmt.Errorf("%w: handoff run is not active for this agent", ErrValidation)
+	}
+	if !principal.HasCapability(CapabilityTaskHandoff) && !holdsLease(task, request.RunID, principal) {
+		return model.RunHandoff{}, missingCapability(CapabilityTaskHandoff, "hand off a task whose lease the run does not hold")
 	}
 	if request.IdempotencyKey != "" {
 		s.idempotencyMu.Lock()

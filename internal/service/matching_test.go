@@ -3,7 +3,10 @@ package service
 import (
 	"errors"
 	"github.com/kilo666mj/taskboard/internal/model"
+	"github.com/kilo666mj/taskboard/internal/store"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -135,5 +138,53 @@ func TestAgentsSetOnlyPolicyAllowedRequirements(t *testing.T) {
 	}
 	if _, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Mixed", Requirements: []string{"runner:local", "aws"}}, bridge); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("partly allowed requirement error = %v", err)
+	}
+}
+
+func TestWorkerCapabilitiesListLiveAdvertisementsOnly(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	now := time.Now().UTC()
+	for _, item := range []model.WorkerAdvertisement{
+		// An advertiser that predates descriptions, the most recent one.
+		{Principal: "agent:mod", Capabilities: []string{"discussion", "profile:pickup"}, UpdatedAt: now, ExpiresAt: now.Add(time.Minute)},
+		{Principal: "agent:new", Capabilities: []string{"profile:pickup", "runner:k8s-job"}, Descriptions: map[string]string{"profile:pickup": "New text"}, UpdatedAt: now.Add(-time.Second), ExpiresAt: now.Add(time.Minute)},
+		{Principal: "agent:old", Capabilities: []string{"profile:pickup", "runner:k8s-job"}, Descriptions: map[string]string{"profile:pickup": "Old text", "runner:k8s-job": "Runs in a Job"}, UpdatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Minute)},
+		{Principal: "agent:gone", Capabilities: []string{"profile:retired"}, Descriptions: map[string]string{"profile:retired": "Gone"}, UpdatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Minute)},
+	} {
+		if err := store.UpsertWorkerAdvertisement(t.Context(), tasks.store.DB(), item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := tasks.WorkerCapabilitiesFor(t.Context(), HumanPrincipal("human:owner"))
+	want := []model.WorkerCapability{{Capability: "discussion"}, {Capability: "profile:pickup", Description: "New text"}, {Capability: "runner:k8s-job", Description: "Runs in a Job"}}
+	if err != nil || !slices.Equal(items, want) {
+		t.Fatalf("capabilities = %+v, %v", items, err)
+	}
+	if _, err := tasks.WorkerCapabilitiesFor(t.Context(), AgentPrincipal("agent:one")); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("agent capabilities error = %v", err)
+	}
+}
+
+func TestWorkerAdvertisementDescriptionsAreOptionalAndBounded(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	worker := AgentPrincipal("agent:worker")
+	if _, err := tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{"runner:k8s-job"}, TTLSeconds: 60}, worker); err != nil {
+		t.Fatalf("advertisement without descriptions = %v", err)
+	}
+	item, err := tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{"runner:k8s-job", "profile:pickup"}, Descriptions: map[string]string{" Runner:K8s-Job ": "Runs in a\n  staging Job", "profile:pickup": " "}, TTLSeconds: 60}, worker)
+	if err != nil || !maps.Equal(item.Descriptions, map[string]string{"runner:k8s-job": "Runs in a staging Job"}) {
+		t.Fatalf("normalized descriptions = %+v, %v", item.Descriptions, err)
+	}
+	stored, err := tasks.store.GetWorkerAdvertisement(t.Context(), worker.ID)
+	if err != nil || !maps.Equal(stored.Descriptions, item.Descriptions) {
+		t.Fatalf("stored descriptions = %+v, %v", stored.Descriptions, err)
+	}
+	for name, descriptions := range map[string]map[string]string{
+		"unadvertised": {"profile:other": "Not advertised"},
+		"too long":     {"runner:k8s-job": strings.Repeat("x", 301)},
+	} {
+		if _, err := tasks.AdvertiseWorkerFor(t.Context(), model.AdvertiseWorkerRequest{Capabilities: []string{"runner:k8s-job"}, Descriptions: descriptions, TTLSeconds: 60}, worker); !errors.Is(err, ErrValidation) {
+			t.Fatalf("%s description error = %v", name, err)
+		}
 	}
 }

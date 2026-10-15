@@ -90,7 +90,8 @@ run, or terminal state.
 
 External delivery references are immutable typed pointers, not synchronized
 copies. Supported kinds are `linear`, `repository`, `worktree`, `branch`,
-`commit`, `pull_request`, `ci_run`, `deployment`, `screenshot`, and `review`.
+`commit`, `pull_request`, `ci_run`, `deployment`, `screenshot`, `review`, and
+`transcript`.
 Each reference records a concise label, locator, optional HTTPS URL, creating
 principal, optional source run, and creation time. The server derives human or
 agent provenance from authentication; agents may attach references only from

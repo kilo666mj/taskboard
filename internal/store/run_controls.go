@@ -45,6 +45,12 @@ func (s *Store) ListAgentRunControls(ctx context.Context, agent string, limit in
 	return s.listRunControls(ctx, `SELECT `+runControlColumns+` FROM run_control_requests WHERE target_agent=? AND status IN (?,?,?) ORDER BY id LIMIT ?`, agent, model.RunControlRequested, model.RunControlAcknowledged, model.RunControlAccepted, limit)
 }
 
+// ListOpenRunControls returns every control not yet completed, rejected or
+// expired. Callers check ExpiresAt, since expiry is applied lazily.
+func (s *Store) ListOpenRunControls(ctx context.Context) ([]model.RunControlRequest, error) {
+	return s.listRunControls(ctx, `SELECT `+runControlColumns+` FROM run_control_requests WHERE status IN (?,?,?) ORDER BY task_id,id`, model.RunControlRequested, model.RunControlAcknowledged, model.RunControlAccepted)
+}
+
 func (s *Store) ListAllRunControls(ctx context.Context) ([]model.RunControlRequest, error) {
 	return s.listRunControls(ctx, `SELECT `+runControlColumns+` FROM run_control_requests ORDER BY task_id,id`)
 }

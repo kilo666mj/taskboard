@@ -64,7 +64,7 @@ func TestBlockingEscalationEndsRunAndAnswerQueuesReplacement(t *testing.T) {
 	}
 }
 
-func TestNonBlockingEscalationLeavesRunActiveAndCapabilityIsRequired(t *testing.T) {
+func TestNonBlockingEscalationLeavesRunActiveAndLeaseStandsInForCapability(t *testing.T) {
 	tasks := testService(t, time.Minute)
 	agent := AgentPrincipal("agent:worker")
 	started, err := tasks.StartFor(t.Context(), model.StartRequest{Title: "Ask while working", Checklist: []string{"Implement"}, IdempotencyKey: "start-nonblocking-test"}, agent)
@@ -92,8 +92,10 @@ func TestNonBlockingEscalationLeavesRunActiveAndCapabilityIsRequired(t *testing.
 	}
 	policy := DefaultAgentPolicy()
 	delete(policy.Capabilities, CapabilityTaskEscalate)
-	if _, err := tasks.CreateEscalationFor(t.Context(), current.ID, model.CreateEscalationRequest{RunID: started.Run.ID, ExpectedVersion: current.Version, Question: "Denied", IdempotencyKey: "denied-question"}, AgentPrincipalWithPolicy(agent.ID, policy)); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("missing capability error = %v, want forbidden", err)
+	// The run still holds the task's lease, so the capability is not needed;
+	// lease_test.go covers the refusals.
+	if _, err := tasks.CreateEscalationFor(t.Context(), current.ID, model.CreateEscalationRequest{RunID: started.Run.ID, ExpectedVersion: current.Version, Question: "Leased", IdempotencyKey: "leased-question"}, AgentPrincipalWithPolicy(agent.ID, policy)); err != nil {
+		t.Fatalf("leased escalation without task:escalate = %v", err)
 	}
 }
 

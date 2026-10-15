@@ -14,20 +14,51 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 20
+const latestSchemaVersion = 21
+
+// compatibleFromSchemaVersion is the oldest binary schema version that can run
+// against the schema this binary migrates to. It is the latestSchemaVersion of
+// the previous release: migrations added since then must be additive, so that
+// release still runs here and an image rollback needs no database restore.
+// When you add the first migration after a release, set this to that
+// release's latestSchemaVersion (scripts/check-schema-compat.sh enforces it).
+const compatibleFromSchemaVersion = 20
+
+// lastOneWaySchemaVersion is the last migration shipped before rollback
+// compatibility was enforced. Later migrations must be additive and carry
+// down statements; see AGENTS.md.
+const lastOneWaySchemaVersion = 20
 
 type schemaMigration struct {
 	Version  int
 	Name     string
 	SQLite   []string
 	Postgres []string
+	// SQLiteDown and PostgresDown reverse the migration. They are required
+	// after lastOneWaySchemaVersion and are not part of the checksum.
+	SQLiteDown   []string
+	PostgresDown []string
+	// Retires lists the schema objects ("table.column", "table" or index
+	// name) this migration drops. Only objects no supported release still
+	// uses may be retired.
+	Retires []string
 }
 
 type appliedMigration struct {
-	Version  int
-	Name     string
-	Checksum string
+	Version        int
+	Name           string
+	Checksum       string
+	CompatibleFrom int
 }
+
+// migrationRegistry is the ordered migration list a binary applies, plus the
+// oldest binary schema version its newest schema stays readable by.
+type migrationRegistry struct {
+	migrations     []schemaMigration
+	compatibleFrom int
+}
+
+func (r migrationRegistry) latest() int { return len(r.migrations) }
 
 var schemaMigrations = []schemaMigration{
 	{
@@ -263,6 +294,19 @@ var schemaMigrations = []schemaMigration{
 		`CREATE INDEX IF NOT EXISTS idx_tasks_duplicate_of ON tasks(duplicate_of) WHERE duplicate_of IS NOT NULL`,
 	}},
 	{Version: 20, Name: "daily_review_delivery", SQLite: reviewDeliveryStatements, Postgres: reviewDeliveryStatements},
+	// Migration 21 stores workers' display-only capability descriptions. The
+	// previous release never reads the column, and its upserts leave it at the
+	// default or a stale value, which only changes requirement suggestions.
+	{Version: 21, Name: "worker_capability_descriptions", SQLite: workerDescriptionStatements, Postgres: workerDescriptionStatements, SQLiteDown: workerDescriptionRevertStatements, PostgresDown: workerDescriptionRevertStatements},
+}
+
+var workerDescriptionStatements = []string{
+	`ALTER TABLE worker_advertisements ADD COLUMN descriptions_json TEXT NOT NULL DEFAULT '{}'`,
+}
+
+// workerDescriptionRevertStatements undo migration 21.
+var workerDescriptionRevertStatements = []string{
+	`ALTER TABLE worker_advertisements DROP COLUMN descriptions_json`,
 }
 
 var reviewDeliveryStatements = []string{
@@ -334,7 +378,7 @@ var dependencyIndexes = []string{"idx_task_dependencies_blocker"}
 
 var workerMatchingSchema = map[string][]string{
 	"task_requirements":     {"task_id", "requirement", "created_by", "created_at"},
-	"worker_advertisements": {"principal", "capabilities_json", "capacity", "updated_at", "expires_at"},
+	"worker_advertisements": {"principal", "capabilities_json", "descriptions_json", "capacity", "updated_at", "expires_at"},
 }
 var workerMatchingIndexes = []string{"idx_task_requirements_requirement", "idx_worker_advertisements_expiry"}
 var usageSchema = map[string][]string{"usage_records": {"id", "task_id", "run_id", "provider", "model", "input_tokens", "output_tokens", "estimated_cost_micros", "recorded_by", "created_at"}}
@@ -383,7 +427,14 @@ var administrativeSchema = map[string][]string{
 var administrativeIndexes = []string{"idx_agent_credentials_principal", "idx_admin_audit_created", "idx_webhook_deliveries_due"}
 
 func (s *Store) migrate(ctx context.Context) error {
-	if err := validateDefinedMigrations(); err != nil {
+	if len(schemaMigrations) != latestSchemaVersion {
+		return fmt.Errorf("migration registry ends at %d but latest schema version is %d", len(schemaMigrations), latestSchemaVersion)
+	}
+	return s.migrateRegistry(ctx, migrationRegistry{migrations: schemaMigrations, compatibleFrom: compatibleFromSchemaVersion})
+}
+
+func (s *Store) migrateRegistry(ctx context.Context, registry migrationRegistry) error {
+	if err := validateDefinedMigrations(registry); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -405,7 +456,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := validateMigrationSequence(applied); err != nil {
+	if err := validateMigrationSequence(applied, registry); err != nil {
 		return err
 	}
 
@@ -418,24 +469,29 @@ func (s *Store) migrate(ctx context.Context) error {
 			if err := adoptLegacySchema(ctx, tx, s.db.dialect); err != nil {
 				return err
 			}
-		} else if err := executeStatements(ctx, tx, statementsFor(schemaMigrations[0], s.db.dialect)); err != nil {
+		} else if err := executeStatements(ctx, tx, statementsFor(registry.migrations[0], s.db.dialect)); err != nil {
 			return fmt.Errorf("apply migration 1 baseline: %w", err)
 		}
 		if err := validateCurrentSchema(ctx, tx, s.db.dialect); err != nil {
 			return fmt.Errorf("validate migration 1 baseline: %w", err)
 		}
-		if err := recordMigration(ctx, tx, schemaMigrations[0], s.db.dialect); err != nil {
+		if err := recordMigration(ctx, tx, registry, registry.migrations[0], s.db.dialect); err != nil {
 			return err
 		}
 		applied = []appliedMigration{{
-			Version:  schemaMigrations[0].Version,
-			Name:     schemaMigrations[0].Name,
-			Checksum: migrationChecksum(schemaMigrations[0], s.db.dialect),
+			Version:  registry.migrations[0].Version,
+			Name:     registry.migrations[0].Name,
+			Checksum: migrationChecksum(registry.migrations[0], s.db.dialect),
 		}}
 	}
 
 	for index, record := range applied {
-		migration := schemaMigrations[index]
+		if index >= len(registry.migrations) {
+			// A newer release applied the rest; validateMigrationSequence
+			// already checked that it declared them compatible with us.
+			break
+		}
+		migration := registry.migrations[index]
 		expected := migrationChecksum(migration, s.db.dialect)
 		if record.Checksum == "" && record.Version == 1 {
 			// Releases before versioned migrations recorded only version 1. Bring
@@ -456,8 +512,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
-	for index := len(applied); index < len(schemaMigrations); index++ {
-		migration := schemaMigrations[index]
+	for index := len(applied); index < len(registry.migrations); index++ {
+		migration := registry.migrations[index]
 		if migration.Version == 16 && s.db.dialect == DialectSQLite {
 			if err := ensureSQLiteColumn(ctx, tx, "tasks", "last_edited_by", `TEXT NOT NULL DEFAULT ''`); err != nil {
 				return fmt.Errorf("apply migration %d %s: %w", migration.Version, migration.Name, err)
@@ -466,7 +522,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := executeStatements(ctx, tx, statementsFor(migration, s.db.dialect)); err != nil {
 			return fmt.Errorf("apply migration %d %s: %w", migration.Version, migration.Name, err)
 		}
-		if err := recordMigration(ctx, tx, migration, s.db.dialect); err != nil {
+		if err := recordMigration(ctx, tx, registry, migration, s.db.dialect); err != nil {
 			return err
 		}
 	}
@@ -736,11 +792,11 @@ func validateAdministrativeAuditProtection(ctx context.Context, tx *Tx, dialect 
 	return nil
 }
 
-func validateDefinedMigrations() error {
-	if len(schemaMigrations) != latestSchemaVersion {
-		return fmt.Errorf("migration registry ends at %d but latest schema version is %d", len(schemaMigrations), latestSchemaVersion)
+func validateDefinedMigrations(registry migrationRegistry) error {
+	if registry.latest() == 0 || registry.compatibleFrom < 1 || registry.compatibleFrom > registry.latest() {
+		return fmt.Errorf("compatible schema version %d is outside the migration registry 1..%d", registry.compatibleFrom, registry.latest())
 	}
-	for index, migration := range schemaMigrations {
+	for index, migration := range registry.migrations {
 		if migration.Version != index+1 || strings.TrimSpace(migration.Name) == "" || len(migration.SQLite) == 0 || len(migration.Postgres) == 0 {
 			return fmt.Errorf("invalid schema migration registry entry at position %d", index+1)
 		}
@@ -753,7 +809,8 @@ func ensureMigrationTable(ctx context.Context, tx *Tx, dialect Dialect) error {
 		version INTEGER PRIMARY KEY,
 		name TEXT NOT NULL DEFAULT '',
 		checksum TEXT NOT NULL DEFAULT '',
-		applied_at TEXT NOT NULL
+		applied_at TEXT NOT NULL,
+		compatible_from INTEGER NOT NULL DEFAULT 0
 	)`); err != nil {
 		return fmt.Errorf("create schema migration table: %w", err)
 	}
@@ -761,6 +818,7 @@ func ensureMigrationTable(ctx context.Context, tx *Tx, dialect Dialect) error {
 		for _, statement := range []string{
 			`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT ''`,
 			`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS compatible_from INTEGER NOT NULL DEFAULT 0`,
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("upgrade schema migration metadata: %w", err)
@@ -771,6 +829,7 @@ func ensureMigrationTable(ctx context.Context, tx *Tx, dialect Dialect) error {
 	for _, column := range []struct{ name, definition string }{
 		{"name", `TEXT NOT NULL DEFAULT ''`},
 		{"checksum", `TEXT NOT NULL DEFAULT ''`},
+		{"compatible_from", `INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if err := ensureSQLiteColumn(ctx, tx, "schema_migrations", column.name, column.definition); err != nil {
 			return fmt.Errorf("upgrade schema migration metadata: %w", err)
@@ -780,7 +839,7 @@ func ensureMigrationTable(ctx context.Context, tx *Tx, dialect Dialect) error {
 }
 
 func loadAppliedMigrations(ctx context.Context, tx *Tx) ([]appliedMigration, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT version,name,checksum FROM schema_migrations ORDER BY version`)
+	rows, err := tx.QueryContext(ctx, `SELECT version,name,checksum,compatible_from FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return nil, fmt.Errorf("load schema migrations: %w", err)
 	}
@@ -788,7 +847,7 @@ func loadAppliedMigrations(ctx context.Context, tx *Tx) ([]appliedMigration, err
 	var migrations []appliedMigration
 	for rows.Next() {
 		var migration appliedMigration
-		if err := rows.Scan(&migration.Version, &migration.Name, &migration.Checksum); err != nil {
+		if err := rows.Scan(&migration.Version, &migration.Name, &migration.Checksum, &migration.CompatibleFrom); err != nil {
 			return nil, err
 		}
 		migrations = append(migrations, migration)
@@ -796,25 +855,30 @@ func loadAppliedMigrations(ctx context.Context, tx *Tx) ([]appliedMigration, err
 	return migrations, rows.Err()
 }
 
-func validateMigrationSequence(applied []appliedMigration) error {
-	if len(applied) > 0 && applied[len(applied)-1].Version > latestSchemaVersion {
-		return fmt.Errorf("database schema version %d is newer than supported version %d", applied[len(applied)-1].Version, latestSchemaVersion)
-	}
+// validateMigrationSequence accepts a schema up to one release ahead: every
+// migration this binary does not know must have been recorded by a release
+// that declared it readable by this binary's schema version. Anything else,
+// including rows from releases before compatible_from existed, is refused.
+func validateMigrationSequence(applied []appliedMigration, registry migrationRegistry) error {
+	supported := registry.latest()
 	for index, migration := range applied {
 		expected := index + 1
 		if migration.Version != expected {
 			return fmt.Errorf("schema migration history is non-contiguous: expected version %d, found %d", expected, migration.Version)
 		}
-		if migration.Version > latestSchemaVersion {
-			return fmt.Errorf("database schema version %d is newer than supported version %d", migration.Version, latestSchemaVersion)
+		if migration.Version <= supported {
+			continue
+		}
+		if migration.CompatibleFrom < 1 || migration.CompatibleFrom > supported {
+			return fmt.Errorf("database schema version %d is newer than supported version %d: migration %d %q requires schema version %d or later", applied[len(applied)-1].Version, supported, migration.Version, migration.Name, migration.CompatibleFrom)
 		}
 	}
 	return nil
 }
 
-func recordMigration(ctx context.Context, tx *Tx, migration schemaMigration, dialect Dialect) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,?,?,?)`,
-		migration.Version, migration.Name, migrationChecksum(migration, dialect), formatTime(time.Now()))
+func recordMigration(ctx context.Context, tx *Tx, registry migrationRegistry, migration schemaMigration, dialect Dialect) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,name,checksum,applied_at,compatible_from) VALUES(?,?,?,?,?)`,
+		migration.Version, migration.Name, migrationChecksum(migration, dialect), formatTime(time.Now()), min(migration.Version, registry.compatibleFrom))
 	if err != nil {
 		return fmt.Errorf("record migration %d %s: %w", migration.Version, migration.Name, err)
 	}
