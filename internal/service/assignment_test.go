@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/taskboard/internal/model"
+	"github.com/kilo666mj/taskboard/internal/store"
 )
 
 func TestReassignAndUnassignPreserveWaitingWork(t *testing.T) {
@@ -55,5 +56,44 @@ func TestActiveRunRejectsReassignmentAndUnassignment(t *testing.T) {
 		if !errors.Is(err, ErrValidation) {
 			t.Fatalf("active ownership change to %q: %v", owner, err)
 		}
+	}
+}
+
+func TestUnassignedTeamWorkIsVisibleAndClaimableByAnyAgent(t *testing.T) {
+	s := testService(t, time.Minute)
+	human := HumanPrincipal("human:operator")
+	assignee, other := AgentPrincipal("agent:assignee"), AgentPrincipal("agent:other")
+	owner := assignee.ID
+	created, err := s.CreateFor(t.Context(), model.CreateRequest{Title: "Team work", Visibility: model.VisibilityTeam, Checklist: []string{"Work"}}, human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created, err = s.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Owner: &owner}, human); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetFor(t.Context(), created.ID, other); !errors.Is(err, ErrForbidden) && !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("other agent saw assigned team work: %v", err)
+	}
+	owner = ""
+	unassigned, err := s.UpdateFor(t.Context(), created.ID, model.UpdateRequest{ExpectedVersion: created.Version, Owner: &owner}, human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.ListFor(t.Context(), model.ListTasksRequest{}, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Tasks) != 1 || page.Tasks[0].ID != created.ID {
+		t.Fatalf("other agent list = %+v", page.Tasks)
+	}
+	claimed, err := s.ClaimFor(t.Context(), created.ID, model.ClaimRequest{ExpectedVersion: unassigned.Version, IdempotencyKey: "team-claim"}, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Task.Owner != other.ID || claimed.Task.Visibility != model.VisibilityTeam {
+		t.Fatalf("claimed task = %+v", claimed.Task)
+	}
+	if _, err := s.GetFor(t.Context(), created.ID, assignee); !errors.Is(err, ErrForbidden) && !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("previous assignee still sees claimed team work: %v", err)
 	}
 }

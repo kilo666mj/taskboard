@@ -193,7 +193,8 @@ func CanView(task model.Task, principal Principal) bool {
 			}
 			return principal.OnBehalfOf != nil && task.CreatedBy != "" && task.CreatedBy == principal.OnBehalfOf.ID
 		}
-		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && task.Owner == principal.ID
+		// Unassigned team work is open to any agent; assigned team work only to its assignee.
+		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && (task.Owner == "" || task.Owner == principal.ID)
 	}
 	return task.Visibility != model.VisibilityPrivate || task.CreatedBy != "" && task.CreatedBy == principal.ID
 }
@@ -1215,7 +1216,7 @@ func (s *Service) claimFor(ctx context.Context, taskID string, request model.Cla
 	if task.Status != model.TaskQueued && task.Status != model.TaskStale {
 		return model.StartResult{}, fmt.Errorf("%w: only queued or stale work can be claimed", ErrValidation)
 	}
-	if task.Visibility == model.VisibilityTeam && task.Owner != principal.ID {
+	if task.Visibility == model.VisibilityTeam && task.Owner != "" && task.Owner != principal.ID {
 		return model.StartResult{}, ErrForbidden
 	}
 	advertisement, _ := s.store.GetWorkerAdvertisement(ctx, principal.ID)
