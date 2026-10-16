@@ -226,12 +226,12 @@
         <details class="dependency-panel" hidden>
           <summary>Blocked by</summary>
           <div class="dependency-list"></div>
-          <form class="dependency-form"><label>Blocked by task ID<input name="blocked_by_task_id" required maxlength="26" placeholder="01…"></label><button class="secondary" type="submit">Add dependency</button></form>
+          <form class="dependency-form"><label>Blocked by<select name="blocked_by_task_id" required></select></label><button class="secondary" type="submit">Add dependency</button></form>
         </details>
         <details class="duplicate-panel" hidden>
           <summary>Duplicates</summary>
           <div class="duplicate-list"></div>
-          <form class="duplicate-form"><label>Duplicate of task ID<input name="duplicate_of" required maxlength="26" placeholder="01…"></label><button class="secondary" type="submit">Mark as duplicate</button></form>
+          <form class="duplicate-form"><label>Duplicate of<select name="duplicate_of" required></select></label><button class="secondary" type="submit">Mark as duplicate</button></form>
         </details>
         <details class="requirements-panel" hidden>
           <summary>Worker requirements</summary>
