@@ -259,12 +259,12 @@ func TestDuplicatePanelLinksBothCards(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
 	css := embeddedText(t, "app.css")
-	for _, expected := range []string{`<details class="duplicate-panel" hidden>`, `<input name="duplicate_of" required maxlength="26"`} {
+	for _, expected := range []string{`<details class="duplicate-panel" hidden>`, `<select name="duplicate_of" required>`} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("index.html missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`renderDuplicates(task,card);`, `duplicate_of:''`, `merged here`, `selectTask(id,true)`} {
+	for _, expected := range []string{`renderDuplicates(task,card);`, `duplicate_of:''`, `merged here`, `selectTask(id,true)`, `option(other.id,other.title)`} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
 		}
