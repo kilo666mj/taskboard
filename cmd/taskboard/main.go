@@ -71,6 +71,14 @@ func main() {
 			logger.Error("database close failed", "error", err)
 		}
 	}()
+	location, err := time.LoadLocation(cfg.ReviewTimezone)
+	if err != nil {
+		logger.Error("invalid review timezone", "error", err)
+		os.Exit(1)
+	}
+	// Date-only defer_until values and schedules without a timezone use the
+	// review timezone.
+	database.SetDeferLocation(location)
 	metrics := observability.New(database.DB())
 	tasks := service.New(database, cfg.LeaseDuration, metrics)
 	tasks.SetFixedTaskType(model.TaskType(cfg.TaskType))
@@ -136,6 +144,11 @@ func main() {
 					logger.Error("stale run sweep failed", "error", err)
 				} else if count > 0 {
 					logger.Info("marked stale agent runs", "count", count)
+				}
+				if count, err := tasks.RunDueSchedules(context.Background()); err != nil {
+					logger.Error("schedule sweep failed", "error", err)
+				} else if count > 0 {
+					logger.Info("ran due schedules", "count", count)
 				}
 			case <-stopSweep:
 				return

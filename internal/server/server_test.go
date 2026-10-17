@@ -72,7 +72,7 @@ func TestMCPToolSurfaceIsAnnotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_completion_review", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_discussion_get", "task_discussion_list", "task_discussion_reply", "task_discussion_update", "task_escalate", "task_escalation_answer", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_inbox", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
+	want := []string{"task_claim", "task_complete", "task_completion_evidence_submit", "task_completion_get", "task_completion_review", "task_control_list", "task_control_update", "task_create", "task_delivery_get", "task_dependency_list", "task_discussion_get", "task_discussion_list", "task_discussion_reply", "task_discussion_update", "task_escalate", "task_escalation_answer", "task_escalation_list", "task_get", "task_handoff_add", "task_handoff_list", "task_heartbeat", "task_inbox", "task_list", "task_message_ack", "task_message_add", "task_message_list", "task_move", "task_reference_add", "task_reference_list", "task_schedule_list", "task_session_register", "task_session_request_list", "task_session_request_update", "task_start", "task_template_list", "task_template_save", "task_update", "task_usage_record", "worker_advertise"}
 	got := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		got = append(got, tool.Name)
@@ -1755,5 +1755,61 @@ func TestMCPTaskGetAndClaimReturnRecentRunsUnlessAllRuns(t *testing.T) {
 	var output taskOutput
 	if err := json.Unmarshal(response.Body.Bytes(), &output); err != nil || len(output.Task.Runs) != recentRuns+12 {
 		t.Fatalf("REST task runs = %d, %v (%d %s)", len(output.Task.Runs), err, response.Code, response.Body)
+	}
+}
+
+func TestScheduleRESTSurface(t *testing.T) {
+	tasks, _, _ := serverFixture(t)
+	person := service.HumanPrincipal("operator@example.com")
+	call := func(handler http.HandlerFunc, method, id, body string, who service.Principal) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, "/api/v1/schedules", strings.NewReader(body))
+		if id != "" {
+			request.SetPathValue("id", id)
+		}
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		request = request.WithContext(context.WithValue(request.Context(), principalKey{}, who))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	definition := `{"name":"weekday audit","cron":"30 6 * * 1-5","timezone":"UTC","title":"Audit dependencies","checklist":["Scan"]}`
+	if response := call(createSchedule(tasks), http.MethodPost, "", definition, service.AgentPrincipal("agent:worker")); response.Code != http.StatusForbidden {
+		t.Fatalf("agent create status = %d", response.Code)
+	}
+	response := call(createSchedule(tasks), http.MethodPost, "", definition, person)
+	var created scheduleOutput
+	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &created) != nil || created.Schedule.NextRunAt == nil {
+		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
+	}
+	if response := call(createSchedule(tasks), http.MethodPost, "", `{"name":"spam","cron":"* * * * *","title":"Spam"}`, person); response.Code != http.StatusBadRequest {
+		t.Fatalf("every-minute status = %d", response.Code)
+	}
+	response = call(runSchedule(tasks), http.MethodPost, created.Schedule.ID, "", person)
+	var run model.ScheduleRunResult
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &run) != nil || run.Task == nil || run.Task.ScheduleID != created.Schedule.ID {
+		t.Fatalf("run = %d: %s", response.Code, response.Body.String())
+	}
+	update := `{"name":"weekday audit","cron":"0 7 * * 1-5","title":"Audit dependencies","enabled":false,"expected_version":1}`
+	response = call(updateSchedule(tasks), http.MethodPut, created.Schedule.ID, update, person)
+	var updated scheduleOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &updated) != nil || updated.Schedule.Enabled || updated.Schedule.Cron != "0 7 * * 1-5" {
+		t.Fatalf("update = %d: %s", response.Code, response.Body.String())
+	}
+	if response := call(updateSchedule(tasks), http.MethodPut, created.Schedule.ID, update, person); response.Code != http.StatusConflict {
+		t.Fatalf("stale update status = %d", response.Code)
+	}
+	response = call(listSchedules(tasks), http.MethodGet, "", "", service.AgentPrincipal("agent:worker"))
+	var listed schedulesOutput
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.Schedules) != 1 {
+		t.Fatalf("list = %d: %s", response.Code, response.Body.String())
+	}
+	if response := call(deleteSchedule(tasks), http.MethodDelete, created.Schedule.ID, "", person); response.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d", response.Code)
+	}
+	if response := call(getSchedule(tasks), http.MethodGet, created.Schedule.ID, "", person); response.Code != http.StatusNotFound {
+		t.Fatalf("get deleted status = %d", response.Code)
 	}
 }

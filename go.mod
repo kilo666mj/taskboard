@@ -10,6 +10,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/prometheus/client_golang v1.25.0
+	github.com/robfig/cron/v3 v3.0.1
 	go.michaelspost.com/mcpkit v0.2.0
 	go.michaelspost.com/oidcrp v0.3.0
 	go.michaelspost.com/pwa-kit v0.3.0

@@ -677,7 +677,7 @@ func (s *Service) Start(ctx context.Context, request model.StartRequest, actor s
 	request.Repository = strings.TrimSpace(request.Repository)
 	request.Priority = normalizedPriority(request.Priority)
 	request.DueDate = strings.TrimSpace(request.DueDate)
-	request.DeferUntil = strings.TrimSpace(request.DeferUntil)
+	request.DeferUntil = normalizedDeferUntil(request.DeferUntil)
 	request.Recurrence = normalizedRecurrence(request.Recurrence)
 	request.Agent = strings.TrimSpace(request.Agent)
 	request.Client = strings.TrimSpace(request.Client)
@@ -844,7 +844,7 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 	request.Repository = strings.TrimSpace(request.Repository)
 	request.Priority = normalizedPriority(request.Priority)
 	request.DueDate = strings.TrimSpace(request.DueDate)
-	request.DeferUntil = strings.TrimSpace(request.DeferUntil)
+	request.DeferUntil = normalizedDeferUntil(request.DeferUntil)
 	request.Recurrence = normalizedRecurrence(request.Recurrence)
 	if request.Title == "" {
 		return model.Task{}, fmt.Errorf("%w: title is required", ErrValidation)
@@ -880,39 +880,21 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 	}
 
 	now := time.Now().UTC()
-	taskID := newID(now)
 	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return model.Task{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	sortOrder, err := nextSortOrder(ctx, tx, request.Section)
-	if err != nil {
-		return model.Task{}, err
-	}
 	creator := defaultActor(actor, "user")
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, creator, creator, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskQueued, stamp(now), stamp(now)); err != nil {
-		return model.Task{}, err
-	}
-	for index, label := range request.Checklist {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,TRUE,?)`, newID(now), taskID, label, model.ItemTodo, index, stamp(now)); err != nil {
-			return model.Task{}, err
-		}
-	}
-	if err := insertRequirements(ctx, tx, taskID, requirements, creator, now); err != nil {
-		return model.Task{}, err
-	}
-	eventPayload := map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}
-	if len(requirements) > 0 {
-		eventPayload["requirements"] = requirements
-		eventPayload["requirements_source"] = requirementsSource
-	}
+	eventPayload := map[string]any{}
 	if request.DelegatedVia != "" {
 		eventPayload["delegated_via"] = request.DelegatedVia
 	}
-	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: creator, Message: request.Title, Payload: mergePayload(mergePayload(eventPayload, idempotencyPayload("task_create", request.IdempotencyKey, request.IdempotencyHash)), overriddenDuplicatesPayload(request.OverriddenDuplicates)), CreatedAt: now}
-	if err := store.InsertEvent(ctx, tx, event); err != nil {
+	taskID, event, err := insertQueuedTask(ctx, tx, queuedTask{
+		request: request, createdBy: creator, editedBy: creator, requirements: requirements, requirementsSource: requirementsSource,
+		payload: mergePayload(mergePayload(eventPayload, idempotencyPayload("task_create", request.IdempotencyKey, request.IdempotencyHash)), overriddenDuplicatesPayload(request.OverriddenDuplicates)),
+	}, now)
+	if err != nil {
 		return model.Task{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -923,6 +905,51 @@ func (s *Service) Create(ctx context.Context, request model.CreateRequest, actor
 		s.publish(event)
 	}
 	return task, err
+}
+
+// queuedTask is a validated task to insert in the queued state.
+type queuedTask struct {
+	request            model.CreateRequest
+	createdBy          string
+	editedBy           string
+	scheduleID         string
+	requirements       []string
+	requirementsSource string
+	// payload is merged into the task.created event payload.
+	payload map[string]any
+}
+
+// insertQueuedTask inserts a queued task with its checklist, requirements and
+// task.created event inside tx. The caller publishes the event after commit.
+func insertQueuedTask(ctx context.Context, tx *store.Tx, item queuedTask, now time.Time) (string, model.Event, error) {
+	request := item.request
+	taskID := newID(now)
+	sortOrder, err := nextSortOrder(ctx, tx, request.Section)
+	if err != nil {
+		return "", model.Event{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,status,version,created_at,updated_at,schedule_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`, taskID, request.Title, request.Summary, request.Type, request.Visibility, item.createdBy, item.editedBy, request.Section, request.Project, request.Repository, request.Priority, request.DueDate, request.DeferUntil, request.Recurrence, sortOrder, model.TaskQueued, stamp(now), stamp(now), item.scheduleID); err != nil {
+		return "", model.Event{}, err
+	}
+	for index, label := range request.Checklist {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(id,task_id,label,status,position,required,updated_at) VALUES(?,?,?,?,?,TRUE,?)`, newID(now), taskID, label, model.ItemTodo, index, stamp(now)); err != nil {
+			return "", model.Event{}, err
+		}
+	}
+	if err := insertRequirements(ctx, tx, taskID, item.requirements, item.editedBy, now); err != nil {
+		return "", model.Event{}, err
+	}
+	payload := map[string]any{"status": model.TaskQueued, "section": request.Section, "type": request.Type, "visibility": request.Visibility}
+	if len(item.requirements) > 0 {
+		payload["requirements"] = item.requirements
+		payload["requirements_source"] = item.requirementsSource
+	}
+	event := model.Event{ID: newID(now), TaskID: taskID, Kind: "task.created", Actor: item.editedBy, Message: request.Title, Payload: mergePayload(payload, item.payload), CreatedAt: now}
+	if err := store.InsertEvent(ctx, tx, event); err != nil {
+		return "", model.Event{}, err
+	}
+	return taskID, event, nil
 }
 
 func (s *Service) createFor(ctx context.Context, request model.CreateRequest, principal Principal) (model.Task, error) {
@@ -1347,8 +1374,8 @@ func (s *Service) Claim(ctx context.Context, taskID string, request model.ClaimR
 	if unmetDependencies > 0 {
 		return model.StartResult{}, fmt.Errorf("%w: task has %d unmet dependencies", ErrValidation, unmetDependencies)
 	}
-	// The UTC day, as pickup runners use; the web UI compares against the viewer's local day.
-	if current.DeferUntil > now.Format("2006-01-02") {
+	// A date-only deferral ends at midnight in the instance's review timezone.
+	if model.DeferActive(current.DeferUntil, s.store.DeferLocation(), s.store.Now()) {
 		return model.StartResult{}, fmt.Errorf("%w: task is deferred until %s", ErrValidation, current.DeferUntil)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE checklist_items SET status=?,updated_at=?
@@ -1481,6 +1508,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 		value := strings.TrimSpace(**target)
 		if name == "recurrence" {
 			value = normalizedRecurrence(value)
+		}
+		if name == "defer_until" {
+			value = normalizedDeferUntil(value)
 		}
 		*target = &value
 	}
@@ -2363,6 +2393,17 @@ func normalizedVisibility(value, fallback model.TaskVisibility) model.TaskVisibi
 	}
 	return value
 }
+
+// normalizedDeferUntil trims a defer_until value and stores timestamps in
+// UTC. Invalid values are returned trimmed so validatePlanning reports them.
+func normalizedDeferUntil(value string) string {
+	value = strings.TrimSpace(value)
+	if normalized, err := model.NormalizeDeferUntil(value); err == nil {
+		return normalized
+	}
+	return value
+}
+
 func normalizedRecurrence(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -2370,12 +2411,13 @@ func validatePlanning(priority model.Priority, dueDate, deferUntil, recurrence s
 	if !model.IsPriority(priority) {
 		return fmt.Errorf("%w: priority must be low, normal, high, or urgent", ErrValidation)
 	}
-	for name, value := range map[string]string{"due_date": dueDate, "defer_until": deferUntil} {
-		if value != "" {
-			if _, err := time.Parse("2006-01-02", value); err != nil {
-				return fmt.Errorf("%w: %s must use YYYY-MM-DD", ErrValidation, name)
-			}
+	if dueDate != "" {
+		if _, err := time.Parse("2006-01-02", dueDate); err != nil {
+			return fmt.Errorf("%w: due_date must use YYYY-MM-DD", ErrValidation)
 		}
+	}
+	if _, err := model.NormalizeDeferUntil(deferUntil); err != nil {
+		return fmt.Errorf("%w: %s", ErrValidation, err)
 	}
 	if recurrence != "" && recurrence != "daily" && recurrence != "weekly" && recurrence != "monthly" {
 		return fmt.Errorf("%w: recurrence must be daily, weekly, monthly, or empty", ErrValidation)

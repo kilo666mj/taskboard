@@ -276,6 +276,12 @@ type dependenciesOutput struct {
 type templatesOutput struct {
 	Templates []model.Template `json:"templates"`
 }
+type schedulesOutput struct {
+	Schedules []model.Schedule `json:"schedules"`
+}
+type scheduleOutput struct {
+	Schedule model.Schedule `json:"schedule"`
+}
 type templateOutput struct {
 	Template model.Template `json:"template"`
 }
@@ -356,6 +362,12 @@ func New(cfg config.Config, database *store.Store, service *service.Service, not
 	mux.Handle("GET /api/v1/templates", authenticated(http.HandlerFunc(listTemplates(service))))
 	mux.Handle("POST /api/v1/templates", authenticated(http.HandlerFunc(saveTemplate(service))))
 	mux.Handle("DELETE /api/v1/templates/{id}", authenticated(http.HandlerFunc(deleteTemplate(service))))
+	mux.Handle("GET /api/v1/schedules", authenticated(http.HandlerFunc(listSchedules(service))))
+	mux.Handle("POST /api/v1/schedules", authenticated(http.HandlerFunc(createSchedule(service))))
+	mux.Handle("GET /api/v1/schedules/{id}", authenticated(http.HandlerFunc(getSchedule(service))))
+	mux.Handle("PUT /api/v1/schedules/{id}", authenticated(http.HandlerFunc(updateSchedule(service))))
+	mux.Handle("DELETE /api/v1/schedules/{id}", authenticated(http.HandlerFunc(deleteSchedule(service))))
+	mux.Handle("POST /api/v1/schedules/{id}/run", authenticated(http.HandlerFunc(runSchedule(service))))
 	mux.Handle("GET /api/v1/admin/credentials", authenticated(http.HandlerFunc(listAgentCredentials(database))))
 	mux.Handle("POST /api/v1/admin/credentials", authenticated(http.HandlerFunc(createAgentCredential(database))))
 	mux.Handle("POST /api/v1/admin/credentials/{id}/rotate", authenticated(http.HandlerFunc(rotateAgentCredential(database))))
@@ -694,6 +706,10 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		items, err := tasks.ListTemplatesFor(ctx, mcpPrincipal(ctx))
 		return nil, templatesOutput{Templates: items}, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "task_schedule_list", Description: "List schedules that create agent-pickup tasks at set times, with each schedule's cron expression, timezone, next run and last outcome. Schedules are managed by people in the web app.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, schedulesOutput, error) {
+		items, err := tasks.ListSchedulesFor(ctx, mcpPrincipal(ctx))
+		return nil, schedulesOutput{Schedules: items}, err
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "task_template_save", Description: "Create or replace a reusable task and checklist template by name.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, input model.TemplateRequest) (*mcp.CallToolResult, templateOutput, error) {
 		item, err := tasks.SaveTemplateFor(ctx, input, mcpPrincipal(ctx))
 		return nil, templateOutput{Template: item}, err
@@ -729,6 +745,68 @@ func deleteTemplate(tasks *service.Service) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func listSchedules(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := tasks.ListSchedulesFor(r.Context(), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, schedulesOutput{Schedules: items})
+	}
+}
+func getSchedule(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := tasks.GetScheduleFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, scheduleOutput{Schedule: item})
+	}
+}
+func createSchedule(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.ScheduleRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.CreateScheduleFor(r.Context(), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, scheduleOutput{Schedule: item})
+	}
+}
+func updateSchedule(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input model.ScheduleRequest
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		item, err := tasks.UpdateScheduleFor(r.Context(), r.PathValue("id"), input, principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, scheduleOutput{Schedule: item})
+	}
+}
+func deleteSchedule(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if apiError(w, tasks.DeleteScheduleFor(r.Context(), r.PathValue("id"), principal(r.Context()))) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+func runSchedule(tasks *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := tasks.RunScheduleNowFor(r.Context(), r.PathValue("id"), principal(r.Context()))
+		if apiError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	}
 }
 

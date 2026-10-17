@@ -72,6 +72,15 @@ Integrations such as a chat bridge route work by setting requirements in
 `task_create`. An agent may set only the tokens its policy lists in
 `allowed_requirements`; see [configuration](configuration.md).
 
+### Scheduled work
+
+Timed work needs nothing from dispatchers. A task deferred to a timestamp, or
+created by a schedule, simply becomes ready for pickup at its time, and the
+next poll claims it. The poll interval is therefore the worst-case start delay;
+Taskboard's schedule sweep adds up to 15 seconds. A schedule's tasks carry its
+worker requirements, so route them to a mechanism with a `runner:` token as for
+any other task.
+
 ## Dispatch lifecycle
 
 1. **Advertise.** Call `worker_advertise` with the runner token, capabilities,

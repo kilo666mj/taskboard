@@ -42,7 +42,7 @@ test('worker requirements parse from the create form but stay out of edit and te
   const context={state:{taskType:'work'}},fields={taskTitle:'Ship it',taskRequirements:'profile:builder'};
   context.$=selector=>selector==='#checklistEditor'?{querySelectorAll:()=>[]}:{value:fields[selector.slice(1)]||''};
   vm.createContext(context);
-  for(const name of ['requirementList','taskFormPayload']){
+  for(const name of ['requirementList','deferPayload','taskFormPayload']){
     const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
     vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
   }
@@ -83,4 +83,21 @@ test('requirement suggestions show each capability with its description',()=>{
   assert.equal(buttons[1].children.length,1);
   buttons[0].listeners.click();
   assert.equal(input.value,'runner:k8s-job, profile:pickup');
+});
+test('timestamp deferrals hold agent pickup until the moment passes',()=>{
+  const h=workspace(),future=new Date(Date.now()+3600e3).toISOString(),past=new Date(Date.now()-60e3).toISOString();
+  h.state.tasks=[task('later',{visibility:'agent',ready:true,defer_until:future}),task('now',{visibility:'agent',ready:true,defer_until:past})];
+  assert.deepEqual(Array.from(h.viewTasks('agent'),t=>t.id),['now']);
+  assert.deepEqual(Array.from(h.viewTasks('upcoming'),t=>t.id),['later']);
+});
+test('defer date and optional time combine into the request value',()=>{
+  const fields={taskDeferUntil:'2026-10-20',taskDeferTime:''},context={Date,$:selector=>({value:fields[selector.slice(1)]||''})};
+  vm.createContext(context);
+  const start=source.search(/^function deferPayload\(/m);
+  vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
+  assert.equal(context.deferPayload(),'2026-10-20');
+  fields.taskDeferTime='07:30';
+  assert.equal(context.deferPayload(),new Date('2026-10-20T07:30').toISOString());
+  fields.taskDeferUntil='';
+  assert.equal(context.deferPayload(),'');
 });
