@@ -34,6 +34,7 @@
         </button>
         <button id="settingsButton" class="icon-button" type="button" title="Task settings" aria-label="Task settings">⚙</button>
         <button id="analyticsButton" class="icon-button" type="button" title="Delivery analytics" aria-label="Delivery analytics">▦</button>
+        <button id="schedulesButton" class="icon-button" type="button" title="Schedules" aria-label="Schedules"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
         <button id="credentialsButton" class="icon-button" type="button" title="Agent credentials" aria-label="Agent credentials" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/></svg></button>
         <button id="logoutButton" class="text-button" type="button" hidden>Sign out</button>
       </div>
@@ -147,9 +148,10 @@
       <div id="taskRequirementsField"><label>Worker requirements <span>(optional)</span><input id="taskRequirements" maxlength="2000" placeholder="repo:owner/name, browser, kubernetes" aria-describedby="taskRequirementsHelp"></label><p id="taskRequirementsHelp" class="field-help requirements-help">Only a worker that advertises every requirement listed here can pick this task up. <code>profile:&lt;id&gt;</code> chooses which agent runs it; leave it empty for the default pickup agent. Suggestions show what live workers advertise right now.</p><div class="requirement-suggestions" hidden></div></div>
       <div class="form-row planning-row">
         <label>Due date<input id="taskDueDate" type="date"></label>
-        <label>Defer until<input id="taskDeferUntil" type="date"></label>
+        <label>Defer until<span class="defer-inputs"><input id="taskDeferUntil" type="date" aria-describedby="taskDeferHelp"><input id="taskDeferTime" type="time" aria-label="Defer until time (optional)"></span></label>
         <label>Repeat<select id="taskRecurrence"><option value="">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
       </div>
+      <p id="taskDeferHelp" class="field-help">Agent-pickup tasks are not offered to agents until the defer time. Add a time to start at a specific moment; a date alone starts at midnight.</p>
       <label>Task context <span>(durable)</span><textarea id="taskSummary" maxlength="2000" rows="4" aria-describedby="taskContextHelp" placeholder="Describe the desired outcome, background, constraints, and important links"></textarea></label>
       <p id="taskContextHelp" class="field-help">This stays with the task. Use Messages for later updates and decisions; the status note remains a concise snapshot of current progress.</p>
       <fieldset>
@@ -186,6 +188,39 @@
     <div class="dialog-heading"><div><p class="eyebrow">Operations</p><h2 id="analyticsTitle">Delivery analytics</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
     <label>Window<select id="analyticsDays"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">365 days</option></select></label>
     <p id="analyticsStatus" role="status"></p><div id="analyticsGrid" class="analytics-grid"></div>
+  </dialog>
+  <dialog id="schedulesDialog" class="modal credentials-modal schedules-modal" aria-labelledby="schedulesTitle">
+    <div class="dialog-heading"><div><p class="eyebrow">Automation</p><h2 id="schedulesTitle">Schedules</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
+    <p class="field-help">Each run creates an agent-pickup task. Runners treat it as queued by the person who last saved the schedule.</p>
+    <p id="schedulesStatus" role="status"></p>
+    <ul id="schedulesList" class="credentials-list schedules-list"></ul>
+    <form id="scheduleForm" class="schedule-form">
+      <input id="scheduleID" type="hidden"><input id="scheduleVersion" type="hidden">
+      <h3 id="scheduleFormTitle">New schedule</h3>
+      <div class="form-row">
+        <label>Name<input id="scheduleName" required maxlength="80" autocomplete="off" placeholder="Weekday dependency audit"></label>
+        <label>Task title<input id="scheduleTitle" required maxlength="200" autocomplete="off" placeholder="Audit dependencies"></label>
+      </div>
+      <div class="form-row">
+        <label>Cron schedule<input id="scheduleCron" required maxlength="100" autocomplete="off" spellcheck="false" placeholder="0 7 * * 1-5" aria-describedby="scheduleCronHelp"></label>
+        <label>Timezone<input id="scheduleTimezone" maxlength="64" list="timezoneOptions" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <p id="scheduleCronHelp" class="field-help">Minute, hour, day of month, month, weekday. <code>0 7 * * 1-5</code> runs weekdays at 07:00; <code>@daily</code> and <code>@hourly</code> also work. Runs are at least five minutes apart.</p>
+      <datalist id="timezoneOptions"></datalist>
+      <div class="form-row">
+        <label>If the last task is still open<select id="scheduleOverlap"><option value="skip">Skip this run</option><option value="allow">Create another task</option></select></label>
+        <label class="checkbox-label"><input id="scheduleEnabled" type="checkbox" checked> Enabled</label>
+      </div>
+      <div class="form-row">
+        <label>Project<input id="scheduleProject" maxlength="120" list="projectOptions"></label>
+        <label>Repository<input id="scheduleRepository" maxlength="300"></label>
+      </div>
+      <label>Worker requirements <span>(optional)</span><input id="scheduleRequirements" maxlength="2000" placeholder="runner:local, auth:edit" spellcheck="false"></label>
+      <label>Task context <span>(optional)</span><textarea id="scheduleSummary" maxlength="2000" rows="3" placeholder="What the agent should do each time"></textarea></label>
+      <label>Checklist <span>(one step per line)</span><textarea id="scheduleChecklist" rows="3"></textarea></label>
+      <p id="scheduleError" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button id="scheduleCancelEdit" class="secondary" type="button" hidden>Cancel edit</button><button id="scheduleSubmit" class="primary" type="submit">Create schedule</button></div>
+    </form>
   </dialog>
   <dialog id="credentialsDialog" class="modal credentials-modal" aria-labelledby="credentialsTitle">
     <div class="dialog-heading"><div><p class="eyebrow">Administration</p><h2 id="credentialsTitle">Agent credentials</h2></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>

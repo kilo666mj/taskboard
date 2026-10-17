@@ -30,6 +30,45 @@ var (
 type Store struct {
 	db          *DB
 	databaseURL string
+	// deferLocation interprets date-only defer_until values. Nil means UTC.
+	deferLocation *time.Location
+	// now is the clock used for deferral checks; tests may replace it.
+	now func() time.Time
+}
+
+// SetDeferLocation sets the timezone in which a date-only defer_until ends.
+func (s *Store) SetDeferLocation(location *time.Location) { s.deferLocation = location }
+
+// DeferLocation returns the timezone used for date-only defer_until values.
+func (s *Store) DeferLocation() *time.Location {
+	if s.deferLocation == nil {
+		return time.UTC
+	}
+	return s.deferLocation
+}
+
+// SetClock replaces the clock used for deferral checks. It is for tests.
+func (s *Store) SetClock(now func() time.Time) { s.now = now }
+
+// Now returns the store clock's current time in UTC.
+func (s *Store) Now() time.Time {
+	if s.now != nil {
+		return s.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// setReadiness marks a task ready for pickup when every dependency is
+// satisfied and any deferral has passed.
+func (s *Store) setReadiness(task *model.Task) {
+	task.Deferred = model.DeferActive(task.DeferUntil, s.DeferLocation(), s.Now())
+	task.Ready = !task.Deferred
+	for _, dependency := range task.Dependencies {
+		if !dependency.Satisfied {
+			task.Ready = false
+			break
+		}
+	}
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -372,8 +411,8 @@ func LoadTask(ctx context.Context, q interface {
 	var created, updated string
 	var completed sql.NullString
 	var reviewed sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks WHERE id=?`, id).
-		Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed)
+	err := q.QueryRowContext(ctx, `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at,schedule_id FROM tasks WHERE id=?`, id).
+		Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed, &task.ScheduleID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Task{}, ErrNotFound
 	}
@@ -407,13 +446,7 @@ func (s *Store) GetTask(ctx context.Context, id string) (model.Task, error) {
 	if task.Dependencies, err = s.ListTaskDependencies(ctx, id); err != nil {
 		return model.Task{}, err
 	}
-	task.Ready = true
-	for _, dependency := range task.Dependencies {
-		if !dependency.Satisfied {
-			task.Ready = false
-			break
-		}
-	}
+	s.setReadiness(&task)
 	if task.Requirements, err = s.ListTaskRequirements(ctx, id); err != nil {
 		return model.Task{}, err
 	}
@@ -485,7 +518,7 @@ func (s *Store) listTasks(ctx context.Context, filter TaskQuery, visibilityClaus
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	query := `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at FROM tasks`
+	query := `SELECT id,title,summary,task_type,visibility,created_by,last_edited_by,section,project,repository,priority,due_date,defer_until,recurrence,sort_order,reviewed_at,status,owner,current_note,blocker,waiting_for,version,created_at,updated_at,completed_at,schedule_id FROM tasks`
 	var conditions []string
 	args := make([]any, 0, len(filter.Statuses)+len(visibilityArgs)+12)
 	if visibilityClause != "" {
@@ -521,7 +554,7 @@ func (s *Store) listTasks(ctx context.Context, filter TaskQuery, visibilityClaus
 		var task model.Task
 		var created, updated string
 		var reviewed, completed sql.NullString
-		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed); err != nil {
+		if err := rows.Scan(&task.ID, &task.Title, &task.Summary, &task.Type, &task.Visibility, &task.CreatedBy, &task.LastEditedBy, &task.Section, &task.Project, &task.Repository, &task.Priority, &task.DueDate, &task.DeferUntil, &task.Recurrence, &task.SortOrder, &reviewed, &task.Status, &task.Owner, &task.CurrentNote, &task.Blocker, &task.WaitingFor, &task.Version, &created, &updated, &completed, &task.ScheduleID); err != nil {
 			return nil, nil, err
 		}
 		task.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -556,13 +589,7 @@ func (s *Store) listTasks(ctx context.Context, filter TaskQuery, visibilityClaus
 		if err != nil {
 			return nil, nil, err
 		}
-		tasks[index].Ready = true
-		for _, dependency := range tasks[index].Dependencies {
-			if !dependency.Satisfied {
-				tasks[index].Ready = false
-				break
-			}
-		}
+		s.setReadiness(&tasks[index])
 		tasks[index].Requirements, err = s.ListTaskRequirements(ctx, tasks[index].ID)
 		if err != nil {
 			return nil, nil, err

@@ -14,7 +14,7 @@ import (
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 )
 
-const latestSchemaVersion = 21
+const latestSchemaVersion = 22
 
 // compatibleFromSchemaVersion is the oldest binary schema version that can run
 // against the schema this binary migrates to. It is the latestSchemaVersion of
@@ -22,7 +22,7 @@ const latestSchemaVersion = 21
 // release still runs here and an image rollback needs no database restore.
 // When you add the first migration after a release, set this to that
 // release's latestSchemaVersion (scripts/check-schema-compat.sh enforces it).
-const compatibleFromSchemaVersion = 20
+const compatibleFromSchemaVersion = 21
 
 // lastOneWaySchemaVersion is the last migration shipped before rollback
 // compatibility was enforced. Later migrations must be additive and carry
@@ -298,7 +298,34 @@ var schemaMigrations = []schemaMigration{
 	// previous release never reads the column, and its upserts leave it at the
 	// default or a stale value, which only changes requirement suggestions.
 	{Version: 21, Name: "worker_capability_descriptions", SQLite: workerDescriptionStatements, Postgres: workerDescriptionStatements, SQLiteDown: workerDescriptionRevertStatements, PostgresDown: workerDescriptionRevertStatements},
+	// Migration 22 adds schedules that create agent-pickup tasks. The previous
+	// release never reads the new table, and its task inserts leave
+	// schedule_id at the default, so an image rollback keeps working; it only
+	// stops creating scheduled occurrences.
+	{Version: 22, Name: "task_schedules", SQLite: scheduleStatements, Postgres: scheduleStatements, SQLiteDown: scheduleRevertStatements, PostgresDown: scheduleRevertStatements},
 }
+
+var scheduleStatements = []string{
+	`CREATE TABLE task_schedules (id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,enabled BOOLEAN NOT NULL DEFAULT TRUE,cron TEXT NOT NULL,timezone TEXT NOT NULL,overlap TEXT NOT NULL DEFAULT 'skip',title TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',task_type TEXT NOT NULL,section TEXT NOT NULL,project TEXT NOT NULL DEFAULT '',repository TEXT NOT NULL DEFAULT '',priority TEXT NOT NULL,checklist_json TEXT NOT NULL DEFAULT '[]',requirements_json TEXT NOT NULL DEFAULT '[]',created_by TEXT NOT NULL,last_edited_by TEXT NOT NULL,next_run_at TEXT,last_run_at TEXT,last_outcome TEXT NOT NULL DEFAULT '',last_task_id TEXT NOT NULL DEFAULT '',version BIGINT NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+	`ALTER TABLE tasks ADD COLUMN schedule_id TEXT NOT NULL DEFAULT ''`,
+}
+
+// scheduleRevertStatements undo migration 22.
+var scheduleRevertStatements = []string{
+	`ALTER TABLE tasks DROP COLUMN schedule_id`,
+	`DROP TABLE task_schedules`,
+}
+
+var scheduleSchema = map[string][]string{
+	"task_schedules": {"id", "name", "enabled", "cron", "timezone", "overlap", "title", "summary", "task_type", "section", "project", "repository", "priority", "checklist_json", "requirements_json", "created_by", "last_edited_by", "next_run_at", "last_run_at", "last_outcome", "last_task_id", "version", "created_at", "updated_at"},
+	"tasks":          {"schedule_id"},
+}
+
+// scheduleIndexes is empty on purpose: the schedule table stays small, and
+// open occurrences are found through idx_tasks_status_updated. Named indexes
+// would also break the previous release's exact index count during rollback
+// compatibility checks.
+var scheduleIndexes = []string{}
 
 var workerDescriptionStatements = []string{
 	`ALTER TABLE worker_advertisements ADD COLUMN descriptions_json TEXT NOT NULL DEFAULT '{}'`,
@@ -581,6 +608,9 @@ func (s *Store) migrateRegistry(ctx context.Context, registry migrationRegistry)
 		return err
 	}
 	if err := validateSchemaParts(ctx, tx, s.db.dialect, usageSchema, usageIndexes, "usage"); err != nil {
+		return err
+	}
+	if err := validateSchemaParts(ctx, tx, s.db.dialect, scheduleSchema, scheduleIndexes, "schedule"); err != nil {
 		return err
 	}
 	if s.db.dialect == DialectPostgres {

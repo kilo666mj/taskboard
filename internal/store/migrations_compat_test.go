@@ -380,7 +380,7 @@ func requiredSchemaObjects() map[string]bool {
 	schemas := []map[string][]string{
 		requiredSchema, administrativeSchema, messagingSchema, escalationSchema, discussionSchema, duplicateSchema,
 		runControlSchema, referenceSchema, handoffSchema, completionSchema, sessionBridgeSchema, dependencySchema,
-		workerMatchingSchema, usageSchema, agentSessionSchema,
+		workerMatchingSchema, usageSchema, agentSessionSchema, scheduleSchema,
 	}
 	for _, schema := range schemas {
 		for table, columns := range schema {
@@ -393,7 +393,7 @@ func requiredSchemaObjects() map[string]bool {
 	indexes := [][]string{
 		requiredIndexes, administrativeIndexes, messagingIndexes, escalationIndexes, discussionIndexes, duplicateIndexes,
 		runControlIndexes, referenceIndexes, handoffIndexes, completionIndexes, sessionBridgeIndexes, dependencyIndexes,
-		workerMatchingIndexes, usageIndexes, agentSessionIndexes,
+		workerMatchingIndexes, usageIndexes, agentSessionIndexes, scheduleIndexes,
 	}
 	for _, list := range indexes {
 		for _, index := range list {

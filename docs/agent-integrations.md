@@ -353,6 +353,15 @@ the derived `ready` value. Only `done` satisfies a dependency; cancellation
 does not. Queued or stale work with unmet dependencies is excluded from agent
 pickup results, and claim and completion recheck readiness transactionally.
 
+`defer_until` also affects readiness. While it is in the future the task
+reports `deferred: true` and `ready: false`, is excluded from pickup results,
+and claims are refused. It accepts a date (`YYYY-MM-DD`, ending at midnight in
+`TASKBOARD_REVIEW_TIMEZONE`) or an RFC 3339 timestamp, which is stored in UTC.
+
+Tasks created by a schedule carry `schedule_id`. `task_schedule_list` returns
+each schedule's cron expression, timezone, next run and last outcome; agents
+cannot create or change schedules.
+
 Dependency edits are human-owned, task-versioned, and cycle-safe. Deleting a
 task removes its incident edges through referential integrity. Controllers
 should not reinterpret an unmet dependency as the execution `blocked` status.

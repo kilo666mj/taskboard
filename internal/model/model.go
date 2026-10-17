@@ -82,7 +82,12 @@ type Task struct {
 	Runs         []AgentRun       `json:"runs,omitempty"`
 	Dependencies []TaskDependency `json:"dependencies,omitempty"`
 	Ready        bool             `json:"ready"`
-	Requirements []string         `json:"requirements,omitempty"`
+	// Deferred is set while defer_until is still in the future. Deferred
+	// agent-pickup tasks are not ready and cannot be claimed.
+	Deferred bool `json:"deferred,omitempty"`
+	// ScheduleID names the schedule that created this task, if any.
+	ScheduleID   string   `json:"schedule_id,omitempty"`
+	Requirements []string `json:"requirements,omitempty"`
 	// DuplicateOf links a cancelled duplicate to the task that was kept.
 	DuplicateOf *TaskLink `json:"duplicate_of,omitempty"`
 	// Duplicates lists tasks cancelled as duplicates of this one.

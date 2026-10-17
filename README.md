@@ -83,7 +83,7 @@ The MCP server exposes `task_create`, `task_start`, `task_claim`, `task_update`,
 `task_dependency_list`,
 `worker_advertise`,
 `task_usage_record`,
-`task_template_list`, and `task_template_save`. The
+`task_template_list`, `task_template_save`, and `task_schedule_list`. The
 example Switchboard capability is in
 `capabilities/taskboard.example.json`.
 
@@ -157,6 +157,38 @@ development repository. Priority, due date, and defer-until are planning
 metadata; they never masquerade as the blocked or waiting execution states.
 Recurring daily, weekly, or monthly tasks create their next queued occurrence
 when completed, including a fresh copy of the checklist.
+
+### Scheduled agent work
+
+Two features start agent work at a set time. Taskboard never pushes work to an
+agent: it holds the task back until its time, and dispatchers pick it up on
+their next poll (see [Dispatchers](docs/dispatchers.md)).
+
+- **Defer until** accepts a date (`YYYY-MM-DD`) or an RFC 3339 timestamp. An
+  agent-pickup task is not ready, is left out of pickup listings and cannot be
+  claimed until that moment. A date alone ends at midnight in
+  `TASKBOARD_REVIEW_TIMEZONE`. The task form takes an optional time next to the
+  date.
+- **Schedules** (the clock button in the sidebar, or `/api/v1/schedules`)
+  create an agent-pickup task each time a cron expression fires, in an IANA
+  timezone that defaults to `TASKBOARD_REVIEW_TIMEZONE`. Each run copies the
+  schedule's title, context, project, repository, checklist and worker
+  requirements. Runs are at least five minutes apart. When the previous
+  task from the schedule is still open, a run is skipped by default
+  (`overlap: "skip"`) and recorded on that task; `overlap: "allow"` creates
+  another task instead. If Taskboard was down when a run was due, the schedule
+  fires once when it comes back and then resumes at its next future time; missed
+  runs are not replayed. **Run now** fires a schedule immediately without
+  moving its next run.
+
+Only people with task write access can create, change, run or delete
+schedules; agents can list them with `task_schedule_list`. A scheduled task
+records the schedule's creator as `created_by` and the person who last saved it
+as `last_edited_by`, so pickup runners that admit work by
+[edit provenance](docs/agent-integrations.md#shared-task-edit-provenance) treat
+it exactly as if that person had queued it. Schedules require database schema
+22; rolling back to the previous release leaves them in place but stops new
+runs.
 
 The board opens with every unfinished visible task. Optional compact views cover
 Private, Team, Agent pickup, Inbox, Today, Upcoming, Waiting, Active agents,
