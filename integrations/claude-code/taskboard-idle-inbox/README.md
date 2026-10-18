@@ -57,9 +57,7 @@ installations update in place.
 5. When a run's task is done or cancelled, the plugin drops that run. With
    no runs left, it stops reading.
 
-The status line shows `taskboard inbox: nothing waiting` while it watches,
-`taskboard inbox: N waiting` when items are pending, or `taskboard inbox
-unavailable`. After a failed read, the plugin retries
+After a failed read, the plugin retries
 after the shortest interval, doubling up to the longest; against a server
 without `digest` it waits the longest interval.
 

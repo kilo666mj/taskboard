@@ -22,7 +22,6 @@ test('waits on a digest server and delivers while busy and while idle', async ($
   const prompts: string[] = []
 
   on('session.start', () => ({ cwd: '/' }))
-  on('ui.status', () => ({ value: undefined }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('prompt.submit', ($, e) => {
@@ -98,7 +97,6 @@ test('a run started during a waiting read stays watched', async ($, on) => {
   let started = 'R1'
 
   on('session.start', () => ({ cwd: '/' }))
-  on('ui.status', () => ({ value: undefined }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
@@ -139,7 +137,6 @@ test('a finished run stays watched until all its items land, and none is deliver
   let messages = Array.from({ length: 501 }, (_, i) => message(i))
 
   on('session.start', () => ({ cwd: '/' }))
-  on('ui.status', () => ({ value: undefined }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('tool.call', { tool: START }, () => ({ result: {}, text: JSON.stringify({ run: { id: 'R1', task_id: 'T1' } }) }))
   on('tool.call', { tool: INBOX }, ($, e) => {

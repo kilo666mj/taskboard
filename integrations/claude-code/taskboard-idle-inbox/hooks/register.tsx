@@ -72,7 +72,6 @@ async function check($: EngineInterface) {
   const watched = await read($, runs)
   const latest = watched.at(-1)
   if (latest === undefined) {
-    $.ui.status(undefined)
     await update($, waiting, () => [])
     return
   }
@@ -99,7 +98,6 @@ async function check($: EngineInterface) {
     if (await stale($)) {
       return
     }
-    $.ui.status('taskboard inbox unavailable')
     digest = undefined
     delay = canWait ? Math.min(delay * 2, maxMs) : maxMs
     schedule($, delay)
@@ -133,7 +131,6 @@ async function check($: EngineInterface) {
   }
   const open = new Set((await read($, runs)).map(run => run.runId))
   await update($, waiting, () => (open.size === 0 ? [] : items.map(item => item.line)))
-  $.ui.status(open.size === 0 ? undefined : items.length > 0 ? `taskboard inbox: ${items.length} waiting` : 'taskboard inbox: nothing waiting')
   if (open.size === 0) {
     return
   }

@@ -21,7 +21,6 @@ function world(on: On) {
   const lists: { server: string; tool: string; args: unknown }[] = []
   const clock = mock.clock(on)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('ui.status', () => ({ value: undefined }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
