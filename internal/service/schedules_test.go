@@ -341,3 +341,47 @@ func TestScheduleTimezoneControlsRunTime(t *testing.T) {
 		t.Fatalf("next_run_at = %v", schedule.NextRunAt)
 	}
 }
+
+func TestScheduleSpacingIsCheckedTheSameWhateverTheTime(t *testing.T) {
+	// 07:59 then 00:00 the next day is fine, but 00:50 then 00:59 is nine
+	// minutes and 06:59 then 07:00 is one: rejected at any time of day.
+	tight := "0,10,20,30,40,50,59 0,2,4,6,7 * * *"
+	for _, at := range []string{"2026-10-17T23:00:00Z", "2026-10-18T00:30:00Z", "2026-10-18T06:59:30Z"} {
+		tasks, _ := clockedService(t, at)
+		request := dailySchedule("tight")
+		request.Cron = tight
+		if _, err := tasks.CreateScheduleFor(t.Context(), request, HumanPrincipal("person")); !errors.Is(err, ErrValidation) {
+			t.Errorf("at %s: %q error = %v, want validation", at, tight, err)
+		}
+	}
+	// Five minutes apart is the floor, including across DST in the schedule's zone.
+	tasks, _ := clockedService(t, "2026-10-17T23:00:00Z")
+	request := dailySchedule("every-five")
+	request.Cron, request.Timezone = "*/5 * * * *", "Europe/Berlin"
+	if _, err := tasks.CreateScheduleFor(t.Context(), request, HumanPrincipal("person")); err != nil {
+		t.Fatalf("every five minutes: %v", err)
+	}
+}
+
+func TestTimedRunStopsAndSaysSoWhenTheDefinitionNoLongerParses(t *testing.T) {
+	tasks, clock := clockedService(t, "2026-10-17T06:00:00Z")
+	person := HumanPrincipal("person")
+	schedule, err := tasks.CreateScheduleFor(t.Context(), dailySchedule("audit"), person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.store.DB().ExecContext(t.Context(), `UPDATE task_schedules SET timezone=? WHERE id=?`, "Mars/Olympus_Mons", schedule.ID); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set("2026-10-17T07:00:10Z")
+	if fired, err := tasks.RunDueSchedules(t.Context()); err != nil || fired != 0 {
+		t.Fatalf("sweep fired=%d err=%v, want nothing fired", fired, err)
+	}
+	schedule, err = tasks.GetScheduleFor(t.Context(), schedule.ID, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if schedule.LastOutcome != model.ScheduleOutcomeStopped || schedule.NextRunAt != nil || schedule.LastTaskID != "" {
+		t.Fatalf("stopped schedule = outcome %q next %v task %q", schedule.LastOutcome, schedule.NextRunAt, schedule.LastTaskID)
+	}
+}

@@ -101,3 +101,20 @@ test('defer date and optional time combine into the request value',()=>{
   fields.taskDeferUntil='';
   assert.equal(context.deferPayload(),'');
 });
+test('a loaded deferral schedules a reload when it ends, and a lagging server is rechecked each minute',()=>{
+  const context={Date};vm.createContext(context);
+  for(const name of ['nextDeferRefresh']){const start=source.search(new RegExp(`^function ${name}\\(`,'m'));vm.runInContext(source.slice(start,source.indexOf('\n',start)),context)}
+  const now=Date.parse('2026-10-18T12:00:00Z');
+  assert.equal(context.nextDeferRefresh([task('a')],now),null);
+  assert.equal(context.nextDeferRefresh([task('a',{deferred:true,defer_until:'2026-10-18T12:30:00Z'}),task('b',{deferred:true,defer_until:'2026-10-18T14:00:00Z'})],now),30*60*1000+1000);
+  assert.equal(context.nextDeferRefresh([task('a',{deferred:true,defer_until:'2026-10-18T11:00:00Z'})],now),60000);
+  assert.equal(context.nextDeferRefresh([task('a',{deferred:false,defer_until:'2026-10-18T12:30:00Z'})],now),null);
+});
+test('editing a schedule keeps the fields the form does not show',()=>{
+  const context={};vm.createContext(context);
+  const start=source.search(/^function scheduleRequest\(/m);vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
+  const loaded={name:'audit',enabled:true,cron:'0 7 * * *',timezone:'UTC',overlap:'skip',title:'Audit',type:'work',summary:'',section:'Operations',project:'',repository:'',priority:'high',checklist:[],requirements:[],version:3};
+  const body=context.scheduleRequest(loaded,{name:'audit',cron:'0 8 * * *',title:'Audit'});
+  assert.equal(body.cron,'0 8 * * *');
+  assert.deepEqual([body.type,body.section,body.priority,body.expected_version],['work','Operations','high',3]);
+});

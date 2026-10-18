@@ -98,6 +98,9 @@ type Schedule struct {
 const (
 	ScheduleOutcomeCreated = "created"
 	ScheduleOutcomeSkipped = "skipped_open_occurrence"
+	// ScheduleOutcomeStopped records that a timed run found the definition no
+	// longer valid (a removed timezone, say) and cleared next_run_at.
+	ScheduleOutcomeStopped = "stopped_invalid_definition"
 )
 
 // ScheduleRequest creates or replaces a schedule. ExpectedVersion is required

@@ -43,21 +43,36 @@ func parseSchedule(expression, timezone string, now time.Time) (cron.Schedule, *
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: cron: %v", ErrValidation, err)
 	}
-	previous := schedule.Next(now.In(location))
-	if previous.IsZero() {
+	if schedule.Next(now.In(location)).IsZero() {
 		return nil, nil, fmt.Errorf("%w: cron expression never fires", ErrValidation)
 	}
-	for range 24 {
+	return schedule, location, nil
+}
+
+// spacingWindow is how far validateScheduleSpacing looks. It starts from a
+// fixed date, so the answer never depends on when a schedule is saved, and a
+// year in the schedule's own timezone covers every daily, weekly and monthly
+// pattern and both DST changes.
+const spacingWindow = 366 * 24 * time.Hour
+
+// validateScheduleSpacing rejects an expression with any two consecutive runs
+// closer than minScheduleInterval.
+func validateScheduleSpacing(schedule cron.Schedule, location *time.Location) error {
+	start := time.Date(2025, time.January, 1, 0, 0, 0, 0, location)
+	end := start.Add(spacingWindow)
+	previous := schedule.Next(start)
+	// Runs at least minScheduleInterval apart fit in the window this many times.
+	for range int(spacingWindow/minScheduleInterval) + 1 {
 		next := schedule.Next(previous)
-		if next.IsZero() {
-			break
+		if next.IsZero() || next.After(end) {
+			return nil
 		}
 		if next.Sub(previous) < minScheduleInterval {
-			return nil, nil, fmt.Errorf("%w: runs must be at least %d minutes apart", ErrValidation, int(minScheduleInterval.Minutes()))
+			return fmt.Errorf("%w: runs must be at least %d minutes apart (%s then %s)", ErrValidation, int(minScheduleInterval.Minutes()), previous.Format("Jan 2 15:04"), next.Format("15:04"))
 		}
 		previous = next
 	}
-	return schedule, location, nil
+	return nil
 }
 
 // nextRun returns the first run strictly after now, in UTC.
@@ -113,6 +128,11 @@ func (s *Service) normalizeScheduleRequest(request *model.ScheduleRequest, now t
 	request.Requirements = requirements
 	schedule, location, err := parseSchedule(request.Cron, request.Timezone, now)
 	if err != nil {
+		return time.Time{}, err
+	}
+	// Only when saving: a timed run never re-checks spacing, so an accepted
+	// schedule cannot stop later.
+	if err := validateScheduleSpacing(schedule, location); err != nil {
 		return time.Time{}, err
 	}
 	return nextRun(schedule, location, now), nil
@@ -329,11 +349,28 @@ func (s *Service) fireSchedule(ctx context.Context, id string, expectedNext *str
 		return model.ScheduleRunResult{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Serialize every firing of this schedule, timed or manual: the row lock
+	// (PostgreSQL) or write lock (SQLite) is held from here to commit, so the
+	// open-occurrence check below sees an occurrence another run committed. A
+	// timed run also claims its slot here, before doing any work.
+	lock, lockArgs := `UPDATE task_schedules SET version=version WHERE id=?`, []any{id}
+	if expectedNext != nil {
+		lock += ` AND next_run_at=?`
+		lockArgs = append(lockArgs, *expectedNext)
+	}
+	locked, err := tx.ExecContext(ctx, lock, lockArgs...)
+	if err != nil {
+		return model.ScheduleRunResult{}, false, err
+	}
+	if count, _ := locked.RowsAffected(); count != 1 && expectedNext != nil {
+		return model.ScheduleRunResult{}, false, nil // another caller fired this run
+	}
 	schedule, err := s.getSchedule(ctx, tx, id)
 	if err != nil {
 		return model.ScheduleRunResult{}, false, err
 	}
 	scheduledFor := now
+	var nextValue any
 	if expectedNext != nil {
 		if !schedule.Enabled {
 			return model.ScheduleRunResult{}, false, nil
@@ -341,6 +378,16 @@ func (s *Service) fireSchedule(ctx context.Context, id string, expectedNext *str
 		if parsed, err := time.Parse(time.RFC3339Nano, *expectedNext); err == nil {
 			scheduledFor = parsed
 		}
+		parsed, location, err := parseSchedule(schedule.Cron, schedule.Timezone, now)
+		if err != nil {
+			// A definition that no longer parses (a removed timezone, say)
+			// stops instead of firing on every sweep, and records why.
+			if _, err := tx.ExecContext(ctx, `UPDATE task_schedules SET last_run_at=?,last_outcome=?,last_task_id=?,next_run_at=NULL WHERE id=?`, stamp(now), model.ScheduleOutcomeStopped, "", schedule.ID); err != nil {
+				return model.ScheduleRunResult{}, false, err
+			}
+			return model.ScheduleRunResult{}, false, tx.Commit()
+		}
+		nextValue = runStamp(nextRun(parsed, location, now))
 	}
 
 	outcome, taskID := model.ScheduleOutcomeCreated, ""
@@ -378,13 +425,6 @@ func (s *Service) fireSchedule(ctx context.Context, id string, expectedNext *str
 	query := `UPDATE task_schedules SET last_run_at=?,last_outcome=?,last_task_id=? WHERE id=?`
 	args := []any{stamp(now), outcome, taskID, schedule.ID}
 	if expectedNext != nil {
-		parsed, location, err := parseSchedule(schedule.Cron, schedule.Timezone, now)
-		var nextValue any
-		if err == nil {
-			nextValue = runStamp(nextRun(parsed, location, now))
-		}
-		// A definition that no longer parses (for example a removed
-		// timezone) stops instead of firing on every sweep.
 		query = `UPDATE task_schedules SET last_run_at=?,last_outcome=?,last_task_id=?,next_run_at=? WHERE id=? AND next_run_at=?`
 		args = []any{stamp(now), outcome, taskID, nextValue, schedule.ID, *expectedNext}
 	}
