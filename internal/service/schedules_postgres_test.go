@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -17,7 +18,10 @@ import (
 // TestPostgresScheduleFiresOnceAcrossReplicas runs two services against one
 // PostgreSQL schema, as two replicas would, and sweeps a due schedule from
 // both at once.
-func TestPostgresScheduleFiresOnceAcrossReplicas(t *testing.T) {
+// postgresReplicas opens two services against one fresh PostgreSQL schema,
+// as two replicas would, sharing a test clock.
+func postgresReplicas(t *testing.T) ([2]*Service, []*store.Store, *testClock) {
+	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("TASKBOARD_TEST_POSTGRES_URL"))
 	if databaseURL == "" {
 		t.Skip("TASKBOARD_TEST_POSTGRES_URL is not set")
@@ -63,6 +67,11 @@ func TestPostgresScheduleFiresOnceAcrossReplicas(t *testing.T) {
 		database.SetClock(clock.Now)
 		replicas[index] = New(database, time.Minute)
 	}
+	return replicas, stores, clock
+}
+
+func TestPostgresScheduleFiresOnceAcrossReplicas(t *testing.T) {
+	replicas, stores, clock := postgresReplicas(t)
 	schedule, err := replicas[0].CreateScheduleFor(t.Context(), dailySchedule("audit"), HumanPrincipal("person"))
 	if err != nil {
 		t.Fatal(err)
@@ -95,5 +104,48 @@ func TestPostgresScheduleFiresOnceAcrossReplicas(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("occurrences = %d, want 1", count)
+	}
+}
+
+// TestPostgresConcurrentScheduleRunsRespectOverlap fires one schedule from two
+// replicas at once, by hand on both and by hand against the timed sweep: with
+// overlap "skip" exactly one occurrence may be created either way.
+func TestPostgresConcurrentScheduleRunsRespectOverlap(t *testing.T) {
+	for _, timed := range []bool{false, true} {
+		replicas, stores, clock := postgresReplicas(t)
+		person := HumanPrincipal("person")
+		schedule, err := replicas[0].CreateScheduleFor(t.Context(), dailySchedule("audit"), person)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clock.Set("2026-10-17T07:00:00Z")
+		var errs [2]error
+		var wait sync.WaitGroup
+		for index, replica := range replicas {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				if timed && index == 1 {
+					_, errs[index] = replica.RunDueSchedules(t.Context())
+					return
+				}
+				_, errs[index] = replica.RunScheduleNowFor(t.Context(), schedule.ID, person)
+			}()
+		}
+		wait.Wait()
+		for index, err := range errs {
+			// The run that waits on the lock may lose a serialization race or a
+			// version check; it must never add a second occurrence.
+			if err != nil && !strings.Contains(err.Error(), "could not serialize") && !errors.Is(err, ErrConflict) {
+				t.Fatalf("timed=%v replica %d: %v", timed, index, err)
+			}
+		}
+		var count int
+		if err := stores[0].DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM tasks WHERE schedule_id=?`, schedule.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("timed=%v occurrences = %d, want 1", timed, count)
+		}
 	}
 }
