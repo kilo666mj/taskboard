@@ -12,7 +12,7 @@ require (
 	github.com/prometheus/client_golang v1.25.0
 	github.com/robfig/cron/v3 v3.0.1
 	go.michaelspost.com/mcpkit v0.2.0
-	go.michaelspost.com/oidcrp v0.3.0
+	go.michaelspost.com/oidcrp v0.4.0
 	go.michaelspost.com/pwa-kit v0.4.0
 	modernc.org/sqlite v1.60.1
 )
