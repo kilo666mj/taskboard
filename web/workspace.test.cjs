@@ -6,7 +6,7 @@ const source=fs.readFileSync(`${__dirname}/app.js`,'utf8');
 function workspace(){
   const context={Date,state:{tasks:[],filter:'open',project:'',search:'',searchAll:false,identity:'me',sort:'manual'}};
   vm.createContext(context);
-  for(const name of ['localDate','openTasks','isMine','deferred','matchesSearch','filteredTasks','viewTasks','sectionName','taskGroup']){
+  for(const name of ['localDate','openTasks','isMine','isMyWork','workGroup','deferred','matchesSearch','filteredTasks','viewTasks','sectionName','taskGroup']){
     const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
     const end=source.indexOf('\nfunction ',start+1);
     vm.runInContext(source.slice(start,end),context);
@@ -117,4 +117,64 @@ test('editing a schedule keeps the fields the form does not show',()=>{
   const body=context.scheduleRequest(loaded,{name:'audit',cron:'0 8 * * *',title:'Audit'});
   assert.equal(body.cron,'0 8 * * *');
   assert.deepEqual([body.type,body.section,body.priority,body.expected_version],['work','Operations','high',3]);
+});
+
+test('My work includes delegated tasks I created without changing My tasks',()=>{
+  const h=workspace();h.state.principal='me';
+  h.state.tasks=[task('assigned'),task('delegated',{created_by:'me',owner:'agent:worker'}),task('other',{created_by:'other',owner:'other'}),task('done',{created_by:'me',status:'done'})];
+  assert.deepEqual(Array.from(h.viewTasks('work'),t=>t.id),['assigned','delegated']);
+  assert.deepEqual(Array.from(h.viewTasks('mine'),t=>t.id),['assigned']);
+});
+test('My work distinguishes attention, active, queued, and deferred tasks',()=>{
+  const h=workspace();
+  assert.equal(h.workGroup(task('question',{decision_requested:true})),'Needs your attention');
+  assert.equal(h.workGroup(task('blocked',{status:'blocked'})),'Needs your attention');
+  assert.equal(h.workGroup(task('overdue',{due_date:'2000-01-01'})),'Needs your attention');
+  assert.equal(h.workGroup(task('active',{status:'active'})),'In progress');
+  assert.equal(h.workGroup(task('ready')),'Ready to start');
+  assert.equal(h.workGroup(task('later',{defer_until:'2999-01-01'})),'Upcoming');
+});
+test('quick capture remains private and keeps only the current project default',()=>{
+  const h={state:{project:'Taskboard',taskType:''}};vm.createContext(h);
+  const start=source.indexOf('function quickCapturePayload(');
+  vm.runInContext(source.slice(start,source.indexOf('\n',start)),h);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.quickCapturePayload('  Write notes  '))),{title:'Write notes',visibility:'private',type:'personal',section:'General',project:'Taskboard'});
+  h.state.taskType='work';assert.equal('type' in h.quickCapturePayload('Write notes'),false);
+});
+test('next actions preserve agent control and permission boundaries',()=>{
+  const h=workspace();h.canWriteTasks=()=>true;h.recoveryRun=()=>null;h.canRecover=()=>false;h.deferLabel=value=>value;
+  const start=source.indexOf('function nextTaskAction('),end=source.indexOf('\nfunction renderNextAction',start);
+  vm.runInContext(source.slice(start,end),h);
+  const sample=values=>task('action',{items:[],...values});
+  assert.equal(h.nextTaskAction(sample({})).kind,'start');
+  assert.equal(h.nextTaskAction(sample({visibility:'agent'})).kind,'messages');
+  assert.equal(h.nextTaskAction(sample({status:'active',runs:[{status:'active'}]})).kind,'messages');
+  assert.equal(h.nextTaskAction(sample({defer_until:'2999-01-01'})).kind,'properties');
+  assert.equal(h.nextTaskAction(sample({ready:false,dependencies:[{satisfied:false}]})).kind,'properties');
+  assert.equal(h.nextTaskAction(sample({status:'active',items:[{status:'done'}]})).kind,'delivery');
+  h.canWriteTasks=()=>false;
+  assert.equal(h.nextTaskAction(sample({})).kind,'messages');
+  assert.equal(h.nextTaskAction(sample({decision_requested:true})).label,'View decision');
+});
+test('quick capture keeps the title on failure and prevents concurrent submissions',async()=>{
+  const fields={
+    '#quickTaskTitle':{value:'Keep my draft',setCustomValidity(){},reportValidity:()=>true,focus(){}},
+    '#quickCaptureForm button':{disabled:false},
+    '#quickCaptureError':{textContent:''},'#quickCaptureStatus':{textContent:''},
+  };
+  let rejectSave,calls=0;
+  const h={$:selector=>fields[selector],quickCapturePayload:title=>({title}),captureTask:()=>{calls++;return new Promise((_,reject)=>{rejectSave=reject})}};
+  vm.createContext(h);
+  const start=source.indexOf('async function quickCapture('),end=source.indexOf('\nfunction setFilter',start);
+  vm.runInContext(source.slice(start,end),h);
+  const event={preventDefault(){}};
+  const saving=h.quickCapture(event);
+  await h.quickCapture(event);
+  assert.equal(calls,1);
+  assert.equal(fields['#quickTaskTitle'].readOnly,true);
+  rejectSave(new Error('Temporary save failure'));await saving;
+  assert.equal(fields['#quickTaskTitle'].value,'Keep my draft');
+  assert.equal(fields['#quickCaptureError'].textContent,'Temporary save failure');
+  assert.equal(fields['#quickCaptureForm button'].disabled,false);
+  assert.equal(fields['#quickTaskTitle'].readOnly,false);
 });

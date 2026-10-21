@@ -23,7 +23,7 @@
               <select id="desktopServerPicker" class="desktop-server-picker" aria-label="Taskboard server" title="Switch Taskboard server" hidden></select>
 
       <nav id="primaryViews" class="workspace-nav" aria-label="Task views"></nav>
-      <details class="more-views"><summary>More views</summary><nav id="moreViews" class="workspace-nav" aria-label="More task views"></nav></details>
+      <details class="more-views"><summary>More</summary><nav id="moreViews" class="workspace-nav" aria-label="More task views"></nav></details>
       <section class="project-navigation"><h2>Projects</h2><nav id="projectNavigation" class="workspace-nav" aria-label="Projects"></nav></section>
       <section class="agent-presence"><h2>Agents running <span id="agentCount"></span></h2><div id="agentPresence"></div></section>
       <div class="workspace-tools">
@@ -42,7 +42,7 @@
     <main id="workspaceMain" class="workspace-main" tabindex="-1">
       <header class="topbar"><div class="topbar-inner">
         <button id="navigationToggle" class="icon-button navigation-toggle" type="button" aria-label="Toggle navigation" aria-controls="workspaceSidebar" aria-expanded="false">☰</button>
-        <div class="page-heading"><p>Workspace / Tasks</p><h1 id="viewTitle">Open tasks</h1></div>
+        <div class="page-heading"><p>Workspace / Tasks</p><h1 id="viewTitle">My work</h1></div>
         <div class="page-actions">
           <button id="themeButton" class="icon-button" type="button" aria-label="Switch to dark theme" title="Switch theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button>
           <button id="newTaskButton" class="primary new-task-button" type="button" title="Create task (N)"><span aria-hidden="true">+</span> New task</button>
@@ -51,12 +51,19 @@
       <p id="notificationMessage" class="notification-message" role="status" hidden></p>
       <div class="workspace-content">
       <section class="workspace-list" aria-label="Task list">
+      <form id="quickCaptureForm" class="quick-capture" aria-label="Quick add task" hidden>
+        <label for="quickTaskTitle">Quick add <span id="quickCaptureScope">Private to you</span></label>
+        <div class="quick-capture-fields"><input id="quickTaskTitle" maxlength="200" required autocomplete="off" placeholder="What needs to be done?" aria-describedby="quickCaptureScope"><button class="primary" type="submit">Add task</button></div>
+        <p id="quickCaptureStatus" class="capture-status" role="status"></p>
+        <p id="quickCaptureError" class="form-error" role="alert"></p>
+      </form>
       <div class="view-toolbar">
         <label class="view-picker">
           <span class="visually-hidden">Task view</span>
           <select id="viewFilter" aria-label="Task view">
             <option value="automatic">Automatic work · daily review</option>
-            <option value="open" selected>Open tasks</option>
+            <option value="work" selected>My work</option>
+            <option value="open">All tasks</option>
             <optgroup label="Lanes">
               <option value="private">Private to me</option>
               <option value="team">Team tasks</option>
@@ -80,7 +87,7 @@
             </optgroup>
             <optgroup label="History">
               <option value="done">Completed</option>
-              <option value="all">All tasks</option>
+              <option value="all">All tasks including history</option>
             </optgroup>
           </select>
         </label>
@@ -99,7 +106,7 @@
       <div class="list-summary"><span id="taskCount" role="status"></span><button id="attentionFilter" class="text-button" type="button"></button></div>
       <section id="board" class="board" aria-busy="true"></section>
       </section>
-      <aside id="taskInspector" class="task-inspector" aria-label="Task details"><p class="inspector-empty">Select a task to see its checklist<br>and latest activity.</p></aside>
+      <aside id="taskInspector" class="task-inspector" aria-label="Task details" hidden><p class="inspector-empty">Select a task to see its checklist<br>and latest activity.</p></aside>
       </div>
     </main>
   </div>
@@ -124,6 +131,8 @@
         <button class="close-button" type="button" data-close aria-label="Close">×</button>
       </div>
       <label>Title<input id="taskTitle" maxlength="200" required placeholder="What needs to be done?"></label>
+      <p class="field-help">New tasks are private to you. Change visibility or add planning details below.</p>
+      <details id="taskOptions" class="task-options"><summary>Details and scheduling</summary>
       <div class="form-row task-classification-row">
         <label>Type<select id="taskType"><option value="personal" selected>Personal</option><option value="work">Work</option></select></label>
         <label>Lane<select id="taskVisibility"><option value="private" selected>Private to me</option><option value="team">Team</option><option value="agent">Agent pickup</option></select></label>
@@ -152,6 +161,7 @@
         <label>Repeat<select id="taskRecurrence"><option value="">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
       </div>
       <p id="taskDeferHelp" class="field-help">Agent-pickup tasks are not offered to agents until the defer time. Add a time to start at a specific moment; a date alone starts at midnight.</p>
+      </details>
       <label>Task context <span>(durable)</span><textarea id="taskSummary" maxlength="2000" rows="4" aria-describedby="taskContextHelp" placeholder="Describe the desired outcome, background, constraints, and important links"></textarea></label>
       <p id="taskContextHelp" class="field-help">This stays with the task. Use Messages for later updates and decisions; the status note remains a concise snapshot of current progress.</p>
       <fieldset>
@@ -159,11 +169,13 @@
         <div id="checklistEditor" class="checklist-editor"></div>
         <button id="addChecklistItem" class="text-button" type="button">+ Add step</button>
       </fieldset>
+      <details class="template-options"><summary>Templates</summary>
       <div class="template-controls">
         <label>Template<select id="taskTemplateSelect"><option value="">None</option></select></label>
         <button id="saveTemplateButton" class="text-button" type="button">Save as template</button>
         <button id="deleteTemplateButton" class="text-button" type="button">Delete template</button>
       </div>
+      </details>
       <p id="taskError" class="form-error" role="alert"></p>
       <div class="dialog-actions"><button type="button" class="secondary" data-close>Cancel</button><button id="taskSubmitButton" class="primary" type="submit">Create task</button></div>
     </form>
@@ -246,7 +258,7 @@
         <span class="task-progress" hidden></span><span class="task-note" hidden></span>
         <span class="task-side" hidden><span class="agent-chip"></span><time></time></span>
       </div>
-      <dl class="detail-properties"></dl>
+      <section class="next-action" aria-label="Next action"><p class="next-action-state"></p><p class="next-action-note"></p><div class="next-action-control"></div></section>
       <div class="detail-tabs" role="tablist" aria-label="Task details">
         <button type="button" role="tab" id="overviewTab" data-detail-tab="overview" aria-controls="overviewPanel" aria-selected="true">Overview</button>
         <button type="button" role="tab" id="messagesTab" data-detail-tab="messages" aria-controls="messagesPanel" aria-selected="false" tabindex="-1">Messages</button>
@@ -255,9 +267,23 @@
       <div class="task-detail">
         <div id="overviewPanel" role="tabpanel" aria-labelledby="overviewTab" tabindex="0">
         <div class="attention-note" hidden></div>
-        <div class="task-meta" hidden></div>
         <p class="task-assignment"></p>
+        <h3 class="checklist-heading">Checklist <span class="checklist-progress"></span></h3>
+        <ol class="checklist"></ol>
+        <p class="empty-checklist" hidden>No checklist yet. Start it yourself or assign it to an agent.</p>
+
         <section class="task-context" aria-label="Task context" hidden><h3>Context</h3><p></p></section>
+        <details class="task-properties"><summary>Task properties and setup</summary>
+        <dl class="detail-properties"></dl><div class="task-meta" hidden></div>
+        <div class="task-actions" hidden>
+          <button class="secondary start-self" type="button">Start myself</button>
+          <form class="assign-form">
+            <label class="visually-hidden">Agent name</label>
+            <input maxlength="100" required autocomplete="off" aria-label="Agent name" placeholder="Agent name">
+            <button class="secondary" type="submit">Assign to agent</button>
+          </form>
+          <button class="secondary finish-self" type="button">Mark done</button>
+        </div>
         <details class="dependency-panel" hidden>
           <summary>Blocked by</summary>
           <div class="dependency-list"></div>
@@ -273,18 +299,7 @@
           <div class="requirements-list"></div>
           <form class="requirements-form"><label>Worker requirements<input name="requirements" maxlength="2000" placeholder="repo:org/name, browser, kubernetes"></label><button class="secondary" type="submit">Save requirements</button><p class="field-help requirements-help">Only a worker that advertises every requirement listed here can pick this task up. <code>profile:&lt;id&gt;</code> chooses which agent runs it; leave it empty for the default pickup agent. Suggestions show what live workers advertise right now.</p><div class="requirement-suggestions" hidden></div></form>
         </details>
-        <h3 class="checklist-heading">Checklist <span class="checklist-progress"></span></h3>
-        <ol class="checklist"></ol>
-        <p class="empty-checklist" hidden>No checklist yet. Start it yourself or assign it to an agent.</p>
-        <div class="task-actions" hidden>
-          <button class="secondary start-self" type="button">Start myself</button>
-          <form class="assign-form">
-            <label class="visually-hidden">Agent name</label>
-            <input maxlength="100" required autocomplete="off" aria-label="Agent name" placeholder="Agent name">
-            <button class="secondary" type="submit">Assign to agent</button>
-          </form>
-          <button class="secondary finish-self" type="button">Mark done</button>
-        </div>
+        </details>
         </div>
         <div id="deliveryPanel" role="tabpanel" aria-labelledby="deliveryTab" tabindex="0" hidden>
         <details class="delivery" hidden>
@@ -367,6 +382,7 @@
           </div>
         </details>
         </div>
+        <details class="task-management-menu"><summary>More actions</summary>
         <div class="task-management">
           <button class="text-button edit-task" type="button">Edit</button>
           <button class="text-button release-task" type="button" hidden>Release to queue</button>
@@ -376,6 +392,7 @@
           <button class="text-button add-link" type="button">Add link</button>
           <button class="text-button cancel-task" type="button">Cancel task</button>
         </div>
+        </details>
         <div class="task-footer"><span class="repository"></span><details class="run-details"><summary><span class="run-state"></span></summary><div class="run-list"></div></details></div>
       </div>
     </article>

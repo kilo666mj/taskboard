@@ -190,7 +190,10 @@ it exactly as if that person had queued it. Schedules require database schema
 22; rolling back to the previous release leaves them in place but stops new
 runs.
 
-The board opens with every unfinished visible task. Optional compact views cover
+The board opens in **My work**, with unfinished tasks assigned to you or created
+by you, including work delegated to agents. It groups tasks into Needs your
+attention, In progress, Ready to start, and Upcoming. **All tasks** shows every
+unfinished visible task, grouped by project and section. Optional views cover
 Private, Team, Agent pickup, Inbox, Today, Upcoming, Waiting, Active agents,
 Completed, and daily and weekly review queues. Search matches title, context,
 lane, section, project, repository, and owner within the selected view; when
@@ -198,11 +201,15 @@ other views hold more matches, the board offers to search all visible tasks. Rev
 unplanned, overdue, stale, and waiting work and let a person explicitly mark a
 task reviewed. Reusable templates preserve planning fields and checklists.
 
-The workspace uses compact task rows grouped by project and section. Select a
-task to open its Overview, Messages, and Delivery tabs; on smaller screens the
-detail pane becomes a full-screen view with an Escape/close action. Common views
-and project filters are in the sidebar, with all remaining views under **More
-views**. Search stays within the selected view and project until explicitly
+The sidebar keeps Inbox, My work, All tasks, and Agents visible, with additional
+views under **More**. Quick add creates a private task from a title and keeps
+the current project when one is selected. The full task form keeps optional
+classification, scheduling, and templates in expandable sections.
+
+Select a task to see its next action, checklist, and Overview, Messages, and
+Delivery tabs. Properties and secondary actions expand when needed. The detail
+pane opens only when a task is selected; on smaller screens it becomes a
+full-screen view with an Escape/close action. Search stays within the selected view and project until explicitly
 expanded. The header's theme button switches between light and dark appearances
 and remembers the choice on that device. Task form drafts in the detail pane
 survive live updates for the current page session.

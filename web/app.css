@@ -361,5 +361,40 @@ html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .can
 #inspectorTitle:focus { outline: none; }
 .requirement-suggestions{display:grid;justify-items:start;gap:4px;margin-top:6px;color:var(--muted);font-size:.72rem}.requirement-suggestions[hidden]{display:none}.requirements-form .requirement-suggestions,.requirements-form .requirements-help{grid-column:1/-1;margin-top:0}.requirements-help{margin:0;color:var(--muted);font-size:.7rem;line-height:1.45}.modal .requirements-help{margin-top:.55rem;font-size:.78rem}.requirements-help code{font-size:.95em}.requirement-suggestion{display:grid;justify-items:start;gap:1px;max-width:100%;min-width:0;text-align:left;font-size:.72rem}.requirement-suggestion code{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.requirement-description{padding-left:1.4em;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;color:var(--muted)}
 .defer-inputs{display:grid;grid-template-columns:minmax(0,1fr) minmax(5.5rem,auto);gap:4px}
+
+/* Capture and work stay prominent; task setup is available on demand. */
+.workspace-content:not(.has-selection) { grid-template-columns: minmax(0,1fr); }
+.workspace-content:not(.has-selection) .workspace-list { width: 100%; max-width: 1100px; margin-inline: auto; }
+.quick-capture { padding-top: 24px; }
+.quick-capture>label { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; font-size: .85rem; margin-bottom: 9px; }
+.quick-capture>label span { color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+.quick-capture-fields { display: flex; gap: 9px; }
+.quick-capture-fields input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.quick-capture-fields button { flex-shrink: 0; }
+.capture-status { color: var(--green); font-size: .85rem; overflow-wrap: anywhere; }
+.quick-capture .form-error { font-size: .85rem; }
+.capture-status:empty, .quick-capture .form-error:empty { display: none; }
+.row-note { font-size: .82rem; }
+.next-action { margin: 0 0 24px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.next-action-state { margin: 0 0 7px; color: var(--cyan); font-size: .85rem; font-weight: 600; }
+.task-card[data-status="waiting"] .next-action-state, .task-card[data-status="blocked"] .next-action-state, .task-card[data-status="stale"] .next-action-state { color: var(--amber); }
+.next-action-note { margin: 0 0 14px; font-size: .9rem; line-height: 1.6; overflow-wrap: anywhere; }
+.task-inspector .task-title { margin-bottom: 18px; }
+.task-properties, .task-management-menu { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 16px; }
+.task-properties>summary, .task-management-menu>summary, .task-options>summary, .template-options>summary { cursor: pointer; color: var(--muted); font-size: .85rem; padding-block: 7px; }
+.task-properties[open]>summary { margin-bottom: 16px; }
+.task-properties .detail-properties { font-size: .85rem; }
+.task-management-menu .task-management { margin-top: 8px; border-top: 0; padding-top: 0; }
+.task-options, .template-options { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line); }
+.task-options .field-help { font-size: .8rem; }
+@media (pointer:coarse) {
+  .quick-capture-fields input, .quick-capture-fields button { min-height: 44px; }
+  .task-properties>summary, .task-management-menu>summary, .task-options>summary, .template-options>summary { min-height: 44px; }
+}
+@media (max-width:720px) {
+  .quick-capture { padding-top: 18px; }
+  .quick-capture-fields input { font-size: 16px; }
+  .quick-capture-fields button { padding-inline: 12px; }
+}
 .schedules-modal{width:min(760px,calc(100vw - 24px))}.schedules-list li{grid-template-columns:1fr auto auto auto auto}.schedules-list li[data-state="paused"]{opacity:.7}.schedule-form{display:grid;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}.schedule-form h3{margin:0;font-size:.9rem}.schedule-form textarea{resize:vertical}.schedule-form .checkbox-label{display:flex;align-items:center;gap:8px;align-self:end;padding-bottom:10px}
 @media (max-width:640px){.schedules-list li{grid-template-columns:1fr 1fr}.schedules-list li strong{grid-column:1/-1}}
