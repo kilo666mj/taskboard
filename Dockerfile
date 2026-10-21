@@ -1,5 +1,10 @@
 FROM golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110 AS build
 ARG VERSION=dev
+# shortcut: Debian has no ca-certificates release without the leaked emSign
+# ECC Root CA - G3 yet; drop this once the base image ships one.
+RUN sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf && \
+    update-ca-certificates --fresh >/dev/null && \
+    grep -qx '!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
