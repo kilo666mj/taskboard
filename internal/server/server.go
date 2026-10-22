@@ -534,7 +534,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		task, err := tasks.CreateFor(ctx, input, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. Immediately after finishing each bounded step, send that one complete_item_id and the next current_item_id instead of batching progress at the end. expected_version prevents overwriting another agent's changes; a stale one is refused with the task's current version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_update", Description: "Atomically update assignment, section, checklist progress, and user-visible status. Immediately after finishing each bounded step, send that one complete_item_id and the next current_item_id instead of batching progress at the end. expected_version prevents overwriting another agent's changes; a stale one is refused with the task's current version. current_note, blocker and waiting_for are one-line headlines of at most 300 characters; put details, steps and links in task_message_add.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, request *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, taskOutput, error) {
 		task, err := tasks.UpdateFor(ctx, input.TaskID, input.UpdateRequest, mcpPrincipal(ctx))
 		return nil, taskOutput{Task: task}, err
 	})

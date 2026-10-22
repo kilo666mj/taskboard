@@ -41,6 +41,13 @@ required item IDs. Taskboard never marks them done for the agent: send each one
 the agent actually finished in `complete_item_ids`, or skip one that no longer
 applies.
 
+`current_note`, `blocker` and `waiting_for` are the one-line headline a person
+reads on the board, limited to 300 characters. A longer value is refused with a
+validation error rather than cut off. Put details, numbered steps, logs and
+links in a task message (`task_message_add`) or a run handoff, and keep the
+headline to a short summary such as "Blocked: Vercel rejects the bot author;
+steps to fix are in Messages."
+
 Every write returns the task with its new `version`. A write with a stale
 `expected_version` is refused with the task's current version (and
 `current_version` in the REST error body), so an agent can retry from the values

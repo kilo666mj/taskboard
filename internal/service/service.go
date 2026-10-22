@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kilo666mj/taskboard/internal/agentidentity"
 	"github.com/kilo666mj/taskboard/internal/model"
@@ -1437,6 +1438,9 @@ func (s *Service) Update(ctx context.Context, taskID string, request model.Updat
 	if request.Status != "" && !model.IsTaskStatus(request.Status) {
 		return model.Task{}, fmt.Errorf("%w: unknown task status", ErrValidation)
 	}
+	if err := validateStatusNotes(request); err != nil {
+		return model.Task{}, err
+	}
 	if request.Type != nil && s.fixedType != "" {
 		request.Type = nil
 	}
@@ -2353,12 +2357,35 @@ func (s *Service) SweepStale(ctx context.Context) (count int64, err error) {
 
 func newID(now time.Time) string   { return ulid.Make().String() }
 func stamp(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+
+// validateStatusNotes keeps the status line a short headline. Agents that try
+// to put a full report there get told where the details belong instead of
+// having the text silently cut off.
+func validateStatusNotes(request model.UpdateRequest) error {
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{{"current_note", request.CurrentNote}, {"blocker", request.Blocker}, {"waiting_for", request.WaitingFor}} {
+		if field.value != nil && utf8.RuneCountInString(strings.TrimSpace(*field.value)) > model.MaxStatusNoteRunes {
+			return fmt.Errorf("%w: %s must be at most %d characters; it is the one-line status a person sees on the board. Put details, steps, logs and links in task_message_add or task_handoff_add, then keep %s to a short summary", ErrValidation, field.name, model.MaxStatusNoteRunes, field.name)
+		}
+	}
+	return nil
+}
+
+// clipped trims value to at most max bytes without splitting a character,
+// marking the cut with an ellipsis.
 func clipped(value string, max int) string {
 	value = strings.TrimSpace(value)
-	if len(value) > max {
-		return value[:max]
+	if len(value) <= max {
+		return value
 	}
-	return value
+	const ellipsis = "…"
+	cut := max - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(value[:cut]) + ellipsis
 }
 func defaultActor(value, fallback string) string {
 	if value = strings.TrimSpace(value); value != "" {

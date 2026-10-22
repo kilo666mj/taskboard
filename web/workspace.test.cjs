@@ -182,3 +182,9 @@ test('quick capture keeps the title on failure and prevents concurrent submissio
   assert.equal(fields['#quickCaptureForm button'].disabled,false);
   assert.equal(fields['#quickTaskTitle'].readOnly,false);
 });
+test('status notes turn http links into link parts without trailing punctuation',()=>{
+  const h={};vm.createContext(h);
+  const start=source.search(/^function linkParts\(/m);vm.runInContext(source.slice(start,source.indexOf('\nfunction ',start+1)),h);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.linkParts('See https://example.com/a?b=1). Then javascript:alert(1)'))),[{text:'See '},{url:'https://example.com/a?b=1'},{text:'). Then javascript:alert(1)'}]);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.linkParts('no links'))),[{text:'no links'}]);
+});
