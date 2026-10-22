@@ -124,6 +124,8 @@ test('My work includes delegated tasks I created without changing My tasks',()=>
   h.state.tasks=[task('assigned'),task('delegated',{created_by:'me',owner:'agent:worker'}),task('other',{created_by:'other',owner:'other'}),task('done',{created_by:'me',status:'done'})];
   assert.deepEqual(Array.from(h.viewTasks('work'),t=>t.id),['assigned','delegated']);
   assert.deepEqual(Array.from(h.viewTasks('mine'),t=>t.id),['assigned']);
+  h.state.principal='oidc:me';h.state.tasks=[task('principal-owned',{created_by:'other',owner:'oidc:me'})];
+  assert.deepEqual(Array.from(h.viewTasks('work'),t=>t.id),['principal-owned']);
 });
 test('My work distinguishes attention, active, queued, and deferred tasks',()=>{
   const h=workspace();
@@ -133,6 +135,8 @@ test('My work distinguishes attention, active, queued, and deferred tasks',()=>{
   assert.equal(h.workGroup(task('active',{status:'active'})),'In progress');
   assert.equal(h.workGroup(task('ready')),'Ready to start');
   assert.equal(h.workGroup(task('later',{defer_until:'2999-01-01'})),'Upcoming');
+  assert.equal(h.workGroup(task('blocked-by',{ready:false,dependencies:[{satisfied:false}]})),'Upcoming');
+  assert.equal(h.workGroup(task('deps-done',{ready:true,dependencies:[{satisfied:true}]})),'Ready to start');
 });
 test('quick capture remains private and keeps only the current project default',()=>{
   const h={state:{project:'Taskboard',taskType:''}};vm.createContext(h);

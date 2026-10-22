@@ -17,8 +17,8 @@ function progress(task){if(!task.items.length)return task.status==='queued'?'Inb
 function localDate(value=new Date()){const offset=value.getTimezoneOffset()*60000;return new Date(value-offset).toISOString().slice(0,10)}
 function openTasks(){return state.tasks.filter(task=>!['done','cancelled'].includes(task.status))}
 function isMine(task){const me=state.identity||'Me';return task.owner?task.owner===me:task.created_by===me}
-function isMyWork(task){return isMine(task)||Boolean(task.created_by)&&[state.principal,state.identity].filter(Boolean).includes(task.created_by)}
-function workGroup(task){if(task.decision_requested||['blocked','waiting','stale'].includes(task.status)||task.due_date&&task.due_date<localDate())return 'Needs your attention';if(deferred(task))return 'Upcoming';if(task.status==='active'||task.runs?.some(run=>run.status==='active'&&!run.ended_at))return 'In progress';return 'Ready to start'}
+function isMyWork(task){const me=[state.principal,state.identity].filter(Boolean);return isMine(task)||[task.owner,task.created_by].some(value=>value&&me.includes(value))}
+function workGroup(task){if(task.decision_requested||['blocked','waiting','stale'].includes(task.status)||task.due_date&&task.due_date<localDate())return 'Needs your attention';if(deferred(task)||task.ready===false&&task.dependencies?.some(item=>!item.satisfied))return 'Upcoming';if(task.status==='active'||task.runs?.some(run=>run.status==='active'&&!run.ended_at))return 'In progress';return 'Ready to start'}
 function nextTaskAction(task){
   const running=task.runs?.some(run=>run.status==='active'&&!run.ended_at);
   if(['done','cancelled'].includes(task.status))return {label:'View delivery',kind:'delivery',note:task.status==='done'?'This task is complete.':'This task was cancelled.'};
