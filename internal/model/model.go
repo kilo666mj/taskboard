@@ -740,6 +740,10 @@ type CreateRequest struct {
 	DelegatedVia string `json:"-"`
 }
 
+// MaxStatusNoteRunes limits current_note, blocker and waiting_for, which the
+// board shows as a one-line headline.
+const MaxStatusNoteRunes = 300
+
 type UpdateRequest struct {
 	ExpectedVersion int64           `json:"expected_version"`
 	RunID           string          `json:"run_id,omitempty"`
@@ -758,9 +762,9 @@ type UpdateRequest struct {
 	Recurrence      *string         `json:"recurrence,omitempty"`
 	Reviewed        bool            `json:"reviewed,omitempty"`
 	Checklist       *[]string       `json:"checklist,omitempty"`
-	CurrentNote     *string         `json:"current_note,omitempty"`
-	Blocker         *string         `json:"blocker,omitempty"`
-	WaitingFor      *string         `json:"waiting_for,omitempty"`
+	CurrentNote     *string         `json:"current_note,omitempty" jsonschema:"One-line status headline shown on the board, at most 300 characters. Put details, steps, logs and links in task_message_add instead"`
+	Blocker         *string         `json:"blocker,omitempty" jsonschema:"One-line reason the task is blocked, at most 300 characters. Put details and steps for the person in task_message_add"`
+	WaitingFor      *string         `json:"waiting_for,omitempty" jsonschema:"One-line description of what the task waits for, at most 300 characters. Put details in task_message_add"`
 	CurrentItemID   string          `json:"current_item_id,omitempty"`
 	CompleteItemIDs []string        `json:"complete_item_ids,omitempty"`
 	SkipItemIDs     []string        `json:"skip_item_ids,omitempty"`

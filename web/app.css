@@ -398,3 +398,4 @@ html:not([data-can-write="true"]) .cancel-task,.task-card[data-status=done] .can
 }
 .schedules-modal{width:min(760px,calc(100vw - 24px))}.schedules-list li{grid-template-columns:1fr auto auto auto auto}.schedules-list li[data-state="paused"]{opacity:.7}.schedule-form{display:grid;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}.schedule-form h3{margin:0;font-size:.9rem}.schedule-form textarea{resize:vertical}.schedule-form .checkbox-label{display:flex;align-items:center;gap:8px;align-self:end;padding-bottom:10px}
 @media (max-width:640px){.schedules-list li{grid-template-columns:1fr 1fr}.schedules-list li strong{grid-column:1/-1}}
+.clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;line-clamp:4;overflow:hidden}.note-toggle{display:block;margin:-10px 0 14px;padding:2px 0}.next-action-note a,.attention-note a,.message a{color:var(--cyan);overflow-wrap:anywhere}
