@@ -15,7 +15,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	go.michaelspost.com/mcpkit v0.2.0
 	go.michaelspost.com/oidcrp v0.4.1
-	go.michaelspost.com/pwa-kit v0.4.0
+	go.michaelspost.com/pwa-kit v0.4.1
 	modernc.org/sqlite v1.60.1
 )
 
@@ -40,7 +40,7 @@ require (
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/crypto v0.56.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
