@@ -514,7 +514,9 @@ that sort after it.
 In [personal mode](configuration.md#personal-mode), agents instead see the
 operator's full board across controller assignments. Listing includes queued
 work that is deferred, dependency-blocked or requires a different worker;
-claiming still checks readiness and operational requirements. Agents can edit
+claiming still checks readiness and operational requirements. Explicit
+`visibility: "agent"` pickup lists retain readiness and worker matching so
+automated dispatchers receive only runnable work. Agents can edit
 visible tasks across owners within their capabilities without borrowing the
 assigned controller's run ID. Outside personal mode, the assignment and pickup
 filters above still apply.

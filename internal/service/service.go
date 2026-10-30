@@ -1224,7 +1224,7 @@ func (s *Service) listFor(ctx context.Context, request model.ListTasksRequest, p
 		for index, item := range items {
 			after = &cursors[index]
 			scanned++
-			if principal.Agent && principal.Operator == "" && (item.Status == model.TaskQueued || item.Status == model.TaskStale) && !(item.Ready && workerMatches(item.Requirements, advertisement.Capabilities)) {
+			if principal.Agent && (principal.Operator == "" || request.Visibility == model.VisibilityAgent) && (item.Status == model.TaskQueued || item.Status == model.TaskStale) && !(item.Ready && workerMatches(item.Requirements, advertisement.Capabilities)) {
 				continue
 			}
 			page.Tasks = append(page.Tasks, item)

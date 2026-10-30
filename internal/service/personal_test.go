@@ -136,6 +136,12 @@ func TestPersonalAgentListingIncludesFullBoardButClaimsStillCheckReadiness(t *te
 			t.Errorf("claimed unready or unmatched work %q: %v", task.Title, err)
 		}
 	}
+	// Automated dispatchers explicitly request the pickup lane. Keep that
+	// listing runnable so they do not repeatedly try blocked/unmatched work.
+	pickup, err := tasks.ListFor(t.Context(), model.ListTasksRequest{Visibility: model.VisibilityAgent}, worker)
+	if err != nil || len(pickup.Tasks) != 0 {
+		t.Fatalf("personal pickup listing included unrunnable work: %+v, %v", pickup.Tasks, err)
+	}
 	if _, err := tasks.ClaimFor(t.Context(), team.ID, model.ClaimRequest{ExpectedVersion: team.Version}, worker); err != nil {
 		t.Fatalf("personal agent could not claim other controller's queued work: %v", err)
 	}

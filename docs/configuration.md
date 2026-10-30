@@ -104,8 +104,9 @@ Taskboard then:
   agent can claim another controller's queued or stale task, but cannot
   claim active, waiting or blocked work or use another agent's run ID;
 - returns the full visible board when agents list tasks, including deferred,
-  dependency-blocked and unmatched queued work. Operational requirements and
-  readiness are still enforced when claiming work;
+  dependency-blocked and unmatched queued work. Explicit `visibility: "agent"`
+  pickup lists still filter for ready, matching work, and claims always enforce
+  operational requirements and readiness;
 - records work as the operator only when an agent forwards them in
   `X-Switchboard-OAuth-Subject` or `X-Switchboard-Access-Subject`, from any
   agent credential. That work is the operator's private task. Without a
