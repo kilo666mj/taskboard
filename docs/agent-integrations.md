@@ -511,6 +511,14 @@ the agent then cannot use up the page. Readiness and worker matching are applied
 before the page limit, so unrunnable queued work cannot hide runnable tasks
 that sort after it.
 
+In [personal mode](configuration.md#personal-mode), agents instead see the
+operator's full board across controller assignments. Listing includes queued
+work that is deferred, dependency-blocked or requires a different worker;
+claiming still checks readiness and operational requirements. Agents can edit
+visible tasks across owners within their capabilities without borrowing the
+assigned controller's run ID. Outside personal mode, the assignment and pickup
+filters above still apply.
+
 When a response includes `next_cursor`, more tasks may follow. Pass it back as
 `cursor` (`?cursor=`) with the same filters, and repeat until `next_cursor` is
 absent. A page can be short or even empty while `next_cursor` is set, because

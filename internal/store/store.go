@@ -505,7 +505,7 @@ func (s *Store) ListTasks(ctx context.Context, statuses []model.TaskStatus, limi
 // ListVisibleTasks returns tasks the viewer may see, in listing order, with the cursor of each returned task.
 func (s *Store) ListVisibleTasks(ctx context.Context, query TaskQuery, viewer string, agent bool) ([]model.Task, []TaskCursor, error) {
 	if agent && query.Operator != "" {
-		return s.listTasks(ctx, query, `(visibility=? OR (visibility=? AND owner IN ('',?)) OR (visibility=? AND created_by=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer, model.VisibilityPrivate, query.Operator})
+		return s.listTasks(ctx, query, `(visibility IN (?,?) OR (visibility=? AND created_by=?))`, []any{model.VisibilityAgent, model.VisibilityTeam, model.VisibilityPrivate, query.Operator})
 	}
 	if agent {
 		return s.listTasks(ctx, query, `(visibility=? OR (visibility=? AND owner IN ('',?)))`, []any{model.VisibilityAgent, model.VisibilityTeam, viewer})

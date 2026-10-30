@@ -698,7 +698,7 @@ func newMCPServer(tasks *service.Service, defaultTaskType model.TaskType, logger
 		}
 		return nil, taskOutput{Task: task, Handoffs: handoffs}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List agent-pickup work and team work explicitly assigned to this agent, optionally filtered by status and visibility. Queued and stale tasks appear only when ready and matching this worker's advertised capabilities. Follow next_cursor until it is absent to see every task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "task_list", Description: "List visible tasks, optionally filtered by status and visibility. Personal mode includes the operator's full board across agent assignments, including unready or unmatched work; claims still enforce readiness and worker requirements. Otherwise, team work is visible only when unassigned or assigned to this agent, and queued/stale work must be ready and match this worker. Follow next_cursor until it is absent to see every task.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, request *mcp.CallToolRequest, input listInput) (*mcp.CallToolResult, tasksOutput, error) {
 		page, err := tasks.ListFor(ctx, model.ListTasksRequest{Statuses: input.Statuses, Visibility: input.Visibility, Limit: input.Limit, Cursor: input.Cursor}, mcpPrincipal(ctx))
 		return nil, tasksOutput{Tasks: page.Tasks, NextCursor: page.NextCursor}, err
 	})
