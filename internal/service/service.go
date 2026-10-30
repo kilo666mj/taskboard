@@ -39,9 +39,10 @@ type Principal struct {
 	// set only when the deployment enables MCP human delegation, and only
 	// task creation outside the agent lane acts as that person.
 	OnBehalfOf *Principal
-	// Operator is the person of a personal deployment. Every agent may see
-	// and list their private tasks, but creates work as itself unless it
-	// also acts OnBehalfOf them.
+	// Operator is the person of a personal deployment. Agents share access
+	// to their board across task owners, but create work as themselves unless
+	// they also act OnBehalfOf the operator. Capabilities and run identity
+	// checks still apply.
 	Operator string
 }
 
@@ -194,6 +195,9 @@ func CanView(task model.Task, principal Principal) bool {
 			}
 			return principal.OnBehalfOf != nil && task.CreatedBy != "" && task.CreatedBy == principal.OnBehalfOf.ID
 		}
+		if principal.Operator != "" {
+			return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam
+		}
 		// Unassigned team work is open to any agent; assigned team work only to its assignee.
 		return task.Visibility == model.VisibilityAgent || task.Visibility == model.VisibilityTeam && (task.Owner == "" || task.Owner == principal.ID)
 	}
@@ -271,7 +275,7 @@ func canMutate(task model.Task, principal Principal) bool {
 	if !principal.Agent {
 		return true
 	}
-	return task.Owner != "" && task.Owner == principal.ID
+	return principal.Operator != "" || task.Owner != "" && task.Owner == principal.ID
 }
 
 // producerMayRead lets the agent that created a task read its conversation
@@ -1220,7 +1224,7 @@ func (s *Service) listFor(ctx context.Context, request model.ListTasksRequest, p
 		for index, item := range items {
 			after = &cursors[index]
 			scanned++
-			if principal.Agent && (item.Status == model.TaskQueued || item.Status == model.TaskStale) && !(item.Ready && workerMatches(item.Requirements, advertisement.Capabilities)) {
+			if principal.Agent && (principal.Operator == "" || request.Visibility == model.VisibilityAgent) && (item.Status == model.TaskQueued || item.Status == model.TaskStale) && !(item.Ready && workerMatches(item.Requirements, advertisement.Capabilities)) {
 				continue
 			}
 			page.Tasks = append(page.Tasks, item)
@@ -1309,7 +1313,7 @@ func (s *Service) claimFor(ctx context.Context, taskID string, request model.Cla
 	if task.Status != model.TaskQueued && task.Status != model.TaskStale {
 		return model.StartResult{}, fmt.Errorf("%w: only queued or stale work can be claimed", ErrValidation)
 	}
-	if task.Visibility == model.VisibilityTeam && task.Owner != "" && task.Owner != principal.ID {
+	if principal.Operator == "" && task.Visibility == model.VisibilityTeam && task.Owner != "" && task.Owner != principal.ID {
 		return model.StartResult{}, ErrForbidden
 	}
 	advertisement, _ := s.store.GetWorkerAdvertisement(ctx, principal.ID)
@@ -2025,6 +2029,16 @@ func (s *Service) updateFor(ctx context.Context, taskID string, request model.Up
 	current, err := s.GetFor(ctx, taskID, principal)
 	if err != nil {
 		return model.Task{}, err
+	}
+	if principal.Agent && strings.TrimSpace(request.RunID) != "" {
+		// Shared board access never lets an agent renew or end a different
+		// controller's run. Edits without a run ID retain the caller's audit
+		// identity without impersonating the task's assigned controller.
+		for _, run := range current.Runs {
+			if run.ID == strings.TrimSpace(request.RunID) && run.Agent != principal.ID {
+				return model.Task{}, fmt.Errorf("%w: run belongs to another agent", ErrForbidden)
+			}
+		}
 	}
 	if !canMutate(current, principal) && !(producerMayUpdate(current, principal) && producerFieldsOnly(request)) && !pickupRunnerMayNote(current, principal, request) {
 		if principal.Agent && current.Owner != principal.ID {
