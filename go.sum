@@ -11,8 +11,8 @@ github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
-github.com/go-jose/go-jose/v4 v4.1.7 h1:Nac/98uT5LPkfbiFuYa8ktf62a2VxwQ4xbq1GK8pV5E=
-github.com/go-jose/go-jose/v4 v4.1.7/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
+github.com/go-jose/go-jose/v4 v4.1.8 h1:k38WifTutpGuqt6Imq9xW1OgCvnWFri0Nz7FnfiACM8=
+github.com/go-jose/go-jose/v4 v4.1.8/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/golang-jwt/jwt/v5 v5.2.1/go.mod h1:pqrtFR0X4osieyHYxtmOUWsAWrfe1Q5UVIyoH402zdk=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
@@ -77,8 +77,8 @@ github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT0
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 go.michaelspost.com/mcpkit v0.2.0 h1:yPLKgDtPvYwM3QswkKjgV0hXWF7BTOfijCXl7kZN1Y0=
 go.michaelspost.com/mcpkit v0.2.0/go.mod h1:BtKSPI3IqSyowCfL3h6hQWdd1S8JaDPZWW2VeSkcp3E=
-go.michaelspost.com/oidcrp v0.4.2 h1:gfe27X4o5Pn5RfPCWg1IJiX7l354gaawGeHn/9GNCdk=
-go.michaelspost.com/oidcrp v0.4.2/go.mod h1:FsO/6RYn21Q9VbnOKMvk8MYsKq4DuoGSEFb4UalLp+I=
+go.michaelspost.com/oidcrp v0.4.3 h1:9g5HWVphOBAvWzFEAI6tun8Pyow31IZGsub1irIGXsM=
+go.michaelspost.com/oidcrp v0.4.3/go.mod h1:ZPFhlIIhivAYXVgWJSSJ1T6kNkTk1hsltX9pY/ZHVhc=
 go.michaelspost.com/pwa-kit v0.4.1 h1:sspzAE2SeVbUWnVDwialAjiMndBB4NvYbjjIqvPeyUo=
 go.michaelspost.com/pwa-kit v0.4.1/go.mod h1:L9NEszGZnxY8ugNLQ+UFuU0cnUm/iIjPdVFyR+LYFnE=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
