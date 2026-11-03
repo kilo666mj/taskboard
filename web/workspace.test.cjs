@@ -69,7 +69,7 @@ test('requirement suggestions show each capability with its description',()=>{
   const element=tag=>{const node={tag,children:[],attributes:{},className:'',textContent:'',title:'',listeners:{},append(...items){node.children.push(...items)},setAttribute(name,value){node.attributes[name]=value},addEventListener(name,fn){node.listeners[name]=fn},replaceChildren(...items){node.children=items}};created.push(node);return node};
   const context={state:{workerCapabilities:[{capability:'profile:pickup',description:'Runs a queued task'},{capability:'discussion'},{capability:'runner:k8s-job',description:'Runs in a Job'}]},document:{createElement:element},Event:class{constructor(type){this.type=type}}};
   vm.createContext(context);
-  for(const name of ['requirementList','addRequirement','requirementCandidates','renderRequirementSuggestions']){
+  for(const name of ['requirementList','addRequirement','partialRequirement','pickRequirement','requirementCandidates','renderRequirementSuggestions']){
     const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
     vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
   }
@@ -198,7 +198,7 @@ test('status notes turn http links into link parts without trailing punctuation'
 });
 test('requirement suggestions filter by the partly typed entry and never list every worker',()=>{
   const context={};vm.createContext(context);
-  for(const name of ['requirementList','requirementCandidates']){const start=source.search(new RegExp(`^function ${name}\\(`,'m'));vm.runInContext(source.slice(start,source.indexOf('\n',start)),context)}
+  for(const name of ['requirementList','addRequirement','partialRequirement','pickRequirement','requirementCandidates']){const start=source.search(new RegExp(`^function ${name}\\(`,'m'));vm.runInContext(source.slice(start,source.indexOf('\n',start)),context)}
   const caps=['profile:pickup','profile:builder','runner:k8s-job','browser'].map(capability=>({capability}));
   const names=value=>Array.from(context.requirementCandidates(caps,value),item=>item.capability);
   assert.deepEqual(names(''),['profile:pickup','profile:builder','runner:k8s-job','browser']);
@@ -207,4 +207,10 @@ test('requirement suggestions filter by the partly typed entry and never list ev
   assert.deepEqual(names('browser, '),['profile:pickup','profile:builder','runner:k8s-job']);
   assert.deepEqual(names('browser'),['profile:pickup','profile:builder','runner:k8s-job']);
   assert.match(source,/candidates\.slice\(0,6\)/);
+  const pick=(value,token)=>context.pickRequirement(caps,value,token);
+  assert.equal(pick('prof','profile:pickup'),'profile:pickup');
+  assert.equal(pick('browser, prof','profile:pickup'),'browser, profile:pickup');
+  assert.equal(pick('browser, ','profile:pickup'),'browser, profile:pickup');
+  assert.equal(pick('browser','profile:pickup'),'browser, profile:pickup');
+  assert.equal(pick('profile:pickup, prof','profile:pickup'),'profile:pickup');
 });
