@@ -6,7 +6,7 @@ const source=fs.readFileSync(`${__dirname}/app.js`,'utf8');
 function workspace(){
   const context={Date,state:{tasks:[],filter:'open',project:'',search:'',searchAll:false,identity:'me',sort:'manual'}};
   vm.createContext(context);
-  for(const name of ['localDate','openTasks','isMine','isMyWork','workGroup','deferred','matchesSearch','filteredTasks','viewTasks','sectionName','taskGroup']){
+  for(const name of ['localDate','openTasks','isMine','isMyWork','taskStage','deferred','matchesSearch','filteredTasks','viewTasks','sectionName','taskGroup']){
     const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
     const end=source.indexOf('\nfunction ',start+1);
     vm.runInContext(source.slice(start,end),context);
@@ -69,7 +69,7 @@ test('requirement suggestions show each capability with its description',()=>{
   const element=tag=>{const node={tag,children:[],attributes:{},className:'',textContent:'',title:'',listeners:{},append(...items){node.children.push(...items)},setAttribute(name,value){node.attributes[name]=value},addEventListener(name,fn){node.listeners[name]=fn},replaceChildren(...items){node.children=items}};created.push(node);return node};
   const context={state:{workerCapabilities:[{capability:'profile:pickup',description:'Runs a queued task'},{capability:'discussion'},{capability:'runner:k8s-job',description:'Runs in a Job'}]},document:{createElement:element},Event:class{constructor(type){this.type=type}}};
   vm.createContext(context);
-  for(const name of ['requirementList','addRequirement','renderRequirementSuggestions']){
+  for(const name of ['requirementList','addRequirement','requirementCandidates','renderRequirementSuggestions']){
     const start=source.search(new RegExp(`^function ${name}\\(`,'m'));
     vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
   }
@@ -127,23 +127,31 @@ test('My work includes delegated tasks I created without changing My tasks',()=>
   h.state.principal='oidc:me';h.state.tasks=[task('principal-owned',{created_by:'other',owner:'oidc:me'})];
   assert.deepEqual(Array.from(h.viewTasks('work'),t=>t.id),['principal-owned']);
 });
-test('My work distinguishes attention, active, queued, and deferred tasks',()=>{
-  const h=workspace();
-  assert.equal(h.workGroup(task('question',{decision_requested:true})),'Needs your attention');
-  assert.equal(h.workGroup(task('blocked',{status:'blocked'})),'Needs your attention');
-  assert.equal(h.workGroup(task('overdue',{due_date:'2000-01-01'})),'Needs your attention');
-  assert.equal(h.workGroup(task('active',{status:'active'})),'In progress');
-  assert.equal(h.workGroup(task('ready')),'Ready to start');
-  assert.equal(h.workGroup(task('later',{defer_until:'2999-01-01'})),'Upcoming');
-  assert.equal(h.workGroup(task('blocked-by',{ready:false,dependencies:[{satisfied:false}]})),'Upcoming');
-  assert.equal(h.workGroup(task('deps-done',{ready:true,dependencies:[{satisfied:true}]})),'Ready to start');
+test('board columns follow task status, and an open decision moves a task to Needs you',()=>{
+  const h=workspace(),stage=values=>h.taskStage(task('t',values));
+  assert.equal(stage({}),'queued');
+  assert.equal(stage({status:'active'}),'working');
+  assert.equal(stage({status:'active',decision_requested:true}),'needs');
+  assert.equal(stage({status:'waiting'}),'needs');
+  assert.equal(stage({status:'blocked'}),'stopped');
+  assert.equal(stage({status:'stale'}),'stopped');
+  assert.equal(stage({status:'done',decision_requested:true}),'done');
+  assert.equal(stage({status:'cancelled'}),'cancelled');
 });
-test('quick capture remains private and keeps only the current project default',()=>{
+test('Mine keeps finished tasks for the Done column, and lanes filter the board',()=>{
+  const h=workspace();h.state.principal='me';h.state.filter='work';
+  h.state.tasks=[task('mine'),task('shipped',{status:'done'}),task('other',{owner:'other',created_by:'other'}),task('agent',{visibility:'agent'})];
+  assert.deepEqual(Array.from(h.filteredTasks(),t=>t.id),['mine','shipped','agent']);
+  h.state.lane='agent';
+  assert.deepEqual(Array.from(h.filteredTasks(),t=>t.id),['agent']);
+});
+test('quick capture is private unless a lane is being viewed, and keeps the current project',()=>{
   const h={state:{project:'Taskboard',taskType:''}};vm.createContext(h);
   const start=source.indexOf('function quickCapturePayload(');
   vm.runInContext(source.slice(start,source.indexOf('\n',start)),h);
   assert.deepEqual(JSON.parse(JSON.stringify(h.quickCapturePayload('  Write notes  '))),{title:'Write notes',visibility:'private',type:'personal',section:'General',project:'Taskboard'});
   h.state.taskType='work';assert.equal('type' in h.quickCapturePayload('Write notes'),false);
+  h.state.lane='agent';assert.equal(h.quickCapturePayload('Write notes').visibility,'agent');
 });
 test('next actions preserve agent control and permission boundaries',()=>{
   const h=workspace();h.canWriteTasks=()=>true;h.recoveryRun=()=>null;h.canRecover=()=>false;h.deferLabel=value=>value;
@@ -187,4 +195,16 @@ test('status notes turn http links into link parts without trailing punctuation'
   const start=source.search(/^function linkParts\(/m);vm.runInContext(source.slice(start,source.indexOf('\nfunction ',start+1)),h);
   assert.deepEqual(JSON.parse(JSON.stringify(h.linkParts('See https://example.com/a?b=1). Then javascript:alert(1)'))),[{text:'See '},{url:'https://example.com/a?b=1'},{text:'). Then javascript:alert(1)'}]);
   assert.deepEqual(JSON.parse(JSON.stringify(h.linkParts('no links'))),[{text:'no links'}]);
+});
+test('requirement suggestions filter by the partly typed entry and never list every worker',()=>{
+  const context={};vm.createContext(context);
+  for(const name of ['requirementList','requirementCandidates']){const start=source.search(new RegExp(`^function ${name}\\(`,'m'));vm.runInContext(source.slice(start,source.indexOf('\n',start)),context)}
+  const caps=['profile:pickup','profile:builder','runner:k8s-job','browser'].map(capability=>({capability}));
+  const names=value=>Array.from(context.requirementCandidates(caps,value),item=>item.capability);
+  assert.deepEqual(names(''),['profile:pickup','profile:builder','runner:k8s-job','browser']);
+  assert.deepEqual(names('prof'),['profile:pickup','profile:builder']);
+  assert.deepEqual(names('browser, prof'),['profile:pickup','profile:builder']);
+  assert.deepEqual(names('browser, '),['profile:pickup','profile:builder','runner:k8s-job']);
+  assert.deepEqual(names('browser'),['profile:pickup','profile:builder','runner:k8s-job']);
+  assert.match(source,/candidates\.slice\(0,6\)/);
 });

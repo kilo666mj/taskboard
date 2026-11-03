@@ -190,29 +190,44 @@ it exactly as if that person had queued it. Schedules require database schema
 22; rolling back to the previous release leaves them in place but stops new
 runs.
 
-The board opens in **My work**, with unfinished tasks assigned to you or created
-by you, including work delegated to agents. It groups tasks into Needs your
-attention, In progress, Ready to start, and Upcoming. **All tasks** shows every
-unfinished visible task, grouped by project and section. Optional views cover
-Private, Team, Agent pickup, Inbox, Today, Upcoming, Waiting, Active agents,
-Completed, and daily and weekly review queues. Search matches title, context,
-lane, section, project, repository, and owner within the selected view; when
-other views hold more matches, the board offers to search all visible tasks. Review queues surface
+The board shows tasks in columns by stage: Queued, Working, Needs you, Stopped,
+Done, and Cancelled. Stages come from task status; an open decision moves a
+task to Needs you before its status changes. Needs you also counts waiting
+tasks, and Stopped holds blocked and stale ones. Done and Cancelled show the
+most recent tasks first and load more on request. Cards show the latest note,
+checklist progress, the agent or owner, and priority or due date. Cards in
+Needs you have an **Answer** button, and stopped work that can be recovered has
+**Requeue**.
+
+The sidebar filters the board by lane (Agent pickup, Team, Private), by stage,
+and by project, and shows how many tasks need you. The **Show** menu narrows the
+board to Mine, Assigned to me, Decisions for me, Inbox, Today, Upcoming, Ready
+for pickup, or the daily and weekly review queues. The device remembers that
+choice and the sort order. Search matches title, context, lane, section,
+project, repository, and owner within the current filters. When other tasks
+also match, the board offers to search all visible tasks. Review queues surface
 unplanned, overdue, stale, and waiting work and let a person explicitly mark a
 task reviewed. Reusable templates preserve planning fields and checklists.
 
-The sidebar keeps Inbox, My work, All tasks, and Agents visible, with additional
-views under **More**. Quick add creates a private task from a title and keeps
-the current project when one is selected. The full task form keeps optional
-classification, scheduling, and templates in expandable sections.
+**Ask an agent** opens the task form with the lane as its first choice,
+defaulting to agent pickup. **Add a task**, at the top of the Queued column,
+creates a task from a title alone, apart from the search box above the board.
+The task is private, or in the lane being viewed, and keeps the current project. Optional
+classification, scheduling, worker requirements, and templates stay in
+expandable sections. Requirement suggestions show only a few live
+capabilities at a time and narrow as you type.
 
-Select a task to see its next action, checklist, and Overview, Messages, and
-Delivery tabs. Properties and secondary actions expand when needed. The detail
-pane opens only when a task is selected; on smaller screens it becomes a
-full-screen view with an Escape/close action. Search stays within the selected view and project until explicitly
-expanded. The header's theme button switches between light and dark appearances
-and remembers the choice on that device. Task form drafts in the detail pane
-survive live updates for the current page session.
+Selecting a task opens its page in place of the board; **← Board**, Escape, or
+the browser's Back button returns. Each task has a shareable `?task=` link. The
+**Summary** tab puts any open decision first, with the full question, the
+agent's options, and its recommendation preselected. The tab then shows the
+next action, context, checklist, and task facts. **Conversation** holds
+messages, live chat, and earlier decisions. **Work** holds links, completion
+gates, handoffs, dependencies, and duplicates. **Engine** holds run controls,
+review and requeue, runs, worker requirements, and provenance. The header's
+theme button switches between light and dark appearances and remembers the
+choice on that device. Task form drafts on the task page survive live updates
+for the current page session.
 
 Tasks can be edited and reordered with ordinary keyboard-accessible controls;
 press `N` outside a form to capture a task and `/` to focus search. The same

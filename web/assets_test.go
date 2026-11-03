@@ -17,7 +17,7 @@ func embeddedText(t *testing.T, name string) string {
 func TestAgentIdentityUIKeepsTextAndTrustedDetails(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
-	for _, expected := range []string{`<details class="run-details"><summary><span class="run-state"></span></summary>`} {
+	for _, expected := range []string{`<details class="run-details" open><summary><span class="run-state"></span></summary>`} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("index.html missing %q", expected)
 		}
@@ -48,12 +48,12 @@ func TestEscalationDecisionUIIsWiredAndResponsive(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
 	css := embeddedText(t, "app.css")
-	for _, expected := range []string{`class="escalation-list"`, `aria-label="Task decisions"`, `<option value="needs-me">Needs me</option>`, `<summary>Messages <span class="message-count"></span></summary>`, `name="channel" value="live"`, `name="channel" value="queued"`, `class="text-button end-discussion"`} {
+	for _, expected := range []string{`class="escalation-list decision-list"`, `aria-label="Decisions waiting for you"`, `class="escalation-list past-decisions"`, `<option value="needs-me">Decisions for me</option>`, `<summary>Messages</summary>`, `Conversation <span class="message-count"></span>`, `name="channel" value="live"`, `name="channel" value="queued"`, `class="text-button end-discussion"`} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("index.html missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=!choice?.value`, `function escalationPolicy`, `filter==='needs-me'`, `Needs me (${needsMe})`, `function updateComposer`, `function timelineEntries`, `/api/v1/tasks/${task.id}/discussions`, `/api/v1/discussions/${item.id}/messages`, `state.principal=session.principal`, `escalation.status==='expired'`, `forwarded by ${escalation.delegated_by}`} {
+	for _, expected := range []string{`function renderEscalations`, `/escalations/${escalation.id}/answer`, `expected_version:task.version`, `textarea.required=!choice()`, `function escalationPolicy`, `filter==='needs-me'`, `if(task.decision_requested||task.status==='waiting')return 'needs'`, `escalation.status==='open'?'.decision-list':'.past-decisions'`, `function updateComposer`, `function timelineEntries`, `/api/v1/tasks/${task.id}/discussions`, `/api/v1/discussions/${item.id}/messages`, `state.principal=session.principal`, `escalation.status==='expired'`, `forwarded by ${escalation.delegated_by}`} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
 		}
@@ -105,7 +105,7 @@ func TestDeliveryUIUsesTypedReferencesAndHTTPSLinks(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
 	css := embeddedText(t, "app.css")
-	for _, expected := range []string{`<details class="delivery" hidden>`, `<summary>Links <span class="reference-count"></span></summary>`, `class="text-button add-link"`, `class="milestone-list"`, `class="reference-list"`, `class="reference-form"`} {
+	for _, expected := range []string{`<details class="delivery" hidden>`, `<summary>Links</summary>`, `Work <span class="reference-count"></span>`, `class="text-button add-link"`, `class="milestone-list"`, `class="reference-list"`, `class="reference-form"`} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("index.html missing %q", expected)
 		}
@@ -230,12 +230,12 @@ func TestTaskContextExplainsDurableDescriptionAndConversation(t *testing.T) {
 func TestTaskViewsAndSortControlAreWired(t *testing.T) {
 	html := embeddedText(t, "index.html")
 	javascript := embeddedText(t, "app.js")
-	for _, expected := range []string{`<option value="mine">My tasks</option>`, `<option value="active">Active</option>`, `<option value="agents">Agents running</option>`, `<select id="sortOrder"`} {
+	for _, expected := range []string{`<option value="work">Mine</option>`, `<option value="mine">Assigned to me</option>`, `<option value="agent">Ready for pickup</option>`, `<select id="sortOrder"`} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("index.html missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`function isMine`, `function compareTasks`, `sort(compareTasks)`, `task.visibility==='agent'&&task.ready`, `!manualOrder`} {
+	for _, expected := range []string{`function isMine`, `function compareTasks`, `:compareTasks)`, `task.visibility==='agent'&&task.ready`, `!manualOrder`} {
 		if !strings.Contains(javascript, expected) {
 			t.Errorf("app.js missing %q", expected)
 		}
