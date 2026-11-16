@@ -418,6 +418,16 @@ the work really is separate, retrying with `force_new: true` creates it, and the
 start or create event records the overridden matches in
 `overridden_duplicates`. People starting or creating tasks are not checked.
 
+Different work in the same repository passes that check, so `task_start` and
+`task_claim` also report it. When the task names a repository, the result
+carries `related`: up to five other active, waiting, blocked, or stale tasks in
+that repository that the agent can see, newest first, each with its ID, title,
+status, owner, and the callsign of the session running it. A `related_hint`
+sentence accompanies a non-empty list. This is informational and never refuses
+the call. Tasks without a repository, queued tasks, and the calling session's
+own tasks are left out. Outside personal mode an agent cannot see team tasks
+assigned to another agent, so those do not appear.
+
 To clean up duplicates that already exist, update the copy with
 `duplicate_of` set to the task that should be kept. That cancels the copy,
 sets its note to "Duplicate of <title>" unless a note is supplied, and records a

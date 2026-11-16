@@ -102,6 +102,53 @@ func (s *Service) checkDuplicates(ctx context.Context, principal Principal, forc
 	return ids, nil
 }
 
+// maxRelatedTasks bounds how many in-progress tasks a start or claim reports.
+const maxRelatedTasks = 5
+
+const relatedHint = "Other tasks are in progress in this repository. This is informational: check that they do not overlap with your work before changing shared files, and coordinate through task_message_add if they do."
+
+// relatedTasks lists other sessions' in-progress tasks, newest first, that
+// name the same repository as the task an agent just started or claimed. It
+// only informs: the run already exists, so a failed lookup reports nothing.
+func (s *Service) relatedTasks(ctx context.Context, principal Principal, task model.Task, sessionID string) ([]model.RelatedTask, string) {
+	repository := scopeName(task.Repository)
+	if repository == "" {
+		return nil, ""
+	}
+	heads, err := s.store.ListOpenTaskHeads(ctx, duplicateScanLimit)
+	if err != nil {
+		return nil, ""
+	}
+	var related []model.RelatedTask
+	for _, head := range heads {
+		if len(related) == maxRelatedTasks {
+			break
+		}
+		if head.ID == task.ID || head.Status == model.TaskQueued || scopeName(head.Repository) != repository || !CanView(head, principal) {
+			continue
+		}
+		entry := model.RelatedTask{TaskID: head.ID, Title: head.Title, Status: head.Status, Owner: head.Owner}
+		own := false
+		if full, err := s.store.GetTask(ctx, head.ID); err == nil {
+			for _, run := range full.Runs {
+				if run.EndedAt != nil {
+					continue
+				}
+				entry.Callsign = run.Callsign
+				own = sessionID != "" && run.SessionID == sessionID
+				break
+			}
+		}
+		if !own {
+			related = append(related, entry)
+		}
+	}
+	if len(related) == 0 {
+		return nil, ""
+	}
+	return related, relatedHint
+}
+
 // sameScope treats an unset project or repository as compatible with any, and
 // compares repositories by name so "owner/name" matches "name".
 func sameScope(left, right string) bool {

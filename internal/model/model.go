@@ -128,6 +128,16 @@ type DuplicateCandidate struct {
 	Version    int64      `json:"version"`
 }
 
+// RelatedTask is another in-progress task in the same repository as a task an
+// agent just started or claimed. It is informational and never refuses work.
+type RelatedTask struct {
+	TaskID   string     `json:"task_id"`
+	Title    string     `json:"title"`
+	Status   TaskStatus `json:"status"`
+	Owner    string     `json:"owner,omitempty"`
+	Callsign string     `json:"callsign,omitempty" jsonschema:"Callsign of the agent session currently running the task"`
+}
+
 type TaskDependency struct {
 	TaskID          string     `json:"task_id"`
 	BlockedByTaskID string     `json:"blocked_by_task_id"`
@@ -781,6 +791,9 @@ type StartResult struct {
 	Task     Task         `json:"task"`
 	Run      AgentRun     `json:"run"`
 	Handoffs []RunHandoff `json:"handoffs,omitempty"`
+	// Related lists other sessions' in-progress tasks in the same repository.
+	Related     []RelatedTask `json:"related,omitempty" jsonschema:"Other in-progress tasks in the same repository, newest first. Informational only: the start or claim already succeeded"`
+	RelatedHint string        `json:"related_hint,omitempty"`
 }
 
 type ClaimRequest struct {

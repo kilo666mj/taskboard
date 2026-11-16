@@ -243,3 +243,37 @@ func TestMarkOwnStartedTaskDuplicateEndsOwnRun(t *testing.T) {
 		t.Fatalf("own run = %+v", marked.Runs[0])
 	}
 }
+
+func TestAgentStartReportsRelatedTasksInSameRepository(t *testing.T) {
+	tasks := testService(t, time.Minute)
+	start := func(title, repository, session string, agent Principal) model.StartResult {
+		t.Helper()
+		result, err := tasks.StartFor(t.Context(), model.StartRequest{Title: title, Repository: repository, AgentSessionKey: session, Checklist: []string{"Work"}}, agent)
+		if err != nil {
+			t.Fatalf("start %q: %v", title, err)
+		}
+		return result
+	}
+	worker, other := AgentPrincipal("agent:worker"), AgentPrincipal("agent:other")
+
+	first := start("Add cancel button", "example/app", "session-one", worker)
+	if len(first.Related) != 0 || first.RelatedHint != "" {
+		t.Fatalf("first start related = %+v, hint %q", first.Related, first.RelatedHint)
+	}
+	start("Rotate certificates", "example/infra", "session-two", other)
+	start("Update changelog", "", "session-two", other)
+	if _, err := tasks.CreateFor(t.Context(), model.CreateRequest{Title: "Queued redesign", Repository: "app"}, other); err != nil {
+		t.Fatal(err)
+	}
+
+	second := start("Rework stage columns", "app", "session-two", other)
+	if len(second.Related) != 1 || second.Related[0].TaskID != first.Task.ID || second.Related[0].Callsign != first.Run.Callsign || second.RelatedHint == "" {
+		t.Fatalf("second start related = %+v, hint %q", second.Related, second.RelatedHint)
+	}
+
+	// A session's own other tasks are not news to it.
+	third := start("Tidy board styles", "app", "session-one", worker)
+	if len(third.Related) != 1 || third.Related[0].TaskID != second.Task.ID {
+		t.Fatalf("third start related = %+v", third.Related)
+	}
+}
