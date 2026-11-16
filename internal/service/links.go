@@ -41,12 +41,18 @@ func (s *Service) CreateFor(ctx context.Context, request model.CreateRequest, pr
 func (s *Service) StartFor(ctx context.Context, request model.StartRequest, principal Principal) (model.StartResult, error) {
 	result, err := s.startFor(ctx, request, principal)
 	result.Task, err = s.hideLinks(ctx, principal, result.Task, err)
+	if err == nil && principal.Agent {
+		result.Related, result.RelatedHint = s.relatedTasks(ctx, principal, result.Task, result.Run.SessionID)
+	}
 	return result, err
 }
 
 func (s *Service) ClaimFor(ctx context.Context, taskID string, request model.ClaimRequest, principal Principal) (model.StartResult, error) {
 	result, err := s.claimFor(ctx, taskID, request, principal)
 	result.Task, err = s.hideLinks(ctx, principal, result.Task, err)
+	if err == nil && principal.Agent {
+		result.Related, result.RelatedHint = s.relatedTasks(ctx, principal, result.Task, result.Run.SessionID)
+	}
 	return result, err
 }
 
