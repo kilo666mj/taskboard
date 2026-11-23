@@ -30,19 +30,53 @@ export POSTGRES_PASSWORD='replace-with-a-random-url-safe-value'
 docker compose -f compose.yaml -f compose.postgres.yaml up -d
 ```
 
-The bundled PostgreSQL 18 service is for evaluation. It stores data in the
-`taskboard-postgres` named volume, mounted at `/var/lib/postgresql`; the image
-uses `/var/lib/postgresql/18/docker` as its data directory. Use a managed
-database for production. Updating this Compose example does not upgrade an
-external database configured through `TASKBOARD_DATABASE_URL`.
+The bundled PostgreSQL 19 image stores its data under
+`/var/lib/postgresql/19/docker`. An existing PostgreSQL 18 installation
+needs a logical dump and restore. This applies to the bundled evaluation database. SQLite and externally managed PostgreSQL installations have their own storage and upgrade procedures.
 
-If an earlier version of this example created a PostgreSQL 17 volume, preserve
-that volume and take a logical backup before switching images. Restore into a
-fresh PostgreSQL 18 volume and verify Taskboard before removing the old one.
-Changing the mount path alone does not upgrade existing database files. Follow
-the [PostgreSQL major-version upgrade guide](https://www.postgresql.org/docs/18/upgrading.html)
-for dump/restore or `pg_upgrade` procedures. Fresh evaluations need no data
-migration.
+1. On the old revision, stop application writes and keep PostgreSQL running.
+   Stop any other writers too. Set `BACKUP_DIR` to an existing private directory
+   with enough free space for a custom-format dump. Run these commands from the Compose
+   checkout with the usual project name and environment.
+
+   ```sh
+   : "${BACKUP_DIR:?set the backup directory}"
+   umask 077
+   docker compose -f compose.yaml -f compose.postgres.yaml stop taskboard
+   docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres pg_dump -Fc -U taskboard -d taskboard > "$BACKUP_DIR/taskboard-pg18.dump"
+   ```
+
+   Proceed only after the dump succeeds. The example covers the
+   bundled single database and its default role. Save any additional roles
+   and databases separately.
+
+2. Run `docker compose -f compose.yaml -f compose.postgres.yaml down` without volume removal. Record the
+   old checkout revision and preserve its configuration and database volume.
+   Switch to the PostgreSQL 19 revision. In the same project's `.env`, set
+   `TASKBOARD_POSTGRES_VOLUME` to a **new, unused** Docker volume name, for
+   example `taskboard-prod-pg19`. Check the name against `docker volume ls`.
+   Keep this setting on subsequent starts. Other volumes keep their existing
+   names.
+
+3. Start only the new database, restore the dump, and check the server
+   version and representative records before allowing writes.
+
+   ```sh
+   docker compose -f compose.yaml -f compose.postgres.yaml up -d --wait postgres
+   docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres pg_restore --exit-on-error --single-transaction -U taskboard -d taskboard < "$BACKUP_DIR/taskboard-pg18.dump"
+   docker compose -f compose.yaml -f compose.postgres.yaml exec -T postgres psql -U taskboard -d taskboard -c 'SHOW server_version'
+   ```
+
+4. Start Taskboard with `docker compose -f compose.yaml -f compose.postgres.yaml up -d taskboard`.
+   Verify readiness and open an existing task. Keep the old volume and
+   dump through the rollback window.
+
+To roll back before reopening writes, stop the new stack with
+`docker compose -f compose.yaml -f compose.postgres.yaml down`, restore the previous revision and configuration,
+and start it using the original database volume. Once writes resume on 19,
+reconcile those changes before any rollback. See the
+[PostgreSQL upgrade guide](https://www.postgresql.org/docs/19/upgrading.html)
+for alternatives and larger installations.
 
 ## Kubernetes and EKS
 

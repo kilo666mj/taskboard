@@ -33,11 +33,14 @@ query() {
 
 # Only the database starts, in a fresh project with no published database port.
 compose up -d --no-deps --wait --wait-timeout 120 postgres
-test "$(query -Atc "SELECT current_setting('server_version_num')::int / 10000")" = 18
+image=$(compose config --images postgres)
+expected_major=${image#postgres:}
+expected_major=${expected_major%%@*}
+test "$(query -Atc "SELECT current_setting('server_version_num')::int / 10000")" = "$expected_major"
 query -c 'CREATE TABLE compose_persistence_probe (value integer PRIMARY KEY); INSERT INTO compose_persistence_probe VALUES (42);'
 
 # Renew anonymous volumes so an incorrectly mounted named volume cannot pass
 # merely because Compose retained the image's anonymous data volume.
 compose up -d --no-deps --force-recreate --renew-anon-volumes --wait --wait-timeout 120 postgres
 test "$(query -Atc 'SELECT value FROM compose_persistence_probe')" = 42
-echo 'PostgreSQL 18 Compose data survives container recreation.'
+echo "PostgreSQL $expected_major Compose data survives container recreation."
