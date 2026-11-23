@@ -21,3 +21,4 @@ services:
       - taskboard-postgres:/var/lib/postgresql
 volumes:
   taskboard-postgres:
+    name: ${TASKBOARD_POSTGRES_VOLUME:-${COMPOSE_PROJECT_NAME}_taskboard-postgres}
